@@ -9,10 +9,15 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use plotters::prelude::*;
 use rustfft::{num_complex::Complex, FftPlanner};
 
-
 #[derive(Parser)]
 #[clap(author, version)]
 struct Cli {
+    #[cfg(all(
+        any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd"),
+        //feature = "jack"
+    ))]
+    #[clap(long)]
+    jack: bool,
     #[clap(long)]
     device: Option<String>,
     #[clap(long)]
@@ -29,14 +34,31 @@ enum Command {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let host = cpal::default_host();
-
-    let mut device = host.default_output_device();
-    if let Some(device_name) = cli.device.as_deref() {
-        device = host
-            .output_devices()?
-            .find(|x| x.name().map(|y| y == device_name).unwrap_or(false))
+    // Conditionally compile with jack if the feature is specified.
+    #[cfg(all(
+        any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd"),
+        //feature = "jack"
+    ))]
+    // Manually check for flags. Can be passed through cargo with -- e.g.
+    // cargo run --release --example beep --features jack -- --jack
+    let host = if cli.jack {
+        cpal::host_from_id(cpal::available_hosts()
+            .into_iter()
+            .find(|id| *id == cpal::HostId::Jack)
+            .expect(
+                "make sure --features jack is specified. only works on OSes where jack is available",
+            )).expect("jack host unavailable")
+    } else {
+        cpal::default_host()
     };
+
+    let device = if let Some(device_name) = cli.device {
+        host.output_devices()?
+            .find(|x| x.name().map(|y| y == device_name).unwrap_or(false))
+    } else {
+        host.default_output_device()
+    };
+
     let device = device.expect("failed to find output device");
     println!("Output device: {}", device.name()?);
 
@@ -54,6 +76,7 @@ fn main() -> anyhow::Result<()> {
             cpal::SampleFormat::U16 => run::<u16>(&device, &config.into()),
         },
         Command::ListDevices => {
+            println!("Devices:");
             for device in host.output_devices()? {
                 if let Ok(device_name) = device.name() {
                     println!("{}", device_name);
@@ -66,7 +89,6 @@ fn main() -> anyhow::Result<()> {
 
 fn convert_to_frequency_domain() {
     let sine_sweep = SineSweep::new(50.0, 5000.0, 10.0, 0.5, 44100.0);
-
 
     let mut planner = FftPlanner::<f32>::new();
     let fft = planner.plan_fft_forward(438718 / 2);
@@ -84,7 +106,6 @@ fn plot_frequency_response(buffer: Vec<Complex<f32>>) {
         .set_label_area_size(LabelAreaPosition::Bottom, 60)
         .build_cartesian_2d(0f32..10f32 * 44100f32, -1.2f32..1.2f32)
         .unwrap();
-
 
     //let values: Vec<(_, _)> = buffer.iter().enumerate().collect();
     let values: Vec<(_, _)> = buffer

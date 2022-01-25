@@ -217,15 +217,9 @@ version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6888e10551bb93e424d8df1d07f1a8b4fceb0001a3a4b048bfc47554946f47b3"
 dependencies = [
- "core-foundation-sys 0.8.3",
+ "core-foundation-sys",
  "libc",
 ]
-
-[[package]]
-name = "core-foundation-sys"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7ca8a5221364ef15ce201e8ed2f609fc312682a8f4e0e3d4aa5879764e0fa3b"
 
 [[package]]
 name = "core-foundation-sys"
@@ -291,15 +285,15 @@ dependencies = [
 
 [[package]]
 name = "cpal"
-version = "0.13.3"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8351ddf2aaa3c583fa388029f8b3d26f3c7035a20911fdd5f2e2ed7ab57dad25"
+checksum = "98f45f0a21f617cd2c788889ef710b63f075c949259593ea09c826f1e47a2418"
 dependencies = [
  "alsa",
- "core-foundation-sys 0.6.2",
+ "core-foundation-sys",
  "coreaudio-rs",
  "jack",
- "jni",
+ "jni 0.19.0",
  "js-sys",
  "lazy_static",
  "libc",
@@ -587,25 +581,27 @@ dependencies = [
 
 [[package]]
 name = "jack"
-version = "0.6.6"
+version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2deb4974bd7e6b2fb7784f27fa13d819d11292b3b004dce0185ec08163cf686a"
+checksum = "d79b205ea723e478eb31a91dcdda100912c69cc32992eb7ba26ec0bbae7bebe4"
 dependencies = [
  "bitflags",
  "jack-sys",
  "lazy_static",
  "libc",
+ "log",
 ]
 
 [[package]]
 name = "jack-sys"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57983f0d72dfecf2b719ed39bc9cacd85194e1a94cb3f9146009eff9856fef41"
+checksum = "7b91f2d2d10bc2bab38f4dfa4bc77123a988828af39dd3f30dd9db14d44f2cc1"
 dependencies = [
  "lazy_static",
  "libc",
  "libloading 0.6.7",
+ "pkg-config",
 ]
 
 [[package]]
@@ -613,6 +609,20 @@ name = "jni"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "24967112a1e4301ca5342ea339763613a37592b8a6ce6cf2e4494537c7a42faf"
+dependencies = [
+ "cesu8",
+ "combine",
+ "jni-sys",
+ "log",
+ "thiserror",
+ "walkdir",
+]
+
+[[package]]
+name = "jni"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6df18c2e3db7e453d3c6ac5b3e9d5182664d28788126d39b91f2d1e22b017ec"
 dependencies = [
  "cesu8",
  "combine",
@@ -888,7 +898,7 @@ version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfa187b38ae20374617b7ad418034ed3dc90ac980181d211518bd03537ae8f8d"
 dependencies = [
- "jni",
+ "jni 0.18.0",
  "ndk",
  "ndk-glue",
  "num-derive",

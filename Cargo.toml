@@ -8,6 +8,6 @@ edition = "2018"
 [dependencies]
 anyhow = "1.0.42"
 clap = { version = "3.0.10", features = ["derive"] }
-cpal = { version="0.13.3", features=["jack"] }
+cpal = { version="0.13.4", features=["jack"] }
 plotters = "0.3"
 rustfft = "6.0"
