@@ -1,4 +1,5 @@
 /data
+/results
 /target
 **/*.rs.bk
 *.deb
