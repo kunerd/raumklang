@@ -23,7 +23,7 @@ fn main() {
     // Mutable because the FFT takes mutable slices &[Complex<f32>]
     // let window_array = Array2::from_shape_vec((WINDOW_SIZE, windows_vec.len()), windows_vec).unwrap();
 
-    let samples_array = Array::from(samples.clone());
+    let samples_array = Array::from(samples);
     let windows = samples_array
         .windows(ndarray::Dim(WINDOW_SIZE))
         .into_iter()
@@ -33,7 +33,7 @@ fn main() {
     let windows = ndarray::stack(Axis(0), &windows).unwrap();
 
     // So to perform the FFT on each window we need a Complex<f32>, and right now we have i16s, so first let's convert
-    let mut windows = windows.map(|i| Complex::from(*i as f32));
+    let mut windows = windows.map(|i| Complex::from(*i));
 
 
     // get the FFT up and running

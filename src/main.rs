@@ -36,13 +36,13 @@ enum Command {
     },
     Plot,
     PingPong,
-    RIR,
+    Rir,
     RunMeasurement {
         #[clap(short, long)]
         duration: u8,
     },
     ComputeRIR,
-    RMS,
+    Rms,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]

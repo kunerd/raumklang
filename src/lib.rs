@@ -83,10 +83,6 @@ pub struct WhiteNoise {
 }
 
 impl WhiteNoise {
-    pub fn new() -> Self {
-        Self::with_amplitude(0.5)
-    }
-
     pub fn with_amplitude(amplitude: f32) -> Self {
         WhiteNoise {
             amplitude,
@@ -113,10 +109,6 @@ pub struct PinkNoise {
 }
 
 impl PinkNoise {
-    pub fn new() -> Self {
-        Self::with_amplitude(0.5)
-    }
-
     pub fn with_amplitude(amplitude: f32) -> Self {
         let white_noise = WhiteNoise::with_amplitude(amplitude);
 
@@ -178,7 +170,7 @@ impl OutputDevice {
         Ok(device.default_output_config()?)
     }
 
-    pub fn play<'a, T, D>(&self, audio: D, duration: Option<Duration>) -> Result<(), anyhow::Error>
+    pub fn play<T, D>(&self, audio: D, duration: Option<Duration>) -> Result<(), anyhow::Error>
     where
         T: cpal::Sample + cpal::FromSample<f32> + cpal::SizedSample,
         D: IntoIterator<Item = f32>,
@@ -286,12 +278,12 @@ fn get_output_device_from_name_or_default(
     if let Some(name) = name {
         Ok(OutputDevice::from_name(host, name)?)
     } else {
-        Ok(OutputDevice::from_system_default(&host)?)
+        Ok(OutputDevice::from_system_default(host)?)
     }
 }
 
 fn volume_to_amplitude(volume: f32) -> f32 {
-    assert!(volume >= 0.0 && volume <= 1.0);
+    assert!((0.0..=1.0).contains(&volume));
 
     // FIXME:
     // 1. remove magic numbers
@@ -315,7 +307,7 @@ pub fn play_sine_sweep(
     let host = get_host_from_name_or_default(host_name)?;
 
     let amplitude = volume_to_amplitude(volume);
-    let sine_sweep = SineSweep::new(50, 10000, duration.into(), amplitude, 44_100).into_iter();
+    let sine_sweep = SineSweep::new(50, 10000, duration.into(), amplitude, 44_100);
 
     let output = get_output_device_from_name_or_default(&host, device_name)?;
     output.play::<f32, _>(sine_sweep, None)?;
@@ -489,11 +481,11 @@ pub fn compute_rir(record_path: &str, sweep_path: &str) -> anyhow::Result<()> {
     // convert to complex
     let mut record_samples: Vec<_> = record_samples
         .into_iter()
-        .map(|s| Complex::from(s))
+        .map(Complex::from)
         .collect();
     let mut sweep_samples: Vec<_> = sweep_samples
         .into_iter()
-        .map(|s| Complex::from(s))
+        .map(Complex::from)
         .collect();
 
     // convert into frequency domain
@@ -568,7 +560,7 @@ pub fn run_measurement(
     let spec = wav_spec_from_config(&output_config);
     let mut sweep_writer = hound::WavWriter::create(sweep_path, spec)?;
 
-    let sine_sweep = SineSweep::new(50, 5_000, duration.into(), 0.125, 44_100).into_iter();
+    let sine_sweep = SineSweep::new(50, 5_000, duration.into(), 0.125, 44_100);
     let sine_sweep: Vec<f32> = sine_sweep.into_iter().collect();
 
     let stream = match input_config.sample_format() {
@@ -694,7 +686,7 @@ pub fn old_rir(
     let stream = match input_config.sample_format() {
         cpal::SampleFormat::F32 => device.build_input_stream(
             &input_config.into(),
-            move |data, _: &_| write_input_data_ram::<f32, f32>(data, &writer_2),
+            move |data, _: &_| write_input_data_ram::<f32>(data, &writer_2),
             err_fn,
             None,
         )?,
@@ -725,9 +717,9 @@ pub fn old_rir(
     let sine_sweep_clone: Vec<f32> = sine_sweep.clone();
 
     match config.sample_format() {
-        cpal::SampleFormat::F32 => play_audio::<f32, _>(&device, &config.into(), sine_sweep),
-        cpal::SampleFormat::I16 => play_audio::<i16, _>(&device, &config.into(), sine_sweep),
-        cpal::SampleFormat::U16 => play_audio::<u16, _>(&device, &config.into(), sine_sweep),
+        cpal::SampleFormat::F32 => play_audio::<f32, _>(device, &config.into(), sine_sweep),
+        cpal::SampleFormat::I16 => play_audio::<i16, _>(device, &config.into(), sine_sweep),
+        cpal::SampleFormat::U16 => play_audio::<u16, _>(device, &config.into(), sine_sweep),
         _ => panic!("Sample format not supported!"),
     }?;
 
@@ -738,7 +730,7 @@ pub fn old_rir(
     let recording = guard.take().unwrap();
     // convert to complex numbers
     let mut recording: Vec<Complex<f32>> =
-        recording.into_iter().map(|m| Complex::from(m)).collect();
+        recording.into_iter().map(Complex::from).collect();
     // double size and fill with 0
     plot_time_domain("recording.png", &recording);
 
@@ -748,7 +740,7 @@ pub fn old_rir(
     // Sweep signal
     let mut sweep_complex: Vec<Complex<f32>> = sine_sweep_clone
         .into_iter()
-        .map(|m| Complex::from(m))
+        .map(Complex::from)
         .collect();
     sweep_complex.append(&mut vec![Complex::from(0.0); recording.len()]);
     plot_time_domain("sweep.png", &sweep_complex);
@@ -787,7 +779,7 @@ pub fn old_rir(
     Ok(())
 }
 
-pub fn play_audio<'a, T, D>(
+pub fn play_audio<T, D>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     audio: D,
@@ -809,7 +801,7 @@ where
         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
             for frame in data.chunks_mut(channels) {
                 if let Some(sample) = audio.next() {
-                    let value = T::from_sample(sample.into());
+                    let value = T::from_sample(sample);
                     //for sample in frame.iter_mut() {
                     //    *sample = value;
                     //}
@@ -843,7 +835,7 @@ where
 
 pub fn plot_fake_impulse_respons() -> anyhow::Result<()> {
     let sine_sweep = SineSweep::new(50, 10000, 10, 0.8, 44_100);
-    let mut buffer: Vec<Complex<f32>> = sine_sweep.map(|m| Complex::from(m)).collect();
+    let mut buffer: Vec<Complex<f32>> = sine_sweep.map(Complex::from).collect();
     buffer.append(&mut vec![Complex::from(0.0); buffer.len()]);
 
     convert_to_frequency_domain(&mut buffer);
@@ -904,7 +896,7 @@ pub fn plot_frequency_domain(file_name: &str, buffer: &[Complex<f32>]) {
     root_drawing_area.fill(&WHITE).unwrap();
     //let x_cord: LogCoord<f32> = (0.0..6000.0).log_scale().into();
     //let max_freq = (buffer.len() / 2 - 1) as f32 * 44_100.0 / buffer.len() as f32;
-    let max_freq = 5_000 as f32;
+    let max_freq: f32 = 5_000.0;
     //let values: Vec<(_, _)> = buffer.iter().enumerate().collect();
     let dbfs = |v: f32| 20.0 * f32::log10(v.abs());
     let buf_size = buffer.len() * 2;
@@ -1028,7 +1020,7 @@ pub fn start_record(device: &cpal::Device, duration: usize) -> Result<Vec<f32>, 
     let stream = match config.sample_format() {
         cpal::SampleFormat::F32 => device.build_input_stream(
             &config.into(),
-            move |data, _: &_| write_input_data_ram::<f32, f32>(data, &writer_2),
+            move |data, _: &_| write_input_data_ram::<f32>(data, &writer_2),
             err_fn,
             None,
         )?,
@@ -1051,7 +1043,7 @@ pub fn start_record(device: &cpal::Device, duration: usize) -> Result<Vec<f32>, 
     Ok(guard.take().unwrap())
 }
 
-fn write_input_data_ram<T, U>(input: &[T], writer: &Arc<Mutex<Option<Vec<T>>>>)
+fn write_input_data_ram<T>(input: &[T], writer: &Arc<Mutex<Option<Vec<T>>>>)
 where
     T: Sample,
 {
@@ -1094,7 +1086,7 @@ fn draw_spectrogram(file_name: &str, samples: &[f32]) {
     let windows = ndarray::stack(Axis(0), &windows).unwrap();
 
     // So to perform the FFT on each window we need a Complex<f32>, and right now we have i16s, so first let's convert
-    let mut windows = windows.map(|i| Complex::from(*i as f32));
+    let mut windows = windows.map(|i| Complex::from(*i));
 
     // get the FFT up and running
     let mut planner = FftPlanner::new();
