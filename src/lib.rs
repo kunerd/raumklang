@@ -34,8 +34,8 @@ pub struct SineSweep {
 // TODO: implement log sweep
 impl SineSweep {
     pub fn new(
-        start_frequency: u32,
-        end_frequency: u32,
+        start_frequency: u16,
+        end_frequency: u16,
         duration: u32,
         amplitude: f32,
         sample_rate: u32,
@@ -298,18 +298,22 @@ fn volume_to_amplitude(volume: f32) -> f32 {
     }
 }
 
-pub fn play_sine_sweep(
+pub fn play_log_sine_sweep(
     host_name: Option<&str>,
     device_name: Option<&str>,
+    start_frequency: u16,
+    max_frequency: u16,
     duration: u8,
     volume: f32,
 ) -> anyhow::Result<()> {
     let host = get_host_from_name_or_default(host_name)?;
 
     let amplitude = volume_to_amplitude(volume);
-    let sine_sweep = SineSweep::new(50, 10000, duration.into(), amplitude, 44_100);
-
     let output = get_output_device_from_name_or_default(&host, device_name)?;
+
+    let sample_rate = output.config.sample_rate.0;
+    let sine_sweep = SineSweep::new(start_frequency, max_frequency, duration.into(), amplitude, sample_rate);
+
     output.play::<f32, _>(sine_sweep, None)?;
     //match config.sample_format() {
     //    cpal::SampleFormat::F32 => output.play(sine_sweep),

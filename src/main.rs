@@ -2,9 +2,9 @@ extern crate anyhow;
 extern crate clap;
 extern crate cpal;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 
-use raumklang::{list_devices, list_hosts, play_pink_noise, play_sine_sweep, play_white_noise};
+use raumklang::{list_devices, list_hosts, play_log_sine_sweep, play_pink_noise, play_white_noise};
 
 #[derive(Parser)]
 #[clap(author, version)]
@@ -31,7 +31,7 @@ enum Command {
         duration: u8,
         #[clap(short, long, default_value_t = 0.5)]
         volume: f32,
-        #[arg(value_enum)]
+        #[command(subcommand)]
         type_: SignalType,
     },
     Plot,
@@ -45,11 +45,16 @@ enum Command {
     Rms,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+#[derive(Subcommand)]
 enum SignalType {
     WhiteNoise,
     PinkNoise,
-    LogSweep,
+    LogSweep {
+        #[clap(short, long, default_value_t = 50)]
+        start_frequency: u16,
+        #[clap(short, long, default_value_t = 1000)]
+        end_frequency: u16,
+    },
 }
 
 #[derive(Parser)]
@@ -87,7 +92,17 @@ fn main() -> anyhow::Result<()> {
             match *type_ {
                 SignalType::WhiteNoise => play_white_noise(host, device, *duration, *volume),
                 SignalType::PinkNoise => play_pink_noise(host, device, *duration, *volume),
-                SignalType::LogSweep => play_sine_sweep(host, device, *duration, *volume),
+                SignalType::LogSweep {
+                    start_frequency,
+                    end_frequency,
+                } => play_log_sine_sweep(
+                    host,
+                    device,
+                    start_frequency,
+                    end_frequency,
+                    *duration,
+                    *volume,
+                ),
             }
         }
         //        Command::RunMeasurement { duration } => {
