@@ -20,7 +20,6 @@ use cpal::{
 };
 use rustfft::{num_complex::Complex, FftPlanner};
 
-
 pub struct SineSweep {
     sample_rate: u32,
     sample_index: u32,
@@ -144,24 +143,26 @@ impl Iterator for PinkNoise {
 
 pub struct OutputDevice {
     device: cpal::Device,
-    config: cpal::StreamConfig
+    config: cpal::StreamConfig,
 }
 
 impl OutputDevice {
     pub fn from_system_default(host: &cpal::Host) -> anyhow::Result<Self> {
-        let device = host.default_output_device()
+        let device = host
+            .default_output_device()
             .ok_or(anyhow!("No system default device Found"))?;
 
         let config = Self::get_default_config(&device)?;
 
-        Ok(Self{
+        Ok(Self {
             device,
             config: config.into(),
         })
     }
 
     pub fn from_name(host: &cpal::Host, name: &str) -> anyhow::Result<Self> {
-        let device = host.output_devices()?
+        let device = host
+            .output_devices()?
             .find(|x| x.name().map(|y| y == name).unwrap_or(false))
             .ok_or(anyhow!("Device: {}, not found.", name))?;
 
@@ -169,7 +170,7 @@ impl OutputDevice {
 
         Ok(Self {
             device,
-            config: config.into()
+            config: config.into(),
         })
     }
 
@@ -177,31 +178,26 @@ impl OutputDevice {
         Ok(device.default_output_config()?)
     }
 
-    pub fn play<'a, T, D>(
-        &self,
-        audio: D,
-    ) -> Result<(), anyhow::Error>
+    pub fn play<'a, T, D>(&self, audio: D, duration: Option<Duration>) -> Result<(), anyhow::Error>
     where
         T: cpal::Sample + cpal::FromSample<f32> + cpal::SizedSample,
         D: IntoIterator<Item = f32>,
         <D as IntoIterator>::IntoIter: 'static + Send,
     {
         let channels = self.config.channels as usize;
-    
+
         let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
-    
+
         let mut audio = audio.into_iter();
+
         let (complete_tx, complete_rx) = std::sync::mpsc::sync_channel(1);
-    
+
         let stream = self.device.build_output_stream(
             &self.config,
             move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
                 for frame in data.chunks_mut(channels) {
                     if let Some(sample) = audio.next() {
                         let value = T::from_sample(sample);
-                        //for sample in frame.iter_mut() {
-                        //    *sample = value;
-                        //}
                         for (channel, sample) in frame.iter_mut().enumerate() {
                             if channel == 0 {
                                 *sample = value;
@@ -216,20 +212,22 @@ impl OutputDevice {
                 }
             },
             err_fn,
-            None
+            None,
         )?;
+
         stream.play()?;
-    
-        let start_time = Instant::now();
-        // Block until playback completes.
-        complete_rx.recv().unwrap();
-    
-        let duration = start_time.elapsed();
-        println!("Sine sweep duration was: {:?}", duration);
-    
+
+        if let Some(t) = duration {
+            std::thread::sleep(t);
+        } else {
+            let start_time = Instant::now();
+            complete_rx.recv().unwrap();
+            let duration = start_time.elapsed();
+            println!("Sine sweep duration was: {:?}", duration);
+        }
+
         Ok(())
     }
-        
 }
 
 //fn get_output_device(host: &cpal::Host) -> OutputDevice { }
@@ -264,6 +262,116 @@ pub fn list_devices(host_name: &str, input: bool, output: bool) -> anyhow::Resul
             println!("    {}", device.name()?);
         }
     }
+
+    Ok(())
+}
+
+fn get_host_from_name_or_default(name: Option<&str>) -> anyhow::Result<cpal::Host> {
+    if let Some(name) = name {
+        let host_id = cpal::available_hosts()
+            .into_iter()
+            .find(|h| h.name().contains(name))
+            .ok_or(anyhow!("Unknown host: {}", name))?;
+
+        Ok(cpal::host_from_id(host_id)?)
+    } else {
+        Ok(cpal::default_host())
+    }
+}
+
+fn get_output_device_from_name_or_default(
+    host: &cpal::Host,
+    name: Option<&str>,
+) -> anyhow::Result<OutputDevice> {
+    if let Some(name) = name {
+        Ok(OutputDevice::from_name(host, name)?)
+    } else {
+        Ok(OutputDevice::from_system_default(&host)?)
+    }
+}
+
+fn volume_to_amplitude(volume: f32) -> f32 {
+    assert!(volume >= 0.0 && volume <= 1.0);
+
+    // FIXME:
+    // 1. remove magic numbers
+    // https://www.dr-lex.be/info-stuff/volumecontrols.html
+    let a = 0.001;
+    let b = 6.908;
+
+    if volume < 0.1 {
+        volume * 10.0 * a * f32::exp(0.1 * b)
+    } else {
+        a * f32::exp(b * volume)
+    }
+}
+
+pub fn play_sine_sweep(
+    host_name: Option<&str>,
+    device_name: Option<&str>,
+    duration: u8,
+    volume: f32,
+) -> anyhow::Result<()> {
+    let host = get_host_from_name_or_default(host_name)?;
+
+    let amplitude = volume_to_amplitude(volume);
+    let sine_sweep = SineSweep::new(50, 10000, duration.into(), amplitude, 44_100).into_iter();
+
+    let output = get_output_device_from_name_or_default(&host, device_name)?;
+    output.play::<f32, _>(sine_sweep, None)?;
+    //match config.sample_format() {
+    //    cpal::SampleFormat::F32 => output.play(sine_sweep),
+    //    cpal::SampleFormat::I16 => output.play(sine_sweep),
+    //    cpal::SampleFormat::U16 => output.play(sine_sweep),
+    //}?;
+
+    Ok(())
+}
+
+pub fn play_white_noise(
+    host_name: Option<&str>,
+    device_name: Option<&str>,
+    duration: u8,
+    volume: f32,
+) -> anyhow::Result<()> {
+    let host = get_host_from_name_or_default(host_name)?;
+
+    let amplitude = volume_to_amplitude(volume);
+    let white_noise = WhiteNoise::with_amplitude(amplitude);
+
+    let output = get_output_device_from_name_or_default(&host, device_name)?;
+    output.play::<f32, _>(white_noise, Some(Duration::from_secs(duration.into())))?;
+
+    //match config.sample_format() {
+    //    cpal::SampleFormat::F32 => play_audio::<f32, _>(device, &config.into(), white_noise),
+    //    cpal::SampleFormat::I16 => play_audio::<i16, _>(device, &config.into(), white_noise),
+    //    cpal::SampleFormat::U16 => play_audio::<u16, _>(device, &config.into(), white_noise),
+    //    _ => panic!("Sample format not supported!"),
+    //}?;
+
+    Ok(())
+}
+
+pub fn play_pink_noise(
+    host_name: Option<&str>,
+    device_name: Option<&str>,
+    duration: u8,
+    volume: f32,
+) -> anyhow::Result<()> {
+    let host = get_host_from_name_or_default(host_name)?;
+
+    let amplitude = volume_to_amplitude(volume);
+    let pink_noise = PinkNoise::with_amplitude(amplitude);
+
+    let output = get_output_device_from_name_or_default(&host, device_name)?;
+    output.play::<f32, _>(pink_noise, Some(Duration::from_secs(duration.into())))?;
+
+    //match config.sample_format() {
+    //    cpal::SampleFormat::F32 => play_audio::<f32, _>(device, &config.into(), pink_noise),
+    //    cpal::SampleFormat::I16 => play_audio::<i16, _>(device, &config.into(), pink_noise),
+    //    cpal::SampleFormat::U16 => play_audio::<u16, _>(device, &config.into(), pink_noise),
+    //    _ => panic!("Sample format not supported!"),
+    //}?;
 
     Ok(())
 }
@@ -343,41 +451,6 @@ where
             }
         }
     }
-}
-
-pub fn play_white_noise(
-    device: &cpal::Device,
-    config: cpal::SupportedStreamConfig,
-    duration: u8,
-) -> anyhow::Result<()> {
-    let white_noise = WhiteNoise::with_amplitude(0.3);
-
-    match config.sample_format() {
-        cpal::SampleFormat::F32 => run::<f32, _>(device, &config.into(), white_noise),
-        cpal::SampleFormat::I16 => run::<i16, _>(device, &config.into(), white_noise),
-        cpal::SampleFormat::U16 => run::<u16, _>(device, &config.into(), white_noise),
-        _ => panic!("Sample format not supported!")
-    }?;
-
-    std::thread::sleep(Duration::from_secs(duration.into()));
-
-    Ok(())
-}
-
-pub fn play_pink_noise(
-    device: &cpal::Device,
-    config: cpal::SupportedStreamConfig,
-) -> anyhow::Result<()> {
-    let pink_noise = PinkNoise::with_amplitude(0.125);
-
-    match config.sample_format() {
-        cpal::SampleFormat::F32 => run::<f32, _>(device, &config.into(), pink_noise),
-        cpal::SampleFormat::I16 => run::<i16, _>(device, &config.into(), pink_noise),
-        cpal::SampleFormat::U16 => run::<u16, _>(device, &config.into(), pink_noise),
-        _ => panic!("Sample format not supported!")
-    }?;
-
-    Ok(())
 }
 
 pub fn compute_rir(record_path: &str, sweep_path: &str) -> anyhow::Result<()> {
@@ -503,36 +576,36 @@ pub fn run_measurement(
             &input_config.into(),
             move |data, _: &_| write_input_data::<f32, f32>(data, &writer_2),
             err_fn,
-            None
+            None,
         )?,
         cpal::SampleFormat::I16 => input_device.build_input_stream(
             &input_config.into(),
             move |data, _: &_| write_input_data::<i16, i16>(data, &writer_2),
             err_fn,
-            None
+            None,
         )?,
         cpal::SampleFormat::U16 => input_device.build_input_stream(
             &input_config.into(),
             move |data, _: &_| write_input_data::<u16, i16>(data, &writer_2),
             err_fn,
-            None
+            None,
         )?,
-        _ => panic!("Sample format not supported!")
+        _ => panic!("Sample format not supported!"),
     };
 
     stream.play()?;
 
     match output_config.sample_format() {
         cpal::SampleFormat::F32 => {
-            run::<f32, _>(output_device, &output_config.into(), sine_sweep.clone())
+            play_audio::<f32, _>(output_device, &output_config.into(), sine_sweep.clone())
         }
         cpal::SampleFormat::I16 => {
-            run::<i16, _>(output_device, &output_config.into(), sine_sweep.clone())
+            play_audio::<i16, _>(output_device, &output_config.into(), sine_sweep.clone())
         }
         cpal::SampleFormat::U16 => {
-            run::<u16, _>(output_device, &output_config.into(), sine_sweep.clone())
+            play_audio::<u16, _>(output_device, &output_config.into(), sine_sweep.clone())
         }
-        _ => panic!("Sample format not supported!")
+        _ => panic!("Sample format not supported!"),
     }?;
 
     drop(stream);
@@ -585,7 +658,7 @@ fn sample_format(format: cpal::SampleFormat) -> hound::SampleFormat {
         cpal::SampleFormat::U16 => hound::SampleFormat::Int,
         cpal::SampleFormat::I16 => hound::SampleFormat::Int,
         cpal::SampleFormat::F32 => hound::SampleFormat::Float,
-        _ => panic!("Sample format not supported!")
+        _ => panic!("Sample format not supported!"),
     }
 }
 
@@ -623,7 +696,7 @@ pub fn old_rir(
             &input_config.into(),
             move |data, _: &_| write_input_data_ram::<f32, f32>(data, &writer_2),
             err_fn,
-            None
+            None,
         )?,
         sample_format => {
             return Err(anyhow::Error::msg(format!(
@@ -652,10 +725,10 @@ pub fn old_rir(
     let sine_sweep_clone: Vec<f32> = sine_sweep.clone();
 
     match config.sample_format() {
-        cpal::SampleFormat::F32 => run::<f32, _>(&device, &config.into(), sine_sweep),
-        cpal::SampleFormat::I16 => run::<i16, _>(&device, &config.into(), sine_sweep),
-        cpal::SampleFormat::U16 => run::<u16, _>(&device, &config.into(), sine_sweep),
-        _ => panic!("Sample format not supported!")
+        cpal::SampleFormat::F32 => play_audio::<f32, _>(&device, &config.into(), sine_sweep),
+        cpal::SampleFormat::I16 => play_audio::<i16, _>(&device, &config.into(), sine_sweep),
+        cpal::SampleFormat::U16 => play_audio::<u16, _>(&device, &config.into(), sine_sweep),
+        _ => panic!("Sample format not supported!"),
     }?;
 
     drop(stream);
@@ -713,59 +786,60 @@ pub fn old_rir(
 
     Ok(())
 }
-    pub fn run<'a, T, D>(
-        device: &cpal::Device,
-        config: &cpal::StreamConfig,
-        audio: D,
-    ) -> Result<(), anyhow::Error>
-    where
-        T: cpal::Sample + cpal::FromSample<f32> + cpal::SizedSample,
-        D: IntoIterator<Item = f32>,
-        <D as IntoIterator>::IntoIter: 'static + Send,
-    {
-        let channels = config.channels as usize;
-    
-        let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
-    
-        let mut audio = audio.into_iter();
-        let (complete_tx, complete_rx) = std::sync::mpsc::sync_channel(1);
-    
-        let stream = device.build_output_stream(
-            config,
-            move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
-                for frame in data.chunks_mut(channels) {
-                    if let Some(sample) = audio.next() {
-                        let value = T::from_sample(sample.into());
-                        //for sample in frame.iter_mut() {
-                        //    *sample = value;
-                        //}
-                        for (channel, sample) in frame.iter_mut().enumerate() {
-                            if channel == 0 {
-                                *sample = value;
-                            }
-                        }
-                    } else {
-                        complete_tx.try_send(()).ok();
-                        for sample in frame.iter_mut() {
-                            *sample = T::from_sample(0.0);
+
+pub fn play_audio<'a, T, D>(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    audio: D,
+) -> Result<(), anyhow::Error>
+where
+    T: cpal::Sample + cpal::FromSample<f32> + cpal::SizedSample,
+    D: IntoIterator<Item = f32>,
+    <D as IntoIterator>::IntoIter: 'static + Send,
+{
+    let channels = config.channels as usize;
+
+    let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
+
+    let mut audio = audio.into_iter();
+    let (complete_tx, complete_rx) = std::sync::mpsc::sync_channel(1);
+
+    let stream = device.build_output_stream(
+        config,
+        move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
+            for frame in data.chunks_mut(channels) {
+                if let Some(sample) = audio.next() {
+                    let value = T::from_sample(sample.into());
+                    //for sample in frame.iter_mut() {
+                    //    *sample = value;
+                    //}
+                    for (channel, sample) in frame.iter_mut().enumerate() {
+                        if channel == 0 {
+                            *sample = value;
                         }
                     }
+                } else {
+                    complete_tx.try_send(()).ok();
+                    for sample in frame.iter_mut() {
+                        *sample = T::from_sample(0.0);
+                    }
                 }
-            },
-            err_fn,
-            None
-        )?;
-        stream.play()?;
-    
-        let start_time = Instant::now();
-        // Block until playback completes.
-        complete_rx.recv().unwrap();
-    
-        let duration = start_time.elapsed();
-        println!("Sine sweep duration was: {:?}", duration);
-    
-        Ok(())
-    }
+            }
+        },
+        err_fn,
+        None,
+    )?;
+    stream.play()?;
+
+    let start_time = Instant::now();
+    // Block until playback completes.
+    complete_rx.recv().unwrap();
+
+    let duration = start_time.elapsed();
+    println!("Sine sweep duration was: {:?}", duration);
+
+    Ok(())
+}
 
 pub fn plot_fake_impulse_respons() -> anyhow::Result<()> {
     let sine_sweep = SineSweep::new(50, 10000, 10, 0.8, 44_100);
@@ -793,10 +867,7 @@ pub fn plot_fake_impulse_respons() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn ping_pong(
-    host: &cpal::Host,
-    device: &OutputDevice,
-) -> anyhow::Result<()> {
+pub fn ping_pong(host: &cpal::Host, device: &OutputDevice) -> anyhow::Result<()> {
     // Set up the input device and stream with the default input config.
     let input_device = host.default_input_device().unwrap();
     //} else {
@@ -813,23 +884,7 @@ pub fn ping_pong(
     //    cpal::SampleFormat::I16 => run::<i16, _>(device, &config.into(), data),
     //    cpal::SampleFormat::U16 => run::<u16, _>(device, &config.into(), data),
     //}
-    device.play::<f32, _>(data)
-}
-
-pub fn play_sine_sweep(
-    device: &OutputDevice,
-    duration: u8,
-) -> anyhow::Result<()> {
-    let sine_sweep = SineSweep::new(50, 10000, duration.into(), 0.3, 44_100).into_iter();
-
-    device.play::<f32, _>(sine_sweep).unwrap();
-    //match config.sample_format() {
-    //    cpal::SampleFormat::F32 => run::<f32, _>(device, &config.into(), sine_sweep),
-    //    cpal::SampleFormat::I16 => run::<i16, _>(device, &config.into(), sine_sweep),
-    //    cpal::SampleFormat::U16 => run::<u16, _>(device, &config.into(), sine_sweep),
-    //}?;
-
-    Ok(())
+    device.play::<f32, _>(data, None)
 }
 
 pub fn convert_to_frequency_domain(buffer: &mut Vec<Complex<f32>>) {
@@ -975,7 +1030,7 @@ pub fn start_record(device: &cpal::Device, duration: usize) -> Result<Vec<f32>, 
             &config.into(),
             move |data, _: &_| write_input_data_ram::<f32, f32>(data, &writer_2),
             err_fn,
-            None
+            None,
         )?,
         sample_format => {
             return Err(anyhow::Error::msg(format!(
@@ -1012,7 +1067,6 @@ where
         }
     }
 }
-
 
 const WINDOW_SIZE: usize = 1024;
 const OVERLAP: f64 = 0.9;

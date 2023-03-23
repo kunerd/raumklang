@@ -2,12 +2,9 @@ extern crate anyhow;
 extern crate clap;
 extern crate cpal;
 
+use clap::{Parser, Subcommand, ValueEnum};
 
-use clap::{Parser, Subcommand};
-
-use raumklang::{
-    list_devices, list_hosts, play_sine_sweep, OutputDevice,
-};
+use raumklang::{list_devices, list_hosts, play_pink_noise, play_sine_sweep, play_white_noise};
 
 #[derive(Parser)]
 #[clap(author, version)]
@@ -29,9 +26,13 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     List(ListCommand),
-    Sweep {
-        #[clap(short, long)]
+    Signal {
+        #[clap(short, long, default_value_t = 5)]
         duration: u8,
+        #[clap(short, long, default_value_t = 0.5)]
+        volume: f32,
+        #[clap(arg_enum, value_parser)]
+        type_: SignalType,
     },
     Plot,
     PingPong,
@@ -41,12 +42,14 @@ enum Command {
         duration: u8,
     },
     ComputeRIR,
-    WhiteNoise {
-        #[clap(short, long)]
-        duration: u8,
-    },
-    PinkNoise,
     RMS,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+enum SignalType {
+    WhiteNoise,
+    PinkNoise,
+    LogSweep,
 }
 
 #[derive(Parser)]
@@ -69,44 +72,23 @@ enum ListSubCommand {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    // Conditionally compile with jack if the feature is specified.
-    #[cfg(all(
-        any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd"),
-        //feature = "jack"
-    ))]
-    // Manually check for flags. Can be passed through cargo with -- e.g.
-    // cargo run --release --example beep --features jack -- --jack
-    let host = if cli.jack {
-        cpal::host_from_id(cpal::available_hosts()
-            .into_iter()
-            .find(|id| *id == cpal::HostId::Jack)
-            .expect(
-                "make sure --features jack is specified. only works on OSes where jack is available",
-            )).expect("jack host unavailable")
-    } else {
-        cpal::default_host()
-    };
 
-    //let device = if let Some(device_name) = cli.device {
-    //    host.output_devices()?
-    //        .find(|x| x.name().map(|y| y == device_name).unwrap_or(false))
-    //} else {
-    //    host.default_output_device()
-    //};
-
-    //let device = device.expect("failed to find output device");
-    ////println!("Output device: {}", device.name()?);
-
-    //let config = device.default_output_config().unwrap();
-    ////println!("Default output config: {:#?}", config);
-
-    //const RESULT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/results");
+    #[cfg(all(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd"),))]
+    let host = if cli.jack { Some("JACK") } else { None };
 
     match &cli.subcommand {
         Command::List(command) => run_list_command(command),
-        Command::Sweep { duration } => {
-            let output = OutputDevice::from_system_default(&host)?;
-            play_sine_sweep(&output, *duration)
+        Command::Signal {
+            duration,
+            volume,
+            type_,
+        } => {
+            let device = cli.device.as_deref();
+            match *type_ {
+                SignalType::WhiteNoise => play_white_noise(host, device, *duration, *volume),
+                SignalType::PinkNoise => play_pink_noise(host, device, *duration, *volume),
+                SignalType::LogSweep => play_sine_sweep(host, device, *duration, *volume),
+            }
         }
         //        Command::RunMeasurement { duration } => {
         //            let input_device = host.default_input_device().unwrap();
@@ -128,8 +110,6 @@ fn main() -> anyhow::Result<()> {
         //        Command::Plot => plot_fake_impulse_respons(),
         //        Command::PingPong => ping_pong(&host, &device, config),
         //        Command::RIR => old_rir(&host, &device, config),
-        //        Command::WhiteNoise { duration } => play_white_noise(&device, config, *duration),
-        //        Command::PinkNoise => play_pink_noise(&device, config),
         //        Command::RMS => {
         //            let input_device = host.default_input_device().unwrap();
         //            meter_rms(&input_device)
