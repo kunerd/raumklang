@@ -10,7 +10,7 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = "1.0.42"
-clap = { version = "3.0.10", features = ["derive"] }
+clap = { version = "4.1.11", features = ["derive"] }
 cpal = { version="0.15.1", features=["jack"] }
 ringbuf = "0.3.2"
 config = "0.13.1"

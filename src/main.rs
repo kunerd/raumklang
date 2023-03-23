@@ -19,7 +19,7 @@ struct Cli {
     device: Option<String>,
     #[clap(long)]
     plot: bool,
-    #[clap(subcommand)]
+    #[command(subcommand)]
     subcommand: Command,
 }
 
@@ -31,7 +31,7 @@ enum Command {
         duration: u8,
         #[clap(short, long, default_value_t = 0.5)]
         volume: f32,
-        #[clap(arg_enum, value_parser)]
+        #[arg(value_enum)]
         type_: SignalType,
     },
     Plot,
