@@ -305,17 +305,96 @@ fn volume_to_amplitude(volume: f32) -> f32 {
     }
 }
 
+use jack;
+
+pub fn play_signal<D>(audio: D, duration: Option<Duration>) -> Result<(), anyhow::Error>
+where
+    D: IntoIterator<Item = f32>,
+    <D as IntoIterator>::IntoIter: 'static + Send,
+{
+    let jack_client_name = "raumklang";
+    let jack_output_name = "out";
+
+    // TODO use app name
+    let (client, _status) =
+        jack::Client::new(jack_client_name, jack::ClientOptions::NO_START_SERVER)?;
+
+    // TODO remove hard coded port name
+    let mut out_port = client.register_port(jack_output_name, jack::AudioOut::default())?;
+
+    let mut audio = audio.into_iter();
+    let (complete_tx, complete_rx) = std::sync::mpsc::sync_channel(1);
+    let process = jack::ClosureProcessHandler::new(
+        move |_: &jack::Client, ps: &jack::ProcessScope| -> jack::Control {
+            // Get output buffer
+            let out = out_port.as_mut_slice(ps);
+
+            // Write output
+            for o in out.iter_mut() {
+                if let Some(sample) = audio.next() {
+                    *o = sample;
+                } else {
+                    complete_tx.try_send(()).ok();
+                    *o = 0.0f32;
+                }
+            }
+
+            // Continue as normal
+            jack::Control::Continue
+        },
+    );
+
+    // 4. Activate the client. Also connect the ports to the system audio.
+    let active_client = client.activate_async((), process)?;
+    let client_out_port = format!("{}:{}", jack_client_name, jack_output_name);
+    active_client
+        .as_client()
+        .connect_ports_by_name(&client_out_port, "system:playback_1")?;
+    active_client
+        .as_client()
+        .connect_ports_by_name(&client_out_port, "system:playback_2")?;
+
+    if let Some(t) = duration {
+        std::thread::sleep(t);
+    } else {
+        let start_time = Instant::now();
+        complete_rx.recv().unwrap();
+        let duration = start_time.elapsed();
+        println!("Playback time: {:?}", duration);
+    }
+
+    Ok(())
+}
+
+pub fn play_white_noise(config: &PlaySignalConfig) -> anyhow::Result<()> {
+    let amplitude = volume_to_amplitude(config.volume);
+    let white_noise = WhiteNoise::with_amplitude(amplitude);
+
+    play_signal(
+        white_noise,
+        Some(Duration::from_secs(config.duration as u64)),
+    )
+}
+
+pub fn play_pink_noise(config: &PlaySignalConfig) -> anyhow::Result<()> {
+    let amplitude = volume_to_amplitude(config.volume);
+    let pink_noise = PinkNoise::with_amplitude(amplitude);
+
+    play_signal(
+        pink_noise,
+        Some(Duration::from_secs(config.duration as u64)),
+    )
+}
+
 pub fn play_linear_sine_sweep(
     start_frequency: u16,
     max_frequency: u16,
     config: &PlaySignalConfig,
 ) -> anyhow::Result<()> {
-    let host = get_host_from_name_or_default(config.host_name)?;
+    // TODO make configurable
+    let sample_rate = 48_000;
 
     let amplitude = volume_to_amplitude(config.volume);
-    let output = get_output_device_from_name_or_default(&host, config.device_name)?;
-
-    let sample_rate = output.config.sample_rate.0;
     let sine_sweep = SineSweep::new(
         start_frequency,
         max_frequency,
@@ -324,59 +403,9 @@ pub fn play_linear_sine_sweep(
         sample_rate,
     );
 
-    output.play::<f32, _>(sine_sweep, None)?;
-    //match config.sample_format() {
-    //    cpal::SampleFormat::F32 => output.play(sine_sweep),
-    //    cpal::SampleFormat::I16 => output.play(sine_sweep),
-    //    cpal::SampleFormat::U16 => output.play(sine_sweep),
-    //}?;
-
-    Ok(())
+    play_signal(sine_sweep, None)
 }
 
-pub fn play_white_noise(config: &PlaySignalConfig) -> anyhow::Result<()> {
-    let host = get_host_from_name_or_default(config.host_name)?;
-
-    let amplitude = volume_to_amplitude(config.volume);
-    let white_noise = WhiteNoise::with_amplitude(amplitude);
-
-    let output = get_output_device_from_name_or_default(&host, config.device_name)?;
-    output.play::<f32, _>(
-        white_noise,
-        Some(Duration::from_secs(config.duration.into())),
-    )?;
-
-    //match config.sample_format() {
-    //    cpal::SampleFormat::F32 => play_audio::<f32, _>(device, &config.into(), white_noise),
-    //    cpal::SampleFormat::I16 => play_audio::<i16, _>(device, &config.into(), white_noise),
-    //    cpal::SampleFormat::U16 => play_audio::<u16, _>(device, &config.into(), white_noise),
-    //    _ => panic!("Sample format not supported!"),
-    //}?;
-
-    Ok(())
-}
-
-pub fn play_pink_noise(config: &PlaySignalConfig) -> anyhow::Result<()> {
-    let host = get_host_from_name_or_default(config.host_name)?;
-
-    let amplitude = volume_to_amplitude(config.volume);
-    let pink_noise = PinkNoise::with_amplitude(amplitude);
-
-    let output = get_output_device_from_name_or_default(&host, config.device_name)?;
-    output.play::<f32, _>(
-        pink_noise,
-        Some(Duration::from_secs(config.duration.into())),
-    )?;
-
-    //match config.sample_format() {
-    //    cpal::SampleFormat::F32 => play_audio::<f32, _>(device, &config.into(), pink_noise),
-    //    cpal::SampleFormat::I16 => play_audio::<i16, _>(device, &config.into(), pink_noise),
-    //    cpal::SampleFormat::U16 => play_audio::<u16, _>(device, &config.into(), pink_noise),
-    //    _ => panic!("Sample format not supported!"),
-    //}?;
-
-    Ok(())
-}
 
 // legacy code
 

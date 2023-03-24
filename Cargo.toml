@@ -22,3 +22,4 @@ colorous = "1.0.3"
 hound = "3.5"
 rand = { version = "0.8", features = ["std", "std_rng", "small_rng"] }
 dasp = { version = "0.11", features = ["rms", "peak", "ring_buffer"] }
+jack = "0.11.4"
