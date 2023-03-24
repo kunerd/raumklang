@@ -1,10 +1,11 @@
-extern crate anyhow;
-extern crate clap;
 extern crate cpal;
 
 use clap::{Parser, Subcommand};
 
-use raumklang::{list_devices, list_hosts, play_log_sine_sweep, play_pink_noise, play_white_noise};
+use raumklang::{
+    list_devices, list_hosts, meter_rms, play_linear_sine_sweep, play_pink_noise, play_white_noise,
+    PlaySignalConfig,
+};
 
 #[derive(Parser)]
 #[clap(author, version)]
@@ -88,22 +89,25 @@ fn main() -> anyhow::Result<()> {
             volume,
             type_,
         } => {
-            let device = cli.device.as_deref();
+            let config = PlaySignalConfig {
+                host_name: host,
+                device_name: cli.device.as_deref(),
+                duration: *duration,
+                volume: *volume,
+            };
+
             match *type_ {
-                SignalType::WhiteNoise => play_white_noise(host, device, *duration, *volume),
-                SignalType::PinkNoise => play_pink_noise(host, device, *duration, *volume),
+                SignalType::WhiteNoise => play_white_noise(&config),
+                SignalType::PinkNoise => play_pink_noise(&config),
                 SignalType::LogSweep {
                     start_frequency,
                     end_frequency,
-                } => play_log_sine_sweep(
-                    host,
-                    device,
-                    start_frequency,
-                    end_frequency,
-                    *duration,
-                    *volume,
-                ),
+                } => play_linear_sine_sweep(start_frequency, end_frequency, &config),
             }
+        }
+        Command::Rms => {
+            let device = cli.device.as_deref();
+            meter_rms(host, device)
         }
         //        Command::RunMeasurement { duration } => {
         //            let input_device = host.default_input_device().unwrap();

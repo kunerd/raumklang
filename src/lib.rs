@@ -133,6 +133,13 @@ impl Iterator for PinkNoise {
     }
 }
 
+pub struct PlaySignalConfig<'a> {
+    pub host_name: Option<&'a str>,
+    pub device_name: Option<&'a str>,
+    pub duration: u8,
+    pub volume: f32,
+}
+
 pub struct OutputDevice {
     device: cpal::Device,
     config: cpal::StreamConfig,
@@ -298,21 +305,24 @@ fn volume_to_amplitude(volume: f32) -> f32 {
     }
 }
 
-pub fn play_log_sine_sweep(
-    host_name: Option<&str>,
-    device_name: Option<&str>,
+pub fn play_linear_sine_sweep(
     start_frequency: u16,
     max_frequency: u16,
-    duration: u8,
-    volume: f32,
+    config: &PlaySignalConfig,
 ) -> anyhow::Result<()> {
-    let host = get_host_from_name_or_default(host_name)?;
+    let host = get_host_from_name_or_default(config.host_name)?;
 
-    let amplitude = volume_to_amplitude(volume);
-    let output = get_output_device_from_name_or_default(&host, device_name)?;
+    let amplitude = volume_to_amplitude(config.volume);
+    let output = get_output_device_from_name_or_default(&host, config.device_name)?;
 
     let sample_rate = output.config.sample_rate.0;
-    let sine_sweep = SineSweep::new(start_frequency, max_frequency, duration.into(), amplitude, sample_rate);
+    let sine_sweep = SineSweep::new(
+        start_frequency,
+        max_frequency,
+        config.duration.into(),
+        amplitude,
+        sample_rate,
+    );
 
     output.play::<f32, _>(sine_sweep, None)?;
     //match config.sample_format() {
@@ -324,19 +334,17 @@ pub fn play_log_sine_sweep(
     Ok(())
 }
 
-pub fn play_white_noise(
-    host_name: Option<&str>,
-    device_name: Option<&str>,
-    duration: u8,
-    volume: f32,
-) -> anyhow::Result<()> {
-    let host = get_host_from_name_or_default(host_name)?;
+pub fn play_white_noise(config: &PlaySignalConfig) -> anyhow::Result<()> {
+    let host = get_host_from_name_or_default(config.host_name)?;
 
-    let amplitude = volume_to_amplitude(volume);
+    let amplitude = volume_to_amplitude(config.volume);
     let white_noise = WhiteNoise::with_amplitude(amplitude);
 
-    let output = get_output_device_from_name_or_default(&host, device_name)?;
-    output.play::<f32, _>(white_noise, Some(Duration::from_secs(duration.into())))?;
+    let output = get_output_device_from_name_or_default(&host, config.device_name)?;
+    output.play::<f32, _>(
+        white_noise,
+        Some(Duration::from_secs(config.duration.into())),
+    )?;
 
     //match config.sample_format() {
     //    cpal::SampleFormat::F32 => play_audio::<f32, _>(device, &config.into(), white_noise),
@@ -348,19 +356,17 @@ pub fn play_white_noise(
     Ok(())
 }
 
-pub fn play_pink_noise(
-    host_name: Option<&str>,
-    device_name: Option<&str>,
-    duration: u8,
-    volume: f32,
-) -> anyhow::Result<()> {
-    let host = get_host_from_name_or_default(host_name)?;
+pub fn play_pink_noise(config: &PlaySignalConfig) -> anyhow::Result<()> {
+    let host = get_host_from_name_or_default(config.host_name)?;
 
-    let amplitude = volume_to_amplitude(volume);
+    let amplitude = volume_to_amplitude(config.volume);
     let pink_noise = PinkNoise::with_amplitude(amplitude);
 
-    let output = get_output_device_from_name_or_default(&host, device_name)?;
-    output.play::<f32, _>(pink_noise, Some(Duration::from_secs(duration.into())))?;
+    let output = get_output_device_from_name_or_default(&host, config.device_name)?;
+    output.play::<f32, _>(
+        pink_noise,
+        Some(Duration::from_secs(config.duration.into())),
+    )?;
 
     //match config.sample_format() {
     //    cpal::SampleFormat::F32 => play_audio::<f32, _>(device, &config.into(), pink_noise),
@@ -374,12 +380,21 @@ pub fn play_pink_noise(
 
 // legacy code
 
-pub fn meter_rms(input_device: &cpal::Device) -> anyhow::Result<()> {
+pub fn meter_rms(host_name: Option<&str>, device_name: Option<&str>) -> anyhow::Result<()> {
+    let host = get_host_from_name_or_default(host_name)?;
+
+    let input_device = if let Some(name) = device_name {
+        host.input_devices()?
+            .find(|x| x.name().map(|y| y == name).unwrap_or(false))
+            .ok_or(anyhow!("Device: {}, not found.", name))
+    } else {
+        host.default_input_device()
+            .ok_or(anyhow!("No default input device found."))
+    }?;
+
     let input_config = input_device
         .default_input_config()
         .expect("Failed to get default input config");
-
-    println!("Default input config: {:?}", input_config);
 
     let err_fn = move |err| {
         eprintln!("an error occurred on stream: {}", err);
@@ -428,7 +443,6 @@ pub fn meter_rms(input_device: &cpal::Device) -> anyhow::Result<()> {
             let rms = iter.fold(0f32, |acc, val| acc + val * val) / count as f32;
             let rms = rms.sqrt();
             print!("\x1b[2K\rRMS: {} dBFS", dbfs(rms));
-            //print!("\x1b[2K\rRMS: {} dBFS", dbfs(rms));
             io::stdout().flush().unwrap();
         }
         std::thread::sleep(Duration::from_millis(100));
@@ -483,14 +497,8 @@ pub fn compute_rir(record_path: &str, sweep_path: &str) -> anyhow::Result<()> {
     sweep_samples.append(&mut vec![0.0; sweep_samples.len()]);
 
     // convert to complex
-    let mut record_samples: Vec<_> = record_samples
-        .into_iter()
-        .map(Complex::from)
-        .collect();
-    let mut sweep_samples: Vec<_> = sweep_samples
-        .into_iter()
-        .map(Complex::from)
-        .collect();
+    let mut record_samples: Vec<_> = record_samples.into_iter().map(Complex::from).collect();
+    let mut sweep_samples: Vec<_> = sweep_samples.into_iter().map(Complex::from).collect();
 
     // convert into frequency domain
     let mut planner = FftPlanner::<f32>::new();
@@ -733,8 +741,7 @@ pub fn old_rir(
     let mut guard = writer.lock().unwrap();
     let recording = guard.take().unwrap();
     // convert to complex numbers
-    let mut recording: Vec<Complex<f32>> =
-        recording.into_iter().map(Complex::from).collect();
+    let mut recording: Vec<Complex<f32>> = recording.into_iter().map(Complex::from).collect();
     // double size and fill with 0
     plot_time_domain("recording.png", &recording);
 
@@ -742,10 +749,8 @@ pub fn old_rir(
     convert_to_frequency_domain(&mut recording);
 
     // Sweep signal
-    let mut sweep_complex: Vec<Complex<f32>> = sine_sweep_clone
-        .into_iter()
-        .map(Complex::from)
-        .collect();
+    let mut sweep_complex: Vec<Complex<f32>> =
+        sine_sweep_clone.into_iter().map(Complex::from).collect();
     sweep_complex.append(&mut vec![Complex::from(0.0); recording.len()]);
     plot_time_domain("sweep.png", &sweep_complex);
     convert_to_frequency_domain(&mut sweep_complex);
