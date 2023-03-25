@@ -8,10 +8,10 @@ use ringbuf::HeapRb;
 //use plotters::prelude::*;
 
 use std::{
-//    fs::File,
-//    io::{self, BufWriter, Write},
+    //    fs::File,
+    //    io::{self, BufWriter, Write},
     io::{self, Write},
-//    sync::{Arc, Mutex},
+    //    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -130,7 +130,9 @@ impl Iterator for PinkNoise {
     }
 }
 
-pub struct PlaySignalConfig {
+pub struct PlaySignalConfig<'a> {
+    pub out_port_name: &'a str,
+    pub dest_port_names: Vec<&'a str>,
     pub duration: u8,
     pub volume: f32,
 }
@@ -151,20 +153,23 @@ fn volume_to_amplitude(volume: f32) -> f32 {
     }
 }
 
-pub fn play_signal<D>(audio: D, duration: Option<Duration>) -> Result<(), anyhow::Error>
+pub fn play_signal<D>(
+    audio: D,
+    config: &PlaySignalConfig,
+    duration: Option<Duration>,
+) -> Result<(), anyhow::Error>
 where
     D: IntoIterator<Item = f32>,
     <D as IntoIterator>::IntoIter: 'static + Send,
 {
     let jack_client_name = "raumklang";
-    let jack_output_name = "out";
 
     // TODO use app name
     let (client, _status) =
         jack::Client::new(jack_client_name, jack::ClientOptions::NO_START_SERVER)?;
 
     // TODO remove hard coded port name
-    let mut out_port = client.register_port(jack_output_name, jack::AudioOut::default())?;
+    let mut out_port = client.register_port(config.out_port_name, jack::AudioOut::default())?;
 
     let mut audio = audio.into_iter();
     let (complete_tx, complete_rx) = std::sync::mpsc::sync_channel(1);
@@ -190,13 +195,13 @@ where
 
     // 4. Activate the client. Also connect the ports to the system audio.
     let active_client = client.activate_async((), process)?;
-    let client_out_port = format!("{}:{}", jack_client_name, jack_output_name);
-    active_client
-        .as_client()
-        .connect_ports_by_name(&client_out_port, "system:playback_1")?;
-    active_client
-        .as_client()
-        .connect_ports_by_name(&client_out_port, "system:playback_2")?;
+    let client_out_port = format!("{}:{}", jack_client_name, config.out_port_name);
+
+    for dest in &config.dest_port_names {
+        active_client
+            .as_client()
+            .connect_ports_by_name(&client_out_port, dest)?;
+    }
 
     if let Some(t) = duration {
         std::thread::sleep(t);
@@ -216,6 +221,7 @@ pub fn play_white_noise(config: &PlaySignalConfig) -> anyhow::Result<()> {
 
     play_signal(
         white_noise,
+        config,
         Some(Duration::from_secs(config.duration as u64)),
     )
 }
@@ -226,6 +232,7 @@ pub fn play_pink_noise(config: &PlaySignalConfig) -> anyhow::Result<()> {
 
     play_signal(
         pink_noise,
+        config,
         Some(Duration::from_secs(config.duration as u64)),
     )
 }
@@ -247,20 +254,17 @@ pub fn play_linear_sine_sweep(
         sample_rate,
     );
 
-    play_signal(sine_sweep, None)
+    play_signal(sine_sweep, config, None)
 }
-
 
 // legacy code
 
 pub fn meter_rms() -> anyhow::Result<()> {
-    let (client, _status) =
-        jack::Client::new("raumklang", jack::ClientOptions::NO_START_SERVER)?;
+    let (client, _status) = jack::Client::new("raumklang", jack::ClientOptions::NO_START_SERVER)?;
 
     // Register ports. They will be used in a callback that will be
     // called when new data is available.
-    let in_port = client
-        .register_port("rms_in", jack::AudioIn::default())?;
+    let in_port = client.register_port("rms_in", jack::AudioIn::default())?;
 
     let buf_size = 512;
     let rb = HeapRb::<_>::new(buf_size);
@@ -269,9 +273,9 @@ pub fn meter_rms() -> anyhow::Result<()> {
     let process_callback = move |_: &jack::Client, ps: &jack::ProcessScope| -> jack::Control {
         let in_a_p = in_port.as_slice(ps);
 
-            for i in in_a_p {
-                prod.push(*i).unwrap();
-            }
+        for i in in_a_p {
+            prod.push(*i).unwrap();
+        }
 
         jack::Control::Continue
     };
