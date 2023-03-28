@@ -54,6 +54,10 @@ enum SignalType {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
+    let jack_client_name = env!("CARGO_BIN_NAME");
+    let (jack_client, _status) =
+        jack::Client::new(jack_client_name, jack::ClientOptions::NO_START_SERVER)?;
+
     match &cli.subcommand {
         Command::Signal {
             duration,
@@ -69,15 +73,15 @@ fn main() -> anyhow::Result<()> {
             };
 
             match *type_ {
-                SignalType::WhiteNoise => play_white_noise(&config),
-                SignalType::PinkNoise => play_pink_noise(&config),
+                SignalType::WhiteNoise => play_white_noise(jack_client, &config),
+                SignalType::PinkNoise => play_pink_noise(jack_client, &config),
                 SignalType::LogSweep {
                     start_frequency,
                     end_frequency,
-                } => play_linear_sine_sweep(start_frequency, end_frequency, &config),
+                } => play_linear_sine_sweep(jack_client, start_frequency, end_frequency, &config),
             }
         }
-        Command::Rms { input_port } => meter_rms(input_port),
+        Command::Rms { input_port } => meter_rms(jack_client, input_port),
         //        Command::RunMeasurement { duration } => {
         //            let input_device = host.default_input_device().unwrap();
         //            let mut record_path = String::from(RESULT_PATH);
