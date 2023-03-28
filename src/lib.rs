@@ -257,13 +257,9 @@ pub fn play_linear_sine_sweep(
     play_signal(sine_sweep, config, None)
 }
 
-// legacy code
-
-pub fn meter_rms() -> anyhow::Result<()> {
+pub fn meter_rms(input_port_name: &str) -> anyhow::Result<()> {
     let (client, _status) = jack::Client::new("raumklang", jack::ClientOptions::NO_START_SERVER)?;
 
-    // Register ports. They will be used in a callback that will be
-    // called when new data is available.
     let in_port = client.register_port("rms_in", jack::AudioIn::default())?;
 
     let buf_size = 512;
@@ -281,12 +277,11 @@ pub fn meter_rms() -> anyhow::Result<()> {
     };
     let process = jack::ClosureProcessHandler::new(process_callback);
 
-    // Activate the client, which starts the processing.
     let active_client = client.activate_async((), process)?;
 
     active_client
         .as_client()
-        .connect_ports_by_name("system:capture_1", "raumklang:rms_in")?;
+        .connect_ports_by_name(input_port_name, "raumklang:rms_in")?;
 
     let dbfs = |v: f32| 20.0 * f32::log10(v.abs());
     loop {
@@ -304,6 +299,7 @@ pub fn meter_rms() -> anyhow::Result<()> {
     }
 }
 
+// legacy code
 //pub fn compute_rir(record_path: &str, sweep_path: &str) -> anyhow::Result<()> {
 //    let mut record_reader = hound::WavReader::open(record_path)?;
 //    let mut sweep_reader = hound::WavReader::open(sweep_path)?;

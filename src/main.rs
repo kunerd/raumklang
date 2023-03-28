@@ -33,7 +33,10 @@ enum Command {
         duration: u8,
     },
     ComputeRIR,
-    Rms,
+    Rms {
+        #[arg(short, long)]
+        input_port: String,
+    }
 }
 
 #[derive(Subcommand)]
@@ -74,7 +77,7 @@ fn main() -> anyhow::Result<()> {
                 } => play_linear_sine_sweep(start_frequency, end_frequency, &config),
             }
         }
-        Command::Rms => meter_rms(),
+        Command::Rms { input_port } => meter_rms(input_port),
         //        Command::RunMeasurement { duration } => {
         //            let input_device = host.default_input_device().unwrap();
         //            let mut record_path = String::from(RESULT_PATH);
