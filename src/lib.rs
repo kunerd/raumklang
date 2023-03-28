@@ -11,6 +11,7 @@ use std::{
     //    fs::File,
     //    io::{self, BufWriter, Write},
     io::{self, Write},
+    path::Path,
     //    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -135,6 +136,7 @@ pub struct PlaySignalConfig<'a> {
     pub dest_port_names: Vec<&'a str>,
     pub duration: u8,
     pub volume: f32,
+    pub file_path: Option<&'a str>,
 }
 
 fn volume_to_amplitude(volume: f32) -> f32 {
@@ -163,7 +165,8 @@ where
     D: IntoIterator<Item = f32>,
     <D as IntoIterator>::IntoIter: 'static + Send,
 {
-    let mut out_port = jack_client.register_port(config.out_port_name, jack::AudioOut::default())?;
+    let mut out_port =
+        jack_client.register_port(config.out_port_name, jack::AudioOut::default())?;
 
     let mut audio = audio.into_iter();
     let (complete_tx, complete_rx) = std::sync::mpsc::sync_channel(1);
@@ -209,28 +212,77 @@ where
     Ok(())
 }
 
-pub fn play_white_noise(jack_client: jack::Client, config: &PlaySignalConfig) -> anyhow::Result<()> {
+// TODO support more than just seconds
+// TODO make sample rate configurable
+// TODO make channels configurable
+// TODO make sample format configurable
+fn write_to_file<D>(path: &Path, data: D, duration: Option<u8>) -> anyhow::Result<()>
+where
+    D: IntoIterator<Item = f32>,
+    <D as IntoIterator>::IntoIter: 'static + Send,
+{
+    let sample_rate = 44_100;
+
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+
+    let mut writer = hound::WavWriter::create(path, spec)?;
+
+    if let Some(d) = duration {
+        for s in data
+            .into_iter()
+            .take((sample_rate * d as u32) as usize)
+        {
+            writer.write_sample(s)?;
+        }
+    } else {
+        for s in data {
+            writer.write_sample(s)?;
+        }
+    }
+
+    writer.finalize()?;
+
+    Ok(())
+}
+
+pub fn play_white_noise(
+    jack_client: jack::Client,
+    config: &PlaySignalConfig,
+) -> anyhow::Result<()> {
     let amplitude = volume_to_amplitude(config.volume);
     let white_noise = WhiteNoise::with_amplitude(amplitude);
 
-    play_signal(
-        jack_client,
-        white_noise,
-        config,
-        Some(Duration::from_secs(config.duration as u64)),
-    )
+    if let Some(path) = config.file_path {
+        write_to_file(Path::new(path), white_noise, Some(config.duration))
+    } else {
+        play_signal(
+            jack_client,
+            white_noise,
+            config,
+            Some(Duration::from_secs(config.duration as u64)),
+        )
+    }
 }
 
 pub fn play_pink_noise(jack_client: jack::Client, config: &PlaySignalConfig) -> anyhow::Result<()> {
     let amplitude = volume_to_amplitude(config.volume);
     let pink_noise = PinkNoise::with_amplitude(amplitude);
 
-    play_signal(
-        jack_client,
-        pink_noise,
-        config,
-        Some(Duration::from_secs(config.duration as u64)),
-    )
+    if let Some(path) = config.file_path {
+        write_to_file(Path::new(path), pink_noise, Some(config.duration))
+    } else {
+        play_signal(
+            jack_client,
+            pink_noise,
+            config,
+            Some(Duration::from_secs(config.duration as u64)),
+        )
+    }
 }
 
 pub fn play_linear_sine_sweep(
@@ -251,7 +303,11 @@ pub fn play_linear_sine_sweep(
         sample_rate,
     );
 
-    play_signal(jack_client, sine_sweep, config, None)
+    if let Some(path) = config.file_path {
+        write_to_file(Path::new(path), sine_sweep, None)
+    } else {
+        play_signal(jack_client, sine_sweep, config, None)
+    }
 }
 
 pub fn meter_rms(jack_client: jack::Client, source_port_name: &str) -> anyhow::Result<()> {

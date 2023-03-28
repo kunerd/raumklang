@@ -22,6 +22,8 @@ enum Command {
         volume: f32,
         #[arg(long="dest-port")]
         dest_ports: Vec<String>,
+        #[arg(long)]
+        file_path: Option<String>,
         #[command(subcommand)]
         type_: SignalType,
     },
@@ -62,14 +64,16 @@ fn main() -> anyhow::Result<()> {
         Command::Signal {
             duration,
             volume,
+            dest_ports,
+            file_path,
             type_,
-            dest_ports
         } => {
             let config = PlaySignalConfig {
                 out_port_name: "signal_out",
                 dest_port_names: dest_ports.iter().map(String::as_str).collect(),
                 duration: *duration,
                 volume: *volume,
+                file_path: file_path.as_deref()
             };
 
             match *type_ {
