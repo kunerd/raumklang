@@ -1,7 +1,13 @@
+use std::path;
+
 use clap::{Parser, Subcommand};
 
 use raumklang::{
-    meter_rms, play_linear_sine_sweep, play_pink_noise, play_white_noise, PlaySignalConfig,
+    meter_rms, PlaySignalConfig,
+    FiniteSignal,
+    WhiteNoise,
+    PinkNoise,
+    write_signal_to_file, play_signal, SineSweep
 };
 
 #[derive(Parser)]
@@ -76,13 +82,31 @@ fn main() -> anyhow::Result<()> {
                 file_path: file_path.as_deref()
             };
 
-            match *type_ {
-                SignalType::WhiteNoise => play_white_noise(jack_client, &config),
-                SignalType::PinkNoise => play_pink_noise(jack_client, &config),
+            let amplitude = 0.3;
+            let sample_rate = 44_100;
+
+            let signal: Box<dyn FiniteSignal<Item=f32>> = match *type_ {
+                SignalType::WhiteNoise => Box::new(WhiteNoise::with_amplitude(amplitude).take_duration(sample_rate, *duration)),
+                SignalType::PinkNoise => Box::new(PinkNoise::with_amplitude(amplitude).take_duration(sample_rate, *duration)),
                 SignalType::LogSweep {
                     start_frequency,
                     end_frequency,
-                } => play_linear_sine_sweep(jack_client, start_frequency, end_frequency, &config),
+                } => {
+    let sweep = SineSweep::new(
+        start_frequency,
+        end_frequency,
+        config.duration.into(),
+        amplitude,
+        sample_rate,
+    );
+    Box::new(sweep)
+                }
+            };
+
+            if let Some(file_path) = file_path {
+                write_signal_to_file(signal, &path::Path::new(file_path))
+            } else {
+                play_signal(jack_client, signal, &config)
             }
         }
         Command::Rms { input_port } => meter_rms(jack_client, input_port),
