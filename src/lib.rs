@@ -1,9 +1,8 @@
 use rand::{distributions, distributions::Distribution, rngs, SeedableRng};
-
 //use anyhow::anyhow;
 //use ndarray::{Array, Axis};
 //use ndarray_stats::QuantileExt;
-use ringbuf::HeapRb;
+use ringbuf::{HeapRb, Rb};
 
 //use plotters::prelude::*;
 
@@ -13,24 +12,32 @@ use std::{
     io::{self, Write},
     path::Path,
     //    sync::{Arc, Mutex},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 //use rustfft::{num_complex::Complex, FftPlanner};
 
-pub struct SineSweep {
+pub enum Signal<F, I>
+where
+    F: FiniteSignal,
+{
+    Finite(F),
+    Infinite(I),
+}
+
+pub struct LinearSineSweep {
     sample_rate: u32,
-    sample_index: u32,
+    sample_index: usize,
+    n_samples: usize,
     amplitude: f32,
     frequency: f32,
     delta_frequency: f32,
     phase: f32,
-    duration: u32,
 }
 
 // linear sweep
 // TODO: implement log sweep
-impl SineSweep {
+impl LinearSineSweep {
     pub fn new(
         start_frequency: u16,
         end_frequency: u16,
@@ -38,25 +45,24 @@ impl SineSweep {
         amplitude: f32,
         sample_rate: u32,
     ) -> Self {
-        SineSweep {
+        LinearSineSweep {
             sample_rate,
             sample_index: 0,
+            n_samples: (sample_rate * duration) as usize,
             amplitude,
             frequency: start_frequency as f32,
             delta_frequency: (end_frequency - start_frequency) as f32
                 / (sample_rate * duration) as f32,
             phase: 0.0,
-            duration,
         }
     }
 }
 
-impl Iterator for SineSweep {
+impl Iterator for LinearSineSweep {
     type Item = f32;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let n_samples = self.sample_rate * self.duration;
-        let result = match self.sample_index < n_samples {
+        let result = match self.sample_index < self.n_samples {
             true => Some(self.amplitude * f32::sin(self.phase)),
             _ => None,
         };
@@ -74,8 +80,12 @@ impl Iterator for SineSweep {
     }
 }
 
-impl ExactSizeIterator for SineSweep {}
-impl FiniteSignal for SineSweep {}
+impl ExactSizeIterator for LinearSineSweep {
+    fn len(&self) -> usize {
+        self.n_samples - self.sample_index
+    }
+}
+impl FiniteSignal for LinearSineSweep {}
 
 pub struct WhiteNoise {
     amplitude: f32,
@@ -95,9 +105,8 @@ impl WhiteNoise {
         }
     }
 
-    pub fn take_duration(self, sample_rate: u32, duration: u8) ->  std::iter::Take<WhiteNoise> {
-        self
-            .into_iter()
+    pub fn take_duration(self, sample_rate: u32, duration: u8) -> std::iter::Take<WhiteNoise> {
+        self.into_iter()
             .take((sample_rate * duration as u32) as usize)
     }
 }
@@ -133,9 +142,8 @@ impl PinkNoise {
         }
     }
 
-    pub fn take_duration(self, sample_rate: u32, duration: u8) ->  std::iter::Take<PinkNoise> {
-        self
-            .into_iter()
+    pub fn take_duration(self, sample_rate: u32, duration: u8) -> std::iter::Take<PinkNoise> {
+        self.into_iter()
             .take((sample_rate * duration as u32) as usize)
     }
 }
@@ -178,47 +186,32 @@ fn volume_to_amplitude(volume: f32) -> f32 {
 
 pub fn play_signal(
     jack_client: jack::Client,
-    audio: Box<dyn FiniteSignal<Item = f32>>,
+    mut audio: Box<dyn FiniteSignal<Item = f32>>,
     config: &PlaySignalConfig,
-) -> Result<(), anyhow::Error>
-
-//pub fn play_signal<D>(
-//    jack_client: jack::Client,
-//    audio: Box<&D>,
-//    config: &PlaySignalConfig,
-//    duration: Option<Duration>,
-//) -> Result<(), anyhow::Error>
-//where
-//    D: IntoIterator<Item = f32> + Copy,
-//    <D as IntoIterator>::IntoIter: 'static + Send,
-{
+) -> Result<(), anyhow::Error> {
     let mut out_port =
-        jack_client.register_port(config.out_port_name, jack::AudioOut::default())?;
+        jack_client.register_port(config.out_port_name, jack::AudioOut)?;
 
     let amplitude = volume_to_amplitude(config.volume);
 
-    let mut audio = audio.into_iter();
     let (complete_tx, complete_rx) = std::sync::mpsc::sync_channel(1);
     let process = jack::ClosureProcessHandler::new(
         move |_: &jack::Client, ps: &jack::ProcessScope| -> jack::Control {
-            // Get output buffer
             let out = out_port.as_mut_slice(ps);
 
-            // Write output
             for o in out.iter_mut() {
                 if let Some(sample) = audio.next() {
-                    *o = amplitude * sample ;
+                    *o = amplitude * sample;
                 } else {
                     complete_tx.try_send(()).ok();
                     *o = 0.0f32;
                 }
             }
 
-            // Continue as normal
             jack::Control::Continue
         },
     );
-    // 4. Activate the client. Also connect the ports to the system audio.
+
     let client_source_port_name = format!("{}:{}", jack_client.name(), config.out_port_name);
 
     let active_client = jack_client.activate_async((), process)?;
@@ -228,22 +221,17 @@ pub fn play_signal(
             .connect_ports_by_name(&client_source_port_name, dest)?;
     }
 
-    //if let Some(t) = duration {
-    //    std::thread::sleep(t);
-    //} else {
-        let start_time = Instant::now();
-        complete_rx.recv().unwrap();
-        let duration = start_time.elapsed();
-        println!("Playback time: {:?}", duration);
-    //}
+    complete_rx.recv()?;
 
     Ok(())
 }
 
-pub trait FiniteSignal: Send + ExactSizeIterator<Item=f32> {}
+pub trait FiniteSignal: Send + ExactSizeIterator<Item = f32> {}
 
-pub fn write_signal_to_file(signal: Box<dyn FiniteSignal<Item=f32>>, path: &Path) -> anyhow::Result<()> 
-{
+pub fn write_signal_to_file(
+    signal: Box<dyn FiniteSignal<Item = f32>>,
+    path: &Path,
+) -> anyhow::Result<()> {
     let sample_rate = 44_100;
 
     let spec = hound::WavSpec {
@@ -255,31 +243,22 @@ pub fn write_signal_to_file(signal: Box<dyn FiniteSignal<Item=f32>>, path: &Path
 
     let mut writer = hound::WavWriter::create(path, spec)?;
 
-    // FIXME duplicate code
-    //if let Some(d) = duration {
-    //    for s in signal
-    //        .into_iter()
-    //        .take((sample_rate * d as u32) as usize)
-    //    {
-    //        writer.write_sample(s)?;
-    //    }
-    //} else {
-        for s in signal {
-            writer.write_sample(s)?;
-        }
-    //}
+    for s in signal {
+        writer.write_sample(s)?;
+    }
 
     writer.finalize()?;
 
     Ok(())
 }
 
-
 pub fn meter_rms(jack_client: jack::Client, source_port_name: &str) -> anyhow::Result<()> {
-    let in_port = jack_client.register_port("rms_in", jack::AudioIn::default())?;
+    let sample_rate = jack_client.sample_rate();
+    let in_port = jack_client.register_port("rms_in", jack::AudioIn)?;
 
-    let buf_size = 512;
-    let rb = HeapRb::<_>::new(buf_size);
+    let window_size = sample_rate * 300 / 1000;
+
+    let rb = HeapRb::<_>::new(window_size);
     let (mut prod, mut cons) = rb.split();
 
     let process_callback = move |_: &jack::Client, ps: &jack::ProcessScope| -> jack::Control {
@@ -299,18 +278,46 @@ pub fn meter_rms(jack_client: jack::Client, source_port_name: &str) -> anyhow::R
         .as_client()
         .connect_ports_by_name(source_port_name, input_port_name)?;
 
-    let dbfs = |v: f32| 20.0 * f32::log10(v.abs());
+    let mut last_rms = Instant::now();
+    let mut last_peak = Instant::now();
+    let mut peak = f32::NEG_INFINITY;
+
+    let dbfs = |v: f32| 20.0 * f32::log10(v);
+
+    let mut window = HeapRb::<_>::new(window_size);
+    let mut sum_sq = 0f32;
+
     loop {
         let iter = cons.pop_iter();
-        let (_, count) = iter.size_hint();
-        if let Some(count) = count {
-            if count == 0 {
-                continue;
+
+        for s in iter {
+            let s_sq = s.powi(2);
+            sum_sq += s_sq;
+
+            let removed = window.push_overwrite(s_sq);
+            if let Some(r_sq) = removed {
+                sum_sq -= r_sq;
             }
-            let rms = iter.fold(0f32, |acc, val| acc + val * val) / count as f32;
-            let rms = rms.sqrt();
-            print!("\x1b[2K\rRMS: {} dBFS", dbfs(rms));
+        }
+
+        if last_rms.elapsed() > Duration::from_millis(200) {
+            print!(
+                "\x1b[2K\rRMS: {} dBFS, Peak: {} dbFS",
+                dbfs((sum_sq / window_size as f32).sqrt()),
+                peak
+            );
             io::stdout().flush().unwrap();
+
+            last_rms = Instant::now();
+        }
+
+        if last_peak.elapsed() > Duration::from_millis(500) {
+            peak = dbfs((sum_sq / window_size as f32).sqrt());
+
+            window.clear();
+            sum_sq = 0f32;
+
+            last_peak = Instant::now();
         }
     }
 }
