@@ -3,8 +3,8 @@ use std::path;
 use clap::{Parser, Subcommand};
 
 use raumklang::{
-    meter_rms, play_signal, write_signal_to_file, FiniteSignal, LinearSineSweep, PinkNoise,
-    PlaySignalConfig, WhiteNoise,
+    meter_rms, play_signal, run_measurement, write_signal_to_file, FiniteSignal, LinearSineSweep,
+    PinkNoise, PlaySignalConfig, WhiteNoise,
 };
 
 #[derive(Parser)]
@@ -34,8 +34,18 @@ enum Command {
     PingPong,
     Rir,
     RunMeasurement {
-        #[clap(short, long)]
+        #[clap(short, long, default_value_t = 5)]
         duration: u8,
+        #[clap(short, long, default_value_t = 0.5)]
+        volume: f32,
+        #[arg(long = "dest-port")]
+        dest_ports: Vec<String>,
+        #[arg(short, long)]
+        input_port: String,
+        #[arg(long)]
+        file_path: String,
+        #[command(subcommand)]
+        type_: SignalType,
     },
     ComputeRIR,
     Rms {
@@ -72,7 +82,6 @@ fn main() -> anyhow::Result<()> {
                 dest_port_names: dest_ports.iter().map(String::as_str).collect(),
                 duration: *duration,
                 volume: *volume,
-                file_path: file_path.as_deref(),
             };
 
             let amplitude = 0.3;
@@ -117,15 +126,58 @@ fn main() -> anyhow::Result<()> {
 
             meter_rms(jack_client, input_port)
         }
-        //        Command::RunMeasurement { duration } => {
-        //            let input_device = host.default_input_device().unwrap();
-        //            let mut record_path = String::from(RESULT_PATH);
-        //            record_path.push_str("/recorded.wav");
-        //            let mut sweep_path = String::from(RESULT_PATH);
-        //            sweep_path.push_str("/sweep.wav");
-        //
-        //            run_measurement(&input_device, &record_path, &device, &sweep_path, *duration)
-        //        }
+        Command::RunMeasurement {
+            duration,
+            volume,
+            dest_ports,
+            input_port,
+            type_,
+            file_path,
+        } => {
+            let jack_client_name = env!("CARGO_BIN_NAME");
+            let (jack_client, _status) =
+                jack::Client::new(jack_client_name, jack::ClientOptions::NO_START_SERVER)?;
+
+            let sample_rate = jack_client.sample_rate() as u32;
+
+            let config = PlaySignalConfig {
+                out_port_name: "signal_out",
+                dest_port_names: dest_ports.iter().map(String::as_str).collect(),
+                duration: *duration,
+                volume: *volume,
+            };
+
+            let signal: Box<dyn FiniteSignal<Item = f32>> = match *type_ {
+                SignalType::WhiteNoise => {
+                    Box::new(WhiteNoise::default().take_duration(sample_rate, *duration))
+                }
+                SignalType::PinkNoise => {
+                    Box::new(PinkNoise::default().take_duration(sample_rate, *duration))
+                }
+                SignalType::LogSweep {
+                    start_frequency,
+                    end_frequency,
+                } => {
+                    let sweep = LinearSineSweep::new(
+                        start_frequency,
+                        end_frequency,
+                        config.duration.into(),
+                        1.0,
+                        sample_rate,
+                    );
+                    println!("{}", sweep.len());
+                    Box::new(sweep)
+                }
+            };
+
+            run_measurement(
+                jack_client,
+                &config,
+                signal,
+                input_port,
+                path::Path::new(file_path),
+            )
+        }
         //        Command::ComputeRIR => {
         //            let mut record_path = String::from(RESULT_PATH);
         //            record_path.push_str("/recorded.wav");

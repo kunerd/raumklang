@@ -111,6 +111,12 @@ impl WhiteNoise {
     }
 }
 
+impl Default for WhiteNoise {
+    fn default() -> Self {
+        Self::with_amplitude(1.0)
+    }
+}
+
 impl Iterator for WhiteNoise {
     type Item = f32;
 
@@ -148,6 +154,12 @@ impl PinkNoise {
     }
 }
 
+impl Default for PinkNoise {
+    fn default() -> Self {
+        Self::with_amplitude(1.0)
+    }
+}
+
 impl Iterator for PinkNoise {
     type Item = f32;
 
@@ -165,7 +177,6 @@ pub struct PlaySignalConfig<'a> {
     pub dest_port_names: Vec<&'a str>,
     pub duration: u8,
     pub volume: f32,
-    pub file_path: Option<&'a str>,
 }
 
 fn volume_to_amplitude(volume: f32) -> f32 {
@@ -189,8 +200,7 @@ pub fn play_signal(
     mut audio: Box<dyn FiniteSignal<Item = f32>>,
     config: &PlaySignalConfig,
 ) -> Result<(), anyhow::Error> {
-    let mut out_port =
-        jack_client.register_port(config.out_port_name, jack::AudioOut)?;
+    let mut out_port = jack_client.register_port(config.out_port_name, jack::AudioOut)?;
 
     let amplitude = volume_to_amplitude(config.volume);
 
@@ -396,6 +406,83 @@ pub fn meter_rms(jack_client: jack::Client, source_port_name: &str) -> anyhow::R
 //
 //    Ok(())
 //}
+
+pub fn run_measurement(
+    jack_client: jack::Client,
+    config: &PlaySignalConfig,
+    mut audio: Box<dyn FiniteSignal>,
+    client_input_port_name: &str,
+    path: &Path,
+) -> Result<(), anyhow::Error> {
+    let sample_rate = jack_client.sample_rate();
+
+    let amplitude = volume_to_amplitude(config.volume);
+    let (complete_tx, complete_rx) = std::sync::mpsc::sync_channel(1);
+
+    let in_port_name = "measurement_in";
+    let in_port = jack_client.register_port(in_port_name, jack::AudioIn)?;
+    let mut out_port = jack_client.register_port(config.out_port_name, jack::AudioOut)?;
+
+    let window_size = sample_rate * 300 / 1000;
+    let rb = HeapRb::<_>::new(window_size);
+    let (mut prod, mut cons) = rb.split();
+
+
+    let process = jack::ClosureProcessHandler::new(
+        move |_: &jack::Client, ps: &jack::ProcessScope| -> jack::Control {
+            let out = out_port.as_mut_slice(ps);
+
+            for o in out.iter_mut() {
+                if let Some(sample) = audio.next() {
+                    *o = amplitude * sample;
+                } else {
+                    *o = 0.0f32;
+                    complete_tx.try_send(()).ok();
+                }
+            }
+
+            let in_p = in_port.as_slice(ps);
+            prod.push_slice(in_p);
+
+            jack::Control::Continue
+        },
+    );
+
+    let client_source_port_name = format!("{}:{}", jack_client.name(), config.out_port_name);
+    let client_in_port_name = format!("{}:{}", jack_client.name(), in_port_name);
+
+    let active_client = jack_client.activate_async((), process)?;
+
+    for dest in &config.dest_port_names {
+        active_client
+            .as_client()
+            .connect_ports_by_name(&client_source_port_name, dest)?;
+    }
+
+        active_client
+            .as_client()
+            .connect_ports_by_name(client_input_port_name, &client_in_port_name)?;
+
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: sample_rate as u32,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+    let mut writer = hound::WavWriter::create(path, spec)?;
+    loop {
+        if let Some(s) = cons.pop() {
+            writer.write_sample(s)?;
+        }
+
+        if complete_rx.try_recv().is_ok() {
+            break;
+        }
+    }
+    writer.finalize()?;
+
+    Ok(())
+}
 
 //pub fn run_measurement(
 //    input_device: &cpal::Device,
