@@ -3,8 +3,8 @@ use std::path;
 use clap::{Parser, Subcommand};
 
 use raumklang::{
-    meter_rms, play_signal, run_measurement, write_signal_to_file, FiniteSignal, LinearSineSweep,
-    PinkNoise, PlaySignalConfig, WhiteNoise,
+    meter_rms, play_signal, run_measurement, write_signal_to_file, FiniteSignal,
+    LinearSineSweep, PinkNoise, PlaySignalConfig, WhiteNoise,
 };
 
 #[derive(Parser)]
@@ -114,9 +114,7 @@ fn main() -> anyhow::Result<()> {
                 write_signal_to_file(signal, path::Path::new(file_path))
             } else {
                 let jack_client_name = env!("CARGO_BIN_NAME");
-                let (jack_client, _status) =
-                    jack::Client::new(jack_client_name, jack::ClientOptions::NO_START_SERVER)?;
-                play_signal(jack_client, signal, &config)
+                play_signal(jack_client_name, signal, &config)
             }
         }
         Command::Rms { input_port } => {

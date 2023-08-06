@@ -7,6 +7,7 @@ use ringbuf::{HeapRb, Rb};
 //use plotters::prelude::*;
 
 use std::{
+    collections::HashMap,
     //    fs::File,
     //    io::{self, BufWriter, Write},
     io::{self, Write},
@@ -195,43 +196,128 @@ fn volume_to_amplitude(volume: f32) -> f32 {
     }
 }
 
-pub fn play_signal(
-    jack_client: jack::Client,
-    mut audio: Box<dyn FiniteSignal<Item = f32>>,
-    config: &PlaySignalConfig,
-) -> Result<(), anyhow::Error> {
-    let mut out_port = jack_client.register_port(config.out_port_name, jack::AudioOut)?;
+pub struct Notifications;
 
-    let amplitude = volume_to_amplitude(config.volume);
+impl jack::NotificationHandler for Notifications {}
 
-    let (complete_tx, complete_rx) = std::sync::mpsc::sync_channel(1);
-    let process = jack::ClosureProcessHandler::new(
-        move |_: &jack::Client, ps: &jack::ProcessScope| -> jack::Control {
-            let out = out_port.as_mut_slice(ps);
+pub struct ProcessHandler {
+    out_port: jack::Port<jack::AudioOut>,
+    output_buffer_rx: Option<ringbuf::HeapConsumer<f32>>,
+    input_buffer: Option<ringbuf::HeapProducer<f32>>,
+}
+
+impl jack::ProcessHandler for ProcessHandler {
+    fn process(&mut self, _: &jack::Client, process_scope: &jack::ProcessScope) -> jack::Control {
+        if let Some(ref mut buffer) = self.output_buffer_rx {
+            let out = self.out_port.as_mut_slice(process_scope);
 
             for o in out.iter_mut() {
-                if let Some(sample) = audio.next() {
-                    *o = amplitude * sample;
+                if let Some(sample) = buffer.pop() {
+                    *o = sample;
                 } else {
-                    complete_tx.try_send(()).ok();
                     *o = 0.0f32;
                 }
             }
+        }
 
-            jack::Control::Continue
-        },
-    );
+        jack::Control::Continue
+    }
+}
 
-    let client_source_port_name = format!("{}:{}", jack_client.name(), config.out_port_name);
+pub struct JackEngine {
+    pub client: jack::AsyncClient<Notifications, ProcessHandler>,
+    pub output_buffer_tx: ringbuf::HeapProducer<f32>,
+}
 
-    let active_client = jack_client.activate_async((), process)?;
+impl JackEngine {
+    pub fn start(name: &str) -> anyhow::Result<JackEngine> {
+        let (jack_client, _status) = jack::Client::new(name, jack::ClientOptions::NO_START_SERVER)?;
+
+        let out_port_name = "out";
+        let out_port = jack_client.register_port(out_port_name, jack::AudioOut)?;
+
+        let heap_size: usize = jack_client.sample_rate() * 300 / 1000;
+        let (output_buffer_tx, output_buffer_rx) = HeapRb::new(heap_size).split();
+
+        let active_client = jack_client.activate_async(
+            Notifications,
+            ProcessHandler {
+                out_port,
+                output_buffer_rx: Some(output_buffer_rx),
+                input_buffer: None,
+            },
+        )?;
+
+        Ok(JackEngine {
+            client: active_client,
+            output_buffer_tx,
+        })
+    }
+}
+
+//fn play_sound(
+//    jack_client: jack::Client,
+//    mut audio: Box<dyn FiniteSignal<Item = f32>>,
+//    config: &PlaySignalConfig,
+//) -> anyhow::Result<()> {
+//    let amplitude = volume_to_amplitude(config.volume);
+//    let mut out_port = jack_client.register_port(config.out_port_name, jack::AudioOut)?;
+//    let out_port_clone = out_port.clone_unowned();
+//
+//    let (complete_tx, complete_rx) = std::sync::mpsc::sync_channel(1);
+//    let process = jack::ClosureProcessHandler::new(
+//        move |_: &jack::Client, ps: &jack::ProcessScope| -> jack::Control {
+//            let out = out_port.as_mut_slice(ps);
+//
+//            for o in out.iter_mut() {
+//                if let Some(sample) = audio.next() {
+//                    *o = amplitude * sample;
+//                } else {
+//                    complete_tx.try_send(()).ok();
+//                    *o = 0.0f32;
+//                }
+//            }
+//
+//            jack::Control::Continue
+//        },
+//    );
+//
+//    //let client_source_port_name = format!("{}:{}", jack_client.name(), config.out_port_name);
+//
+//    let active_client = jack_client.activate_async((), process)?;
+//
+//    let client_source_port_name = out_port_clone.name()?;
+//    for dest in &config.dest_port_names {
+//        active_client
+//            .as_client()
+//            .connect_ports_by_name(&client_source_port_name, dest)?;
+//    }
+//
+//    complete_rx.recv()?;
+//
+//    Ok(())
+//}
+
+pub fn play_signal(
+    jack_client_name: &str,
+    audio: Box<dyn FiniteSignal<Item = f32>>,
+    config: &PlaySignalConfig,
+) -> Result<(), anyhow::Error> {
+//    play_sound(jack_client, audio, config)
+
+    let mut jack_engine = JackEngine::start(jack_client_name)?;
+
+    let client_source_port_name = format!("{}:{}", jack_engine.client.as_client().name(), "out");
     for dest in &config.dest_port_names {
-        active_client
+        jack_engine.client
             .as_client()
             .connect_ports_by_name(&client_source_port_name, dest)?;
     }
 
-    complete_rx.recv()?;
+    let amplitude = volume_to_amplitude(config.volume);
+    for s in audio {
+        while jack_engine.output_buffer_tx.push(amplitude * s).is_err() {}
+    }
 
     Ok(())
 }
@@ -427,7 +513,6 @@ pub fn run_measurement(
     let rb = HeapRb::<_>::new(window_size);
     let (mut prod, mut cons) = rb.split();
 
-
     let process = jack::ClosureProcessHandler::new(
         move |_: &jack::Client, ps: &jack::ProcessScope| -> jack::Control {
             let out = out_port.as_mut_slice(ps);
@@ -459,9 +544,9 @@ pub fn run_measurement(
             .connect_ports_by_name(&client_source_port_name, dest)?;
     }
 
-        active_client
-            .as_client()
-            .connect_ports_by_name(client_input_port_name, &client_in_port_name)?;
+    active_client
+        .as_client()
+        .connect_ports_by_name(client_input_port_name, &client_in_port_name)?;
 
     let spec = hound::WavSpec {
         channels: 1,
