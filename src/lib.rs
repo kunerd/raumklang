@@ -3,6 +3,7 @@ use rand::{distributions, distributions::Distribution, rngs, SeedableRng};
 //use ndarray::{Array, Axis};
 //use ndarray_stats::QuantileExt;
 use ringbuf::{HeapRb, Rb};
+use rustfft::{num_complex::Complex, FftPlanner};
 
 //use plotters::prelude::*;
 
@@ -200,57 +201,92 @@ pub struct Notifications;
 
 impl jack::NotificationHandler for Notifications {}
 
-pub struct ProcessHandler {
+pub struct ProcessHandler<I, J>
+where
+    I: Iterator<Item = f32>,
+    J: IntoIterator<IntoIter = I>,
+{
     out_port: jack::Port<jack::AudioOut>,
-    output_buffer_rx: Option<ringbuf::HeapConsumer<f32>>,
-    input_buffer: Option<ringbuf::HeapProducer<f32>>,
+    cur_out_iter: Option<I>,
+    out_iter_list_rx: std::sync::mpsc::Receiver<J>,
 }
 
-impl jack::ProcessHandler for ProcessHandler {
+impl<I, J> jack::ProcessHandler for ProcessHandler<I, J>
+where
+    I: Iterator<Item = f32> + std::marker::Send,
+    J: IntoIterator<IntoIter = I> + std::marker::Send,
+{
     fn process(&mut self, _: &jack::Client, process_scope: &jack::ProcessScope) -> jack::Control {
-        if let Some(ref mut buffer) = self.output_buffer_rx {
+        let mut cur_is_empty = false;
+        if let Some(ref mut iter) = self.cur_out_iter {
             let out = self.out_port.as_mut_slice(process_scope);
 
             for o in out.iter_mut() {
-                if let Some(sample) = buffer.pop() {
+                if let Some(sample) = iter.next() {
                     *o = sample;
                 } else {
+                    cur_is_empty = true;
                     *o = 0.0f32;
                 }
             }
+        } else if let Ok(msg) = self.out_iter_list_rx.try_recv() {
+            self.cur_out_iter = Some(msg.into_iter());
         }
+
+        if cur_is_empty {
+            self.cur_out_iter = None
+        }
+        
+        //if let Some(ref mut buffer) = self.output_buffer_rx {
+        //    let out = self.out_port.as_mut_slice(process_scope);
+
+        //    for o in out.iter_mut() {
+        //        if let Some(sample) = buffer.pop() {
+        //            *o = sample;
+        //        } else {
+        //            *o = 0.0f32;
+        //        }
+        //    }
+        //}
 
         jack::Control::Continue
     }
 }
 
-pub struct JackEngine {
-    pub client: jack::AsyncClient<Notifications, ProcessHandler>,
-    pub output_buffer_tx: ringbuf::HeapProducer<f32>,
+pub struct JackEngine<I, J>
+where
+    I: Iterator<Item = f32>,
+    J: IntoIterator<IntoIter = I>,
+{
+    pub client: jack::AsyncClient<Notifications, ProcessHandler<I, J>>,
+    pub out_iter_list_tx: std::sync::mpsc::SyncSender<J>,
 }
 
-impl JackEngine {
-    pub fn start(name: &str) -> anyhow::Result<JackEngine> {
+impl<I, J> JackEngine<I, J>
+where
+    I: Iterator<Item = f32> + std::marker::Send + 'static,
+    J: IntoIterator<IntoIter = I> + std::marker::Send + 'static,
+{
+    pub fn start(name: &str) -> anyhow::Result<JackEngine<I, J>> {
         let (jack_client, _status) = jack::Client::new(name, jack::ClientOptions::NO_START_SERVER)?;
 
         let out_port_name = "out";
         let out_port = jack_client.register_port(out_port_name, jack::AudioOut)?;
 
-        let heap_size: usize = jack_client.sample_rate() * 300 / 1000;
-        let (output_buffer_tx, output_buffer_rx) = HeapRb::new(heap_size).split();
+        let (out_iter_list_tx, out_iter_list_rx) = std::sync::mpsc::sync_channel(16);
 
         let active_client = jack_client.activate_async(
             Notifications,
             ProcessHandler {
                 out_port,
-                output_buffer_rx: Some(output_buffer_rx),
-                input_buffer: None,
+                cur_out_iter: None,
+                out_iter_list_rx,
             },
         )?;
 
         Ok(JackEngine {
             client: active_client,
-            output_buffer_tx,
+            out_iter_list_tx,
         })
     }
 }
@@ -303,21 +339,25 @@ pub fn play_signal(
     audio: Box<dyn FiniteSignal<Item = f32>>,
     config: &PlaySignalConfig,
 ) -> Result<(), anyhow::Error> {
-//    play_sound(jack_client, audio, config)
+    //    play_sound(jack_client, audio, config)
 
-    let mut jack_engine = JackEngine::start(jack_client_name)?;
+    let jack_engine = JackEngine::start(jack_client_name)?;
 
     let client_source_port_name = format!("{}:{}", jack_engine.client.as_client().name(), "out");
     for dest in &config.dest_port_names {
-        jack_engine.client
+        jack_engine
+            .client
             .as_client()
             .connect_ports_by_name(&client_source_port_name, dest)?;
     }
 
-    let amplitude = volume_to_amplitude(config.volume);
-    for s in audio {
-        while jack_engine.output_buffer_tx.push(amplitude * s).is_err() {}
-    }
+    let _ = jack_engine.out_iter_list_tx.send(audio);
+
+    std::thread::sleep(Duration::from_secs(5));
+    //let amplitude = volume_to_amplitude(config.volume);
+    //for s in audio {
+    //    while jack_engine.output_buffer_tx.push(amplitude * s).is_err() {}
+    //}
 
     Ok(())
 }
@@ -418,80 +458,79 @@ pub fn meter_rms(jack_client: jack::Client, source_port_name: &str) -> anyhow::R
     }
 }
 
-// legacy code
-//pub fn compute_rir(record_path: &str, sweep_path: &str) -> anyhow::Result<()> {
-//    let mut record_reader = hound::WavReader::open(record_path)?;
-//    let mut sweep_reader = hound::WavReader::open(sweep_path)?;
-//
-//    println!("Samples of {}: {}", record_path, record_reader.duration());
-//    println!("Samples of {}: {}", sweep_path, sweep_reader.duration());
-//
-//    let mut record_samples: Vec<f32> = record_reader
-//        .samples::<f32>()
-//        .collect::<Result<Vec<f32>, _>>()?;
-//    let mut sweep_samples: Vec<f32> = sweep_reader
-//        .samples::<f32>()
-//        .collect::<Result<Vec<f32>, _>>()?;
-//
-//    let record_samples_count = record_samples.len();
-//    let sweep_samples_count = sweep_samples.len();
-//
-//    println!("Samples of {}: {}", record_path, record_samples_count);
-//    println!("Samples of {}: {}", sweep_path, sweep_samples_count);
-//
-//    // make record and sweep the same length
-//    if record_samples_count > sweep_samples_count {
-//        sweep_samples.append(&mut vec![0.0; record_samples_count - sweep_samples_count]);
-//    } else {
-//        record_samples.append(&mut vec![0.0; sweep_samples_count - record_samples_count]);
-//    }
-//
-//    assert!(sweep_samples.len() == record_samples.len());
-//
-//    // double the size
-//    record_samples.append(&mut vec![0.0; record_samples.len()]);
-//    sweep_samples.append(&mut vec![0.0; sweep_samples.len()]);
-//
-//    // convert to complex
-//    let mut record_samples: Vec<_> = record_samples.into_iter().map(Complex::from).collect();
-//    let mut sweep_samples: Vec<_> = sweep_samples.into_iter().map(Complex::from).collect();
-//
-//    // convert into frequency domain
-//    let mut planner = FftPlanner::<f32>::new();
-//    let fft = planner.plan_fft_forward(record_samples.len());
-//
-//    fft.process(&mut record_samples);
-//    fft.process(&mut sweep_samples);
-//
-//    // normalize
-//    let scale: f32 = 1.0 / (record_samples.len() as f32).sqrt();
-//    let record_samples: Vec<_> = record_samples.into_iter().map(|s| s * scale).collect();
-//    let sweep_samples: Vec<_> = sweep_samples.into_iter().map(|s| s * scale).collect();
-//
-//    //plot_frequency_domain("recorded.png", &record_samples);
-//    //plot_frequency_domain("sweep.png", &sweep_samples);
-//
-//    // devide both
-//    let mut result: Vec<Complex<f32>> = record_samples
-//        .iter()
-//        .zip(sweep_samples.iter())
-//        .map(|(r, s)| r / s)
-//        .collect();
-//
-//    plot_frequency_domain("rir_fd.png", &result[..result.len() / 2]);
-//
-//    // back to time domain
-//    let fft = planner.plan_fft_inverse(result.len());
-//    fft.process(&mut result);
-//
-//    // normalize
-//    let scale: f32 = 1.0 / (result.len() as f32).sqrt();
-//    let result: Vec<_> = result.into_iter().map(|s| s * scale).collect();
-//
-//    plot_time_domain("rir_td.png", &result[..result.len() / 2]);
-//
-//    Ok(())
-//}
+pub fn compute_rir(record_path: &str, sweep_path: &str) -> anyhow::Result<Vec<f32>> {
+    let mut record_reader = hound::WavReader::open(record_path)?;
+    let mut sweep_reader = hound::WavReader::open(sweep_path)?;
+
+    println!("Samples of {}: {}", record_path, record_reader.duration());
+    println!("Samples of {}: {}", sweep_path, sweep_reader.duration());
+
+    let mut record_samples: Vec<f32> = record_reader
+        .samples::<f32>()
+        .collect::<Result<Vec<f32>, _>>()?;
+    let mut sweep_samples: Vec<f32> = sweep_reader
+        .samples::<f32>()
+        .collect::<Result<Vec<f32>, _>>()?;
+
+    let record_samples_count = record_samples.len();
+    let sweep_samples_count = sweep_samples.len();
+
+    println!("Samples of {}: {}", record_path, record_samples_count);
+    println!("Samples of {}: {}", sweep_path, sweep_samples_count);
+
+    // make record and sweep the same length
+    if record_samples_count > sweep_samples_count {
+        sweep_samples.append(&mut vec![0.0; record_samples_count - sweep_samples_count]);
+    } else {
+        record_samples.append(&mut vec![0.0; sweep_samples_count - record_samples_count]);
+    }
+
+    assert!(sweep_samples.len() == record_samples.len());
+
+    // double the size
+    record_samples.append(&mut vec![0.0; record_samples.len()]);
+    sweep_samples.append(&mut vec![0.0; sweep_samples.len()]);
+
+    // convert to complex
+    let mut record_samples: Vec<_> = record_samples.into_iter().map(Complex::from).collect();
+    let mut sweep_samples: Vec<_> = sweep_samples.into_iter().map(Complex::from).collect();
+
+    // convert into frequency domain
+    let mut planner = FftPlanner::<f32>::new();
+    let fft = planner.plan_fft_forward(record_samples.len());
+
+    fft.process(&mut record_samples);
+    fft.process(&mut sweep_samples);
+
+    // normalize
+    let scale: f32 = 1.0 / (record_samples.len() as f32).sqrt();
+    let record_samples: Vec<_> = record_samples.into_iter().map(|s| s * scale).collect();
+    let sweep_samples: Vec<_> = sweep_samples.into_iter().map(|s| s * scale).collect();
+
+    //plot_frequency_domain("recorded.png", &record_samples);
+    //plot_frequency_domain("sweep.png", &sweep_samples);
+
+    // devide both
+    let mut result: Vec<Complex<f32>> = record_samples
+        .iter()
+        .zip(sweep_samples.iter())
+        .map(|(r, s)| r / s)
+        .collect();
+
+    //plot_frequency_domain("rir_fd.png", &result[..result.len() / 2]);
+
+    // back to time domain
+    let fft = planner.plan_fft_inverse(result.len());
+    fft.process(&mut result);
+
+    // normalize
+    let scale: f32 = 1.0 / (result.len() as f32).sqrt();
+    let result: Vec<_> = result.into_iter().map(|s| (s * scale).norm()).collect();
+
+    //plot_time_domain("rir_td.png", &result[..result.len() / 2]);
+
+    Ok(result)
+}
 
 pub fn run_measurement(
     jack_client: jack::Client,
