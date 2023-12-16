@@ -1,5 +1,7 @@
 mod audio;
 
+pub use audio::*;
+
 use rand::{distributions, distributions::Distribution, rngs, SeedableRng};
 use ringbuf::{HeapRb, Rb};
 use rustfft::{num_complex::Complex, FftPlanner};
@@ -19,7 +21,7 @@ where
 }
 
 pub struct LinearSineSweep {
-    sample_rate: u32,
+    sample_rate: usize,
     sample_index: usize,
     n_samples: usize,
     amplitude: f32,
@@ -34,14 +36,14 @@ impl LinearSineSweep {
     pub fn new(
         start_frequency: u16,
         end_frequency: u16,
-        duration: u32,
+        duration: usize,
         amplitude: f32,
-        sample_rate: u32,
+        sample_rate: usize,
     ) -> Self {
         LinearSineSweep {
             sample_rate,
             sample_index: 0,
-            n_samples: (sample_rate * duration) as usize,
+            n_samples: sample_rate * duration,
             amplitude,
             frequency: start_frequency as f32,
             delta_frequency: (end_frequency - start_frequency) as f32
@@ -98,9 +100,9 @@ impl WhiteNoise {
         }
     }
 
-    pub fn take_duration(self, sample_rate: u32, duration: u8) -> std::iter::Take<WhiteNoise> {
+    pub fn take_duration(self, sample_rate: usize, duration: usize) -> std::iter::Take<WhiteNoise> {
         self.into_iter()
-            .take((sample_rate * duration as u32) as usize)
+            .take(sample_rate * duration)
     }
 }
 
@@ -141,9 +143,9 @@ impl PinkNoise {
         }
     }
 
-    pub fn take_duration(self, sample_rate: u32, duration: u8) -> std::iter::Take<PinkNoise> {
+    pub fn take_duration(self, sample_rate: usize, duration: usize) -> std::iter::Take<PinkNoise> {
         self.into_iter()
-            .take((sample_rate * duration as u32) as usize)
+            .take(sample_rate * duration)
     }
 }
 
@@ -168,7 +170,7 @@ impl Iterator for PinkNoise {
 pub struct PlaySignalConfig<'a> {
     pub out_port_name: &'a str,
     pub dest_port_names: Vec<&'a str>,
-    pub duration: u8,
+    pub duration: usize,
     pub volume: f32,
 }
 
@@ -353,7 +355,7 @@ pub fn play_signal(
     Ok(())
 }
 
-pub trait FiniteSignal: Send + ExactSizeIterator<Item = f32> {}
+pub trait FiniteSignal: Send + Sync + ExactSizeIterator<Item = f32> {}
 
 pub fn write_signal_to_file(
     signal: Box<dyn FiniteSignal<Item = f32>>,
