@@ -3,7 +3,7 @@ use ndarray::{Array, Axis};
 use plotters::prelude::*;
 use ndarray_stats::QuantileExt;
 
-use raumklang::SineSweep;
+use raumklang::LinearSineSweep;
 
 const WINDOW_SIZE: usize = 1024;
 const OVERLAP: f64 = 0.9;
@@ -11,7 +11,7 @@ const SKIP_SIZE: usize = (WINDOW_SIZE as f64 * (1f64 - OVERLAP)) as usize;
 
 fn main() {
 
-    let sine_sweep = SineSweep::new(50, 15000, 10, 1.0, 44100);
+    let sine_sweep = LinearSineSweep::new(50, 15000, 10, 1.0, 44100);
     let samples: Vec<f32> = sine_sweep.collect();
     
     println!("Creating windows {window_size} samples long from a timeline {num_samples} samples long, picking every {skip_size} windows with a {overlap} overlap for a total of {num_windows} windows.",

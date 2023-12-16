@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 
 use raumklang::{
     meter_rms, play_signal, run_measurement, write_signal_to_file, FiniteSignal,
-    LinearSineSweep, PinkNoise, PlaySignalConfig, WhiteNoise,
+    LinearSineSweep, PinkNoise, PlaySignalConfig, WhiteNoise, volume_to_amplitude,
 };
 
 #[derive(Parser)]
@@ -84,8 +84,8 @@ fn main() -> anyhow::Result<()> {
                 volume: *volume,
             };
 
-            let amplitude = 0.3;
             let sample_rate = 44_100;
+            let amplitude = volume_to_amplitude(*volume);
 
             let signal: Box<dyn FiniteSignal<Item = f32>> = match *type_ {
                 SignalType::WhiteNoise => Box::new(

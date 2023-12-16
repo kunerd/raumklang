@@ -1,23 +1,14 @@
+mod audio;
+
 use rand::{distributions, distributions::Distribution, rngs, SeedableRng};
-//use anyhow::anyhow;
-//use ndarray::{Array, Axis};
-//use ndarray_stats::QuantileExt;
 use ringbuf::{HeapRb, Rb};
 use rustfft::{num_complex::Complex, FftPlanner};
 
-//use plotters::prelude::*;
-
 use std::{
-    collections::HashMap,
-    //    fs::File,
-    //    io::{self, BufWriter, Write},
     io::{self, Write},
     path::Path,
-    //    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-
-//use rustfft::{num_complex::Complex, FftPlanner};
 
 pub enum Signal<F, I>
 where
@@ -181,7 +172,7 @@ pub struct PlaySignalConfig<'a> {
     pub volume: f32,
 }
 
-fn volume_to_amplitude(volume: f32) -> f32 {
+pub fn volume_to_amplitude(volume: f32) -> f32 {
     assert!((0.0..=1.0).contains(&volume));
 
     // FIXME:
