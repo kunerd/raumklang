@@ -105,17 +105,27 @@ fn main() -> anyhow::Result<()> {
                 bits_per_sample: 32,
                 sample_format: hound::SampleFormat::Float,
             };
+
+            // FIXME hardcoded window size
+            let mut loudness = Loudness::new(13230); // 44100samples / 1000ms * 300ms
             let mut writer = hound::WavWriter::create(file_path, spec)?;
             loop {
-                if let Some(s) = buf.pop() {
+                let iter = buf.pop_iter();
+                for s in iter {
+                    loudness.update(s);
                     writer.write_sample(s)?;
                 }
 
                 if repsose.try_recv().is_ok() {
                     break;
                 }
+
+                std::thread::sleep(Duration::from_millis(10)); // buf size is 1024, 1 / 44100 *
+                                                               // 1024 = 0,023 s = 23ms / 2 = 11,5
+                                                               //      ~ 10 
             }
             writer.finalize()?;
+            println!("rms: {} dbfs, peak: {} dbfs", dbfs(loudness.rms()), dbfs(loudness.peak)); 
 
             Ok(())
         }
@@ -163,12 +173,70 @@ fn play_signal(
                 amplitude,
                 sample_rate,
             );
-            println!("{}", sweep.len());
             Box::new(sweep)
         }
     };
 
     engine.play_signal(signal)
+}
+
+struct Loudness {
+    peak: f32,
+    square_sum: f32,
+    window_size: usize,
+    buf: HeapRb<f32>,
+}
+
+impl Loudness {
+    fn new(window_size: usize) -> Self {
+        let buf = HeapRb::<_>::new(window_size);
+        Self {
+            square_sum: 0.0,
+            peak: f32::NEG_INFINITY,
+            window_size,
+            buf,
+        }
+    }
+
+    fn update_from_iter<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = f32>,
+    {
+        for s in iter {
+            self.update(s);
+        }
+    }
+
+    fn update(&mut self, sample: f32) {
+        let sample_squared = sample.powi(2);
+        self.square_sum += sample_squared;
+
+        self.peak = self.peak.max(sample);
+
+        let removed = self.buf.push_overwrite(sample_squared);
+        if let Some(r) = removed {
+            self.square_sum -= r;
+        }
+    }
+
+    fn rms(&self) -> f32 {
+        (self.square_sum / (self.window_size as f32)).sqrt()
+    }
+
+    fn peak(&self) -> f32 {
+        self.peak
+    }
+
+    fn reset_peak(&mut self) {
+        self.peak = f32::NEG_INFINITY;
+        for s in self.buf.iter() {
+            self.peak = self.peak.max(*s)
+        }
+    }
+}
+
+fn dbfs(v: f32) -> f32 {
+    20.0 * f32::log10(v)
 }
 
 pub fn meter_rms(source_port_name: &str) -> anyhow::Result<()> {
@@ -183,34 +251,19 @@ pub fn meter_rms(source_port_name: &str) -> anyhow::Result<()> {
 
     let mut last_rms = Instant::now();
     let mut last_peak = Instant::now();
-    let mut peak = f32::NEG_INFINITY;
 
-    let dbfs = |v: f32| 20.0 * f32::log10(v);
-
-    let window_size = 147;
-    let mut window = HeapRb::<_>::new(window_size);
-    let mut sum_sq = 0f32;
+    // FIXME hardcoded window size
+    let mut loudness = Loudness::new(13230); // 44100samples / 1000ms * 300ms
 
     loop {
         let iter = cons.pop_iter();
-
-        for s in iter {
-            let s_sq = s.powi(2);
-            sum_sq += s_sq;
-
-            peak = peak.max(s);
-
-            let removed = window.push_overwrite(s_sq);
-            if let Some(r_sq) = removed {
-                sum_sq -= r_sq;
-            }
-        }
+        loudness.update_from_iter(iter);
 
         if last_rms.elapsed() > Duration::from_millis(200) {
             print!(
                 "\x1b[2K\rRMS: {:>8.2} dBFS, Peak: {:>8.2} dbFS",
-                dbfs((sum_sq / window_size as f32).sqrt()),
-                dbfs(peak)
+                dbfs(loudness.rms()),
+                dbfs(loudness.peak())
             );
             io::stdout().flush().unwrap();
 
@@ -218,14 +271,10 @@ pub fn meter_rms(source_port_name: &str) -> anyhow::Result<()> {
         }
 
         if last_peak.elapsed() > Duration::from_millis(500) {
-            peak = dbfs((sum_sq / window_size as f32).sqrt());
-
-            window.clear();
-            sum_sq = 0f32;
-
+            loudness.reset_peak();
             last_peak = Instant::now();
         }
 
-        std::thread::sleep(Duration::from_millis(150));
+        std::thread::sleep(Duration::from_millis(100));
     }
 }
