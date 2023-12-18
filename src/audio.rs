@@ -13,9 +13,9 @@ where
 {
     RegisterOutPort(jack::Port<jack::AudioOut>),
     RegisterInPort(jack::Port<jack::AudioIn>, HeapProducer<f32>),
-    PlaySignal{
+    PlaySignal {
         signal: J,
-        respond_to: SyncSender<bool>
+        respond_to: SyncSender<bool>,
     },
 }
 
@@ -39,17 +39,15 @@ where
     fn process(&mut self, _: &jack::Client, process_scope: &jack::ProcessScope) -> jack::Control {
         let mut signal_ended = false;
 
-        if let Some(out) = &mut self.out_port {
+        if let (Some(out), Some(signal)) = (&mut self.out_port, &mut self.cur_signal) {
             let out = out.as_mut_slice(process_scope);
 
-            if let Some(iter) = &mut self.cur_signal {
-                for o in out.iter_mut() {
-                    if let Some(sample) = iter.next() {
-                        *o = sample;
-                    } else {
-                        *o = 0.0f32;
-                        signal_ended = true;
-                    }
+            for o in out.iter_mut() {
+                if let Some(sample) = signal.next() {
+                    *o = sample;
+                } else {
+                    *o = 0.0f32;
+                    signal_ended = true;
                 }
             }
         };
@@ -60,7 +58,7 @@ where
         }
 
         if signal_ended {
-            let _ = self.respond_to.as_ref().unwrap().send(true);
+            let _ = self.respond_to.as_ref().unwrap().try_send(true);
             self.respond_to = None;
             self.cur_signal = None;
         }
@@ -69,7 +67,7 @@ where
             match msg {
                 Message::RegisterOutPort(p) => self.out_port = Some(p),
                 Message::RegisterInPort(port, prod) => self.input = Some((port, prod)),
-                Message::PlaySignal{ signal, respond_to } => {
+                Message::PlaySignal { signal, respond_to } => {
                     self.respond_to = Some(respond_to);
                     self.cur_signal = Some(signal.into_iter());
                 }
@@ -169,7 +167,10 @@ where
 
     pub fn play_signal(&self, signal: J) -> anyhow::Result<Receiver<bool>> {
         let (tx, rx) = sync_channel(1);
-        self.msg_tx.send(Message::PlaySignal {signal, respond_to: tx})?;
+        self.msg_tx.send(Message::PlaySignal {
+            signal,
+            respond_to: tx,
+        })?;
 
         Ok(rx)
     }

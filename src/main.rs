@@ -96,8 +96,6 @@ fn main() -> anyhow::Result<()> {
             file_path,
         } => {
             let engine = init_playback_engine(&dest_ports)?;
-
-            // TODO sync record and playback
             let mut buf = engine.register_in_port("measurement_in", &input_port)?;
             let repsose = play_signal(&engine, type_, volume, duration)?;
 
