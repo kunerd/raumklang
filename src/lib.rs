@@ -3,13 +3,12 @@ mod audio;
 pub use audio::*;
 
 use rand::{distributions, distributions::Distribution, rngs, SeedableRng};
-use ringbuf::{HeapRb, Rb};
+use ringbuf::HeapRb;
 use rustfft::{num_complex::Complex, FftPlanner};
 
 use std::{
-    io::{self, Write},
     path::Path,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 pub enum Signal<F, I>
@@ -379,76 +378,6 @@ pub fn write_signal_to_file(
     writer.finalize()?;
 
     Ok(())
-}
-
-pub fn meter_rms(jack_client: jack::Client, source_port_name: &str) -> anyhow::Result<()> {
-    let sample_rate = jack_client.sample_rate();
-    let in_port = jack_client.register_port("rms_in", jack::AudioIn)?;
-
-    let window_size = sample_rate * 300 / 1000;
-
-    let rb = HeapRb::<_>::new(window_size);
-    let (mut prod, mut cons) = rb.split();
-
-    let process_callback = move |_: &jack::Client, ps: &jack::ProcessScope| -> jack::Control {
-        let in_a_p = in_port.as_slice(ps);
-
-        for i in in_a_p {
-            prod.push(*i).unwrap();
-        }
-
-        jack::Control::Continue
-    };
-    let process = jack::ClosureProcessHandler::new(process_callback);
-
-    let input_port_name = &format!("{}:rms_in", jack_client.name());
-    let active_client = jack_client.activate_async((), process)?;
-    active_client
-        .as_client()
-        .connect_ports_by_name(source_port_name, input_port_name)?;
-
-    let mut last_rms = Instant::now();
-    let mut last_peak = Instant::now();
-    let mut peak = f32::NEG_INFINITY;
-
-    let dbfs = |v: f32| 20.0 * f32::log10(v);
-
-    let mut window = HeapRb::<_>::new(window_size);
-    let mut sum_sq = 0f32;
-
-    loop {
-        let iter = cons.pop_iter();
-
-        for s in iter {
-            let s_sq = s.powi(2);
-            sum_sq += s_sq;
-
-            let removed = window.push_overwrite(s_sq);
-            if let Some(r_sq) = removed {
-                sum_sq -= r_sq;
-            }
-        }
-
-        if last_rms.elapsed() > Duration::from_millis(200) {
-            print!(
-                "\x1b[2K\rRMS: {} dBFS, Peak: {} dbFS",
-                dbfs((sum_sq / window_size as f32).sqrt()),
-                peak
-            );
-            io::stdout().flush().unwrap();
-
-            last_rms = Instant::now();
-        }
-
-        if last_peak.elapsed() > Duration::from_millis(500) {
-            peak = dbfs((sum_sq / window_size as f32).sqrt());
-
-            window.clear();
-            sum_sq = 0f32;
-
-            last_peak = Instant::now();
-        }
-    }
 }
 
 pub fn compute_rir(record_path: &str, sweep_path: &str) -> anyhow::Result<Vec<f32>> {

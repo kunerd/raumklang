@@ -28,7 +28,10 @@ where
 {
     RegisterOutPort(jack::Port<jack::AudioOut>),
     RegisterInPort(jack::Port<jack::AudioIn>, HeapProducer<f32>),
-    PlaySignal(J),
+    PlaySignal{
+        signal: J,
+        respond_to: SyncSender<bool>
+    },
 }
 
 pub struct ProcessHandler<I, J>
@@ -36,6 +39,7 @@ where
     I: Iterator<Item = f32>,
     J: IntoIterator<IntoIter = I>,
 {
+    respond_to: Option<SyncSender<bool>>,
     cur_signal: Option<I>,
     out_port: Option<jack::Port<jack::AudioOut>>,
     input: Option<(jack::Port<jack::AudioIn>, HeapProducer<f32>)>,
@@ -71,14 +75,19 @@ where
         }
 
         if signal_ended {
-            self.cur_signal = None
+            let _ = self.respond_to.as_ref().unwrap().send(true);
+            self.respond_to = None;
+            self.cur_signal = None;
         }
 
         if let Ok(msg) = self.msg_rx.try_recv() {
             match msg {
                 Message::RegisterOutPort(p) => self.out_port = Some(p),
                 Message::RegisterInPort(port, prod) => self.input = Some((port, prod)),
-                Message::PlaySignal(s) => self.cur_signal = Some(s.into_iter()),
+                Message::PlaySignal{ signal, respond_to } => {
+                    self.respond_to = Some(respond_to);
+                    self.cur_signal = Some(signal.into_iter());
+                }
             }
         }
 
@@ -106,6 +115,7 @@ where
         let (msg_tx, msg_rx) = sync_channel(64);
 
         let process_handler = ProcessHandler {
+            respond_to: None,
             out_port: None,
             input: None,
             cur_signal: None,
@@ -172,9 +182,10 @@ where
         self.client.as_client().sample_rate()
     }
 
-    pub fn play_signal(&self, signal: J) -> anyhow::Result<()> {
-        self.msg_tx.send(Message::PlaySignal(signal))?;
+    pub fn play_signal(&self, signal: J) -> anyhow::Result<Receiver<bool>> {
+        let (tx, rx) = sync_channel(1);
+        self.msg_tx.send(Message::PlaySignal {signal, respond_to: tx})?;
 
-        Ok(())
+        Ok(rx)
     }
 }

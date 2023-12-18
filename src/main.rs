@@ -106,9 +106,8 @@ where
         }
     };
 
-    engine.play_signal(signal)?;
-
-    std::thread::sleep(Duration::from_secs(duration as u64));
+    let rx = engine.play_signal(signal)?;
+    rx.recv()?;
 
     Ok(())
 }
