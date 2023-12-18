@@ -2,22 +2,7 @@ use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 
 use ringbuf::{HeapConsumer, HeapProducer, HeapRb};
 
-use crate::{volume_to_amplitude, FiniteSignal, LinearSineSweep, PinkNoise, WhiteNoise};
-
-//struct {
-//    output: Vec<AudioChannel>,
-//    input: Vec<AudioChannel>,
-//}
-//
-//
-//struct Measurment {
-//    signal: Signal,
-//    volume: Volume,
-//    output: Vec<>,
-//    input: Vec<>,
-//}
-//
-pub struct Notifications;
+struct Notifications;
 
 impl jack::NotificationHandler for Notifications {}
 

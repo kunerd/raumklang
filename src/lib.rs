@@ -3,13 +3,9 @@ mod audio;
 pub use audio::*;
 
 use rand::{distributions, distributions::Distribution, rngs, SeedableRng};
-use ringbuf::HeapRb;
 use rustfft::{num_complex::Complex, FftPlanner};
 
-use std::{
-    path::Path,
-    time::Duration,
-};
+use std::path::Path;
 
 pub enum Signal<F, I>
 where
@@ -18,6 +14,8 @@ where
     Finite(F),
     Infinite(I),
 }
+
+pub trait FiniteSignal: Send + Sync + ExactSizeIterator<Item = f32> {}
 
 pub struct LinearSineSweep {
     sample_rate: usize,
@@ -30,7 +28,6 @@ pub struct LinearSineSweep {
 }
 
 // linear sweep
-// TODO: implement log sweep
 impl LinearSineSweep {
     pub fn new(
         start_frequency: u16,
@@ -87,8 +84,7 @@ pub struct WhiteNoise {
     distribution: distributions::Uniform<f32>,
 }
 
-impl ExactSizeIterator for WhiteNoise {}
-impl FiniteSignal for std::iter::Take<WhiteNoise> {}
+// TODO: implement log sweep
 
 impl WhiteNoise {
     pub fn with_amplitude(amplitude: f32) -> Self {
@@ -100,8 +96,7 @@ impl WhiteNoise {
     }
 
     pub fn take_duration(self, sample_rate: usize, duration: usize) -> std::iter::Take<WhiteNoise> {
-        self.into_iter()
-            .take(sample_rate * duration)
+        self.into_iter().take(sample_rate * duration)
     }
 }
 
@@ -120,15 +115,15 @@ impl Iterator for WhiteNoise {
     }
 }
 
+impl ExactSizeIterator for WhiteNoise {}
+impl FiniteSignal for std::iter::Take<WhiteNoise> {}
+
 pub struct PinkNoise {
     b0: f32,
     b1: f32,
     b2: f32,
     white_noise: WhiteNoise,
 }
-
-impl ExactSizeIterator for PinkNoise {}
-impl FiniteSignal for std::iter::Take<PinkNoise> {}
 
 impl PinkNoise {
     pub fn with_amplitude(amplitude: f32) -> Self {
@@ -143,8 +138,7 @@ impl PinkNoise {
     }
 
     pub fn take_duration(self, sample_rate: usize, duration: usize) -> std::iter::Take<PinkNoise> {
-        self.into_iter()
-            .take(sample_rate * duration)
+        self.into_iter().take(sample_rate * duration)
     }
 }
 
@@ -166,12 +160,8 @@ impl Iterator for PinkNoise {
     }
 }
 
-pub struct PlaySignalConfig<'a> {
-    pub out_port_name: &'a str,
-    pub dest_port_names: Vec<&'a str>,
-    pub duration: usize,
-    pub volume: f32,
-}
+impl ExactSizeIterator for PinkNoise {}
+impl FiniteSignal for std::iter::Take<PinkNoise> {}
 
 pub fn volume_to_amplitude(volume: f32) -> f32 {
     assert!((0.0..=1.0).contains(&volume));
@@ -188,173 +178,6 @@ pub fn volume_to_amplitude(volume: f32) -> f32 {
         a * f32::exp(b * volume)
     }
 }
-
-pub struct Notifications;
-
-impl jack::NotificationHandler for Notifications {}
-
-pub struct ProcessHandler<I, J>
-where
-    I: Iterator<Item = f32>,
-    J: IntoIterator<IntoIter = I>,
-{
-    out_port: jack::Port<jack::AudioOut>,
-    cur_out_iter: Option<I>,
-    out_iter_list_rx: std::sync::mpsc::Receiver<J>,
-}
-
-impl<I, J> jack::ProcessHandler for ProcessHandler<I, J>
-where
-    I: Iterator<Item = f32> + std::marker::Send,
-    J: IntoIterator<IntoIter = I> + std::marker::Send,
-{
-    fn process(&mut self, _: &jack::Client, process_scope: &jack::ProcessScope) -> jack::Control {
-        let mut cur_is_empty = false;
-        if let Some(ref mut iter) = self.cur_out_iter {
-            let out = self.out_port.as_mut_slice(process_scope);
-
-            for o in out.iter_mut() {
-                if let Some(sample) = iter.next() {
-                    *o = sample;
-                } else {
-                    cur_is_empty = true;
-                    *o = 0.0f32;
-                }
-            }
-        } else if let Ok(msg) = self.out_iter_list_rx.try_recv() {
-            self.cur_out_iter = Some(msg.into_iter());
-        }
-
-        if cur_is_empty {
-            self.cur_out_iter = None
-        }
-        
-        //if let Some(ref mut buffer) = self.output_buffer_rx {
-        //    let out = self.out_port.as_mut_slice(process_scope);
-
-        //    for o in out.iter_mut() {
-        //        if let Some(sample) = buffer.pop() {
-        //            *o = sample;
-        //        } else {
-        //            *o = 0.0f32;
-        //        }
-        //    }
-        //}
-
-        jack::Control::Continue
-    }
-}
-
-pub struct JackEngine<I, J>
-where
-    I: Iterator<Item = f32>,
-    J: IntoIterator<IntoIter = I>,
-{
-    pub client: jack::AsyncClient<Notifications, ProcessHandler<I, J>>,
-    pub out_iter_list_tx: std::sync::mpsc::SyncSender<J>,
-}
-
-impl<I, J> JackEngine<I, J>
-where
-    I: Iterator<Item = f32> + std::marker::Send + 'static,
-    J: IntoIterator<IntoIter = I> + std::marker::Send + 'static,
-{
-    pub fn start(name: &str) -> anyhow::Result<JackEngine<I, J>> {
-        let (jack_client, _status) = jack::Client::new(name, jack::ClientOptions::NO_START_SERVER)?;
-
-        let out_port_name = "out";
-        let out_port = jack_client.register_port(out_port_name, jack::AudioOut)?;
-
-        let (out_iter_list_tx, out_iter_list_rx) = std::sync::mpsc::sync_channel(16);
-
-        let active_client = jack_client.activate_async(
-            Notifications,
-            ProcessHandler {
-                out_port,
-                cur_out_iter: None,
-                out_iter_list_rx,
-            },
-        )?;
-
-        Ok(JackEngine {
-            client: active_client,
-            out_iter_list_tx,
-        })
-    }
-}
-
-//fn play_sound(
-//    jack_client: jack::Client,
-//    mut audio: Box<dyn FiniteSignal<Item = f32>>,
-//    config: &PlaySignalConfig,
-//) -> anyhow::Result<()> {
-//    let amplitude = volume_to_amplitude(config.volume);
-//    let mut out_port = jack_client.register_port(config.out_port_name, jack::AudioOut)?;
-//    let out_port_clone = out_port.clone_unowned();
-//
-//    let (complete_tx, complete_rx) = std::sync::mpsc::sync_channel(1);
-//    let process = jack::ClosureProcessHandler::new(
-//        move |_: &jack::Client, ps: &jack::ProcessScope| -> jack::Control {
-//            let out = out_port.as_mut_slice(ps);
-//
-//            for o in out.iter_mut() {
-//                if let Some(sample) = audio.next() {
-//                    *o = amplitude * sample;
-//                } else {
-//                    complete_tx.try_send(()).ok();
-//                    *o = 0.0f32;
-//                }
-//            }
-//
-//            jack::Control::Continue
-//        },
-//    );
-//
-//    //let client_source_port_name = format!("{}:{}", jack_client.name(), config.out_port_name);
-//
-//    let active_client = jack_client.activate_async((), process)?;
-//
-//    let client_source_port_name = out_port_clone.name()?;
-//    for dest in &config.dest_port_names {
-//        active_client
-//            .as_client()
-//            .connect_ports_by_name(&client_source_port_name, dest)?;
-//    }
-//
-//    complete_rx.recv()?;
-//
-//    Ok(())
-//}
-
-pub fn play_signal(
-    jack_client_name: &str,
-    audio: Box<dyn FiniteSignal<Item = f32>>,
-    config: &PlaySignalConfig,
-) -> Result<(), anyhow::Error> {
-    //    play_sound(jack_client, audio, config)
-
-    let jack_engine = JackEngine::start(jack_client_name)?;
-
-    let client_source_port_name = format!("{}:{}", jack_engine.client.as_client().name(), "out");
-    for dest in &config.dest_port_names {
-        jack_engine
-            .client
-            .as_client()
-            .connect_ports_by_name(&client_source_port_name, dest)?;
-    }
-
-    let _ = jack_engine.out_iter_list_tx.send(audio);
-
-    std::thread::sleep(Duration::from_secs(5));
-    //let amplitude = volume_to_amplitude(config.volume);
-    //for s in audio {
-    //    while jack_engine.output_buffer_tx.push(amplitude * s).is_err() {}
-    //}
-
-    Ok(())
-}
-
-pub trait FiniteSignal: Send + Sync + ExactSizeIterator<Item = f32> {}
 
 pub fn write_signal_to_file(
     signal: Box<dyn FiniteSignal<Item = f32>>,
@@ -453,211 +276,6 @@ pub fn compute_rir(record_path: &str, sweep_path: &str) -> anyhow::Result<Vec<f3
 
     Ok(result)
 }
-
-pub fn run_measurement(
-    jack_client: jack::Client,
-    config: &PlaySignalConfig,
-    mut audio: Box<dyn FiniteSignal>,
-    client_input_port_name: &str,
-    path: &Path,
-) -> Result<(), anyhow::Error> {
-    let sample_rate = jack_client.sample_rate();
-
-    let amplitude = volume_to_amplitude(config.volume);
-    let (complete_tx, complete_rx) = std::sync::mpsc::sync_channel(1);
-
-    let in_port_name = "measurement_in";
-    let in_port = jack_client.register_port(in_port_name, jack::AudioIn)?;
-    let mut out_port = jack_client.register_port(config.out_port_name, jack::AudioOut)?;
-
-    let window_size = sample_rate * 300 / 1000;
-    let rb = HeapRb::<_>::new(window_size);
-    let (mut prod, mut cons) = rb.split();
-
-    let process = jack::ClosureProcessHandler::new(
-        move |_: &jack::Client, ps: &jack::ProcessScope| -> jack::Control {
-            let out = out_port.as_mut_slice(ps);
-
-            for o in out.iter_mut() {
-                if let Some(sample) = audio.next() {
-                    *o = amplitude * sample;
-                } else {
-                    *o = 0.0f32;
-                    complete_tx.try_send(()).ok();
-                }
-            }
-
-            let in_p = in_port.as_slice(ps);
-            prod.push_slice(in_p);
-
-            jack::Control::Continue
-        },
-    );
-
-    let client_source_port_name = format!("{}:{}", jack_client.name(), config.out_port_name);
-    let client_in_port_name = format!("{}:{}", jack_client.name(), in_port_name);
-
-    let active_client = jack_client.activate_async((), process)?;
-
-    for dest in &config.dest_port_names {
-        active_client
-            .as_client()
-            .connect_ports_by_name(&client_source_port_name, dest)?;
-    }
-
-    active_client
-        .as_client()
-        .connect_ports_by_name(client_input_port_name, &client_in_port_name)?;
-
-    let spec = hound::WavSpec {
-        channels: 1,
-        sample_rate: sample_rate as u32,
-        bits_per_sample: 32,
-        sample_format: hound::SampleFormat::Float,
-    };
-    let mut writer = hound::WavWriter::create(path, spec)?;
-    loop {
-        if let Some(s) = cons.pop() {
-            writer.write_sample(s)?;
-        }
-
-        if complete_rx.try_recv().is_ok() {
-            break;
-        }
-    }
-    writer.finalize()?;
-
-    Ok(())
-}
-
-//pub fn run_measurement(
-//    input_device: &cpal::Device,
-//    record_path: &str,
-//    output_device: &cpal::Device,
-//    sweep_path: &str,
-//    duration: u8,
-//) -> anyhow::Result<()> {
-//    let input_config = input_device
-//        .default_input_config()
-//        .expect("Failed to get default input config");
-//    println!("Default input config: {:?}", input_config);
-//
-//    let spec = wav_spec_from_config(&input_config);
-//    let writer = hound::WavWriter::create(record_path, spec)?;
-//    let writer = Arc::new(Mutex::new(Some(writer)));
-//
-//    // A flag to indicate that recording is in progress.
-//    println!("Begin recording...");
-//
-//    // Run the input stream on a separate thread.
-//    let writer_2 = writer.clone();
-//
-//    let err_fn = move |err| {
-//        eprintln!("an error occurred on stream: {}", err);
-//    };
-//
-//    let output_config = output_device
-//        .default_input_config()
-//        .expect("Failed to get default input config");
-//    println!("Default output config: {:?}", output_config);
-//
-//    println!("Write sweep to file: {}", sweep_path);
-//    let spec = wav_spec_from_config(&output_config);
-//    let mut sweep_writer = hound::WavWriter::create(sweep_path, spec)?;
-//
-//    let sine_sweep = SineSweep::new(50, 5_000, duration.into(), 0.125, 44_100);
-//    let sine_sweep: Vec<f32> = sine_sweep.into_iter().collect();
-//
-//    let stream = match input_config.sample_format() {
-//        cpal::SampleFormat::F32 => input_device.build_input_stream(
-//            &input_config.into(),
-//            move |data, _: &_| write_input_data::<f32, f32>(data, &writer_2),
-//            err_fn,
-//            None,
-//        )?,
-//        cpal::SampleFormat::I16 => input_device.build_input_stream(
-//            &input_config.into(),
-//            move |data, _: &_| write_input_data::<i16, i16>(data, &writer_2),
-//            err_fn,
-//            None,
-//        )?,
-//        cpal::SampleFormat::U16 => input_device.build_input_stream(
-//            &input_config.into(),
-//            move |data, _: &_| write_input_data::<u16, i16>(data, &writer_2),
-//            err_fn,
-//            None,
-//        )?,
-//        _ => panic!("Sample format not supported!"),
-//    };
-//
-//    stream.play()?;
-//
-//    match output_config.sample_format() {
-//        cpal::SampleFormat::F32 => {
-//            play_audio::<f32, _>(output_device, &output_config.into(), sine_sweep.clone())
-//        }
-//        cpal::SampleFormat::I16 => {
-//            play_audio::<i16, _>(output_device, &output_config.into(), sine_sweep.clone())
-//        }
-//        cpal::SampleFormat::U16 => {
-//            play_audio::<u16, _>(output_device, &output_config.into(), sine_sweep.clone())
-//        }
-//        _ => panic!("Sample format not supported!"),
-//    }?;
-//
-//    drop(stream);
-//    writer.lock().unwrap().take().unwrap().finalize()?;
-//    println!("Recording {} complete!", record_path);
-//
-//    for sample in sine_sweep {
-//        sweep_writer.write_sample(sample).ok();
-//    }
-//    sweep_writer.finalize().unwrap();
-//    println!("Sweep file {} completed!", sweep_path);
-//
-//    Ok(())
-//}
-//
-//type WavWriterHandle = Arc<Mutex<Option<hound::WavWriter<BufWriter<File>>>>>;
-//fn write_input_data<T, U>(input: &[T], writer: &WavWriterHandle)
-//where
-//    T: cpal::Sample,
-//    U: cpal::Sample + cpal::FromSample<T> + hound::Sample,
-//{
-//    // TODO: refactor
-//    if let Ok(mut guard) = writer.try_lock() {
-//        if let Some(writer) = guard.as_mut() {
-//            // FIXME hardcode
-//            for frame in input.chunks(2) {
-//                for (channel, &sample) in frame.iter().enumerate() {
-//                    // FIXME hardcode
-//                    if channel == 0 {
-//                        let sample = U::from_sample(sample);
-//                        writer.write_sample(sample).ok();
-//                    }
-//                }
-//            }
-//        }
-//    }
-//}
-
-//fn wav_spec_from_config(config: &cpal::SupportedStreamConfig) -> hound::WavSpec {
-//    hound::WavSpec {
-//        channels: 1,
-//        sample_rate: config.sample_rate().0 as _,
-//        bits_per_sample: (config.sample_format().sample_size() * 8) as _,
-//        sample_format: sample_format(config.sample_format()),
-//    }
-//}
-//
-//fn sample_format(format: cpal::SampleFormat) -> hound::SampleFormat {
-//    match format {
-//        cpal::SampleFormat::U16 => hound::SampleFormat::Int,
-//        cpal::SampleFormat::I16 => hound::SampleFormat::Int,
-//        cpal::SampleFormat::F32 => hound::SampleFormat::Float,
-//        _ => panic!("Sample format not supported!"),
-//    }
-//}
 
 //pub fn old_rir(
 //    host: &cpal::Host,

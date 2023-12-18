@@ -1,10 +1,13 @@
-use std::{path, sync::mpsc::sync_channel, time::{Duration, Instant}, io::{self, Write}};
+use std::{
+    io::{self, Write},
+    sync::mpsc::Receiver,
+    time::{Duration, Instant},
+};
 
 use clap::{Parser, Subcommand};
 
 use raumklang::{
-    run_measurement, volume_to_amplitude, FiniteSignal, LinearSineSweep, PinkNoise,
-    PlaySignalConfig, WhiteNoise, AudioEngine,
+    volume_to_amplitude, AudioEngine, FiniteSignal, LinearSineSweep, PinkNoise, WhiteNoise,
 };
 use ringbuf::{HeapRb, Rb};
 
@@ -67,19 +70,80 @@ enum SignalType {
     },
 }
 
-fn play_signal<T>(
-    type_: SignalType,
-    dest_ports: &[T],
-    volume: f32,
-    duration: usize,
-) -> anyhow::Result<()>
+fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+
+    match cli.subcommand {
+        Command::Signal {
+            duration,
+            volume,
+            dest_ports,
+            file_path: _,
+            type_,
+        } => {
+            let engine = init_playback_engine(&dest_ports)?;
+            let response = play_signal(&engine, type_, volume, duration)?;
+            response.recv()?;
+            Ok(())
+        }
+        Command::Rms { input_port } => meter_rms(&input_port),
+        Command::RunMeasurement {
+            duration,
+            volume,
+            dest_ports,
+            input_port,
+            type_,
+            file_path,
+        } => {
+            let engine = init_playback_engine(&dest_ports)?;
+
+            // TODO sync record and playback
+            let mut buf = engine.register_in_port("measurement_in", &input_port)?;
+            let repsose = play_signal(&engine, type_, volume, duration)?;
+
+            let spec = hound::WavSpec {
+                channels: 1,
+                sample_rate: engine.sample_rate() as u32,
+                bits_per_sample: 32,
+                sample_format: hound::SampleFormat::Float,
+            };
+            let mut writer = hound::WavWriter::create(file_path, spec)?;
+            loop {
+                if let Some(s) = buf.pop() {
+                    writer.write_sample(s)?;
+                }
+
+                if repsose.try_recv().is_ok() {
+                    break;
+                }
+            }
+            writer.finalize()?;
+
+            Ok(())
+        }
+        _ => panic!("Not implemented!"),
+    }
+}
+
+fn init_playback_engine<T, I, J>(dest_ports: &[T]) -> anyhow::Result<AudioEngine<I, J>>
 where
     T: AsRef<str>,
+    I: Iterator<Item = f32> + Send + 'static,
+    J: IntoIterator<IntoIter = I> + Send + Sync + 'static,
 {
     let jack_client_name = env!("CARGO_BIN_NAME");
     let engine = AudioEngine::new(jack_client_name)?;
     engine.register_out_port("signal_out", dest_ports)?;
 
+    Ok(engine)
+}
+
+fn play_signal(
+    engine: &AudioEngine<Box<dyn FiniteSignal<Item = f32>>, Box<dyn FiniteSignal<Item = f32>>>,
+    type_: SignalType,
+    volume: f32,
+    duration: usize,
+) -> anyhow::Result<Receiver<bool>> {
     let sample_rate = engine.sample_rate();
     let amplitude = volume_to_amplitude(volume);
 
@@ -106,10 +170,7 @@ where
         }
     };
 
-    let rx = engine.play_signal(signal)?;
-    rx.recv()?;
-
-    Ok(())
+    engine.play_signal(signal)
 }
 
 pub fn meter_rms(source_port_name: &str) -> anyhow::Result<()> {
@@ -168,84 +229,5 @@ pub fn meter_rms(source_port_name: &str) -> anyhow::Result<()> {
         }
 
         std::thread::sleep(Duration::from_millis(150));
-    }
-}
-
-fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
-
-    match cli.subcommand {
-        Command::Signal {
-            duration,
-            volume,
-            dest_ports,
-            file_path: _,
-            type_,
-        } => play_signal(type_, &dest_ports, volume, duration),
-        Command::Rms { input_port } => meter_rms(&input_port),
-        Command::RunMeasurement {
-            duration,
-            volume,
-            dest_ports,
-            input_port,
-            type_,
-            file_path,
-        } => {
-            let jack_client_name = env!("CARGO_BIN_NAME");
-            let (jack_client, _status) =
-                jack::Client::new(jack_client_name, jack::ClientOptions::NO_START_SERVER)?;
-
-            let sample_rate = jack_client.sample_rate();
-
-            let config = PlaySignalConfig {
-                out_port_name: "signal_out",
-                dest_port_names: dest_ports.iter().map(String::as_str).collect(),
-                duration,
-                volume,
-            };
-
-            let signal: Box<dyn FiniteSignal<Item = f32>> = match type_ {
-                SignalType::WhiteNoise => {
-                    Box::new(WhiteNoise::default().take_duration(sample_rate, duration))
-                }
-                SignalType::PinkNoise => {
-                    Box::new(PinkNoise::default().take_duration(sample_rate, duration))
-                }
-                SignalType::LogSweep {
-                    start_frequency,
-                    end_frequency,
-                } => {
-                    let sweep = LinearSineSweep::new(
-                        start_frequency,
-                        end_frequency,
-                        config.duration,
-                        1.0,
-                        sample_rate,
-                    );
-                    println!("{}", sweep.len());
-                    Box::new(sweep)
-                }
-            };
-
-            run_measurement(
-                jack_client,
-                &config,
-                signal,
-                &input_port,
-                path::Path::new(&file_path),
-            )
-        }
-        //        Command::ComputeRIR => {
-        //            let mut record_path = String::from(RESULT_PATH);
-        //            record_path.push_str("/recorded.wav");
-        //            let mut sweep_path = String::from(RESULT_PATH);
-        //            sweep_path.push_str("/sweep.wav");
-        //
-        //            compute_rir(&record_path, &sweep_path)
-        //        }
-        //        Command::Plot => plot_fake_impulse_respons(),
-        //        Command::PingPong => ping_pong(&host, &device, config),
-        //        Command::RIR => old_rir(&host, &device, config),
-        _ => panic!("Not implemented!"),
     }
 }
