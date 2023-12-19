@@ -7,9 +7,8 @@ use std::{
 use clap::{Parser, Subcommand};
 
 use raumklang::{
-    volume_to_amplitude, AudioEngine, FiniteSignal, LinearSineSweep, PinkNoise, WhiteNoise,
+    volume_to_amplitude, AudioEngine, FiniteSignal, LinearSineSweep, PinkNoise, WhiteNoise, LoudnessMeter, dbfs,
 };
-use ringbuf::{HeapRb, Rb};
 
 #[derive(Parser)]
 #[clap(author, version)]
@@ -107,7 +106,7 @@ fn main() -> anyhow::Result<()> {
             };
 
             // FIXME hardcoded window size
-            let mut loudness = Loudness::new(13230); // 44100samples / 1000ms * 300ms
+            let mut loudness = LoudnessMeter::new(13230); // 44100samples / 1000ms * 300ms
             let mut writer = hound::WavWriter::create(file_path, spec)?;
             loop {
                 let iter = buf.pop_iter();
@@ -128,7 +127,7 @@ fn main() -> anyhow::Result<()> {
             println!(
                 "rms: {} dbfs, peak: {} dbfs",
                 dbfs(loudness.rms()),
-                dbfs(loudness.peak)
+                dbfs(loudness.peak())
             );
 
             Ok(())
@@ -184,74 +183,6 @@ fn play_signal(
     engine.play_signal(signal)
 }
 
-struct Loudness {
-    peak: f32,
-    square_sum: f32,
-    window_size: usize,
-    buf: HeapRb<f32>,
-}
-
-impl Loudness {
-    fn new(window_size: usize) -> Self {
-        let buf = HeapRb::<_>::new(window_size);
-        Self {
-            square_sum: 0.0,
-            peak: f32::NEG_INFINITY,
-            window_size,
-            buf,
-        }
-    }
-
-    fn update_from_iter<I>(&mut self, iter: I) -> bool
-    where
-        I: IntoIterator<Item = f32>,
-    {
-        let mut new_peak = false;
-
-        for s in iter {
-            new_peak = new_peak || self.update(s);
-        }
-
-        new_peak
-    }
-
-    fn update(&mut self, sample: f32) -> bool {
-        let sample_squared = sample * sample;
-        self.square_sum += sample_squared;
-
-        let mut new_peak = false;
-        if self.peak < sample {
-            self.peak = sample;
-            new_peak = true;
-        }
-
-        let removed = self.buf.push_overwrite(sample_squared);
-        if let Some(r) = removed {
-            self.square_sum -= r;
-        }
-
-        new_peak
-    }
-
-    fn rms(&self) -> f32 {
-        (self.square_sum / (self.window_size as f32)).sqrt()
-    }
-
-    fn peak(&self) -> f32 {
-        self.peak
-    }
-
-    fn reset_peak(&mut self) {
-        self.peak = f32::NEG_INFINITY;
-        for s in self.buf.iter() {
-            self.peak = self.peak.max(*s)
-        }
-    }
-}
-
-fn dbfs(v: f32) -> f32 {
-    20.0 * f32::log10(v)
-}
 
 pub fn meter_rms(source_port_name: &str) -> anyhow::Result<()> {
     let jack_client_name = env!("CARGO_BIN_NAME");
@@ -267,7 +198,7 @@ pub fn meter_rms(source_port_name: &str) -> anyhow::Result<()> {
     let mut last_peak = Instant::now();
 
     // FIXME hardcoded window size
-    let mut loudness = Loudness::new(13230); // 44100samples / 1000ms * 300ms
+    let mut loudness = LoudnessMeter::new(13230); // 44100samples / 1000ms * 300ms
 
     loop {
         let iter = cons.pop_iter();
