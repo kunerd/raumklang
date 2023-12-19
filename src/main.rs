@@ -122,10 +122,14 @@ fn main() -> anyhow::Result<()> {
 
                 std::thread::sleep(Duration::from_millis(10)); // buf size is 1024, 1 / 44100 *
                                                                // 1024 = 0,023 s = 23ms / 2 = 11,5
-                                                               //      ~ 10 
+                                                               //      ~ 10
             }
             writer.finalize()?;
-            println!("rms: {} dbfs, peak: {} dbfs", dbfs(loudness.rms()), dbfs(loudness.peak)); 
+            println!(
+                "rms: {} dbfs, peak: {} dbfs",
+                dbfs(loudness.rms()),
+                dbfs(loudness.peak)
+            );
 
             Ok(())
         }
@@ -198,25 +202,35 @@ impl Loudness {
         }
     }
 
-    fn update_from_iter<I>(&mut self, iter: I)
+    fn update_from_iter<I>(&mut self, iter: I) -> bool
     where
         I: IntoIterator<Item = f32>,
     {
+        let mut new_peak = false;
+
         for s in iter {
-            self.update(s);
+            new_peak = new_peak || self.update(s);
         }
+
+        new_peak
     }
 
-    fn update(&mut self, sample: f32) {
-        let sample_squared = sample.powi(2);
+    fn update(&mut self, sample: f32) -> bool {
+        let sample_squared = sample * sample;
         self.square_sum += sample_squared;
 
-        self.peak = self.peak.max(sample);
+        let mut new_peak = false;
+        if self.peak < sample {
+            self.peak = sample;
+            new_peak = true;
+        }
 
         let removed = self.buf.push_overwrite(sample_squared);
         if let Some(r) = removed {
             self.square_sum -= r;
         }
+
+        new_peak
     }
 
     fn rms(&self) -> f32 {
@@ -257,9 +271,11 @@ pub fn meter_rms(source_port_name: &str) -> anyhow::Result<()> {
 
     loop {
         let iter = cons.pop_iter();
-        loudness.update_from_iter(iter);
+        if loudness.update_from_iter(iter) {
+            last_peak = Instant::now();
+        }
 
-        if last_rms.elapsed() > Duration::from_millis(200) {
+        if last_rms.elapsed() > Duration::from_millis(150) {
             print!(
                 "\x1b[2K\rRMS: {:>8.2} dBFS, Peak: {:>8.2} dbFS",
                 dbfs(loudness.rms()),
@@ -275,6 +291,6 @@ pub fn meter_rms(source_port_name: &str) -> anyhow::Result<()> {
             last_peak = Instant::now();
         }
 
-        std::thread::sleep(Duration::from_millis(100));
+        std::thread::sleep(Duration::from_millis(75));
     }
 }
