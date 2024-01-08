@@ -6,9 +6,17 @@ use std::{
 
 use clap::{Parser, Subcommand};
 
-use raumklang::{
-    volume_to_amplitude, AudioEngine, FiniteSignal, LinearSineSweep, PinkNoise, WhiteNoise, LoudnessMeter, dbfs,
+use ndarray::{Array, Axis};
+use ndarray_stats::QuantileExt;
+use plotters::{
+    prelude::{BitMapBackend, IntoDrawingArea},
+    style::RGBColor,
 };
+use raumklang::{
+    dbfs, volume_to_amplitude, AudioEngine, FiniteSignal, ImpulseResponse, LinearSineSweep,
+    LoudnessMeter, PinkNoise, WhiteNoise,
+};
+use rustfft::{num_complex::Complex, FftPlanner};
 
 #[derive(Parser)]
 #[clap(author, version)]
@@ -21,6 +29,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    Rms {
+        #[arg(short, long)]
+        input_port: String,
+    },
     Signal {
         #[clap(short, long, default_value_t = 5)]
         duration: usize,
@@ -33,9 +45,6 @@ enum Command {
         #[command(subcommand)]
         type_: SignalType,
     },
-    Plot,
-    PingPong,
-    Rir,
     RunMeasurement {
         #[clap(short, long, default_value_t = 5)]
         duration: usize,
@@ -50,10 +59,12 @@ enum Command {
         #[command(subcommand)]
         type_: SignalType,
     },
-    ComputeRIR,
-    Rms {
-        #[arg(short, long)]
-        input_port: String,
+    ComputeRIR {
+        loopback_path: String,
+        measurement_path: String,
+    },
+    Spectrogram {
+        file_path: String,
     },
 }
 
@@ -132,8 +143,237 @@ fn main() -> anyhow::Result<()> {
 
             Ok(())
         }
-        _ => panic!("Not implemented!"),
+        Command::ComputeRIR {
+            loopback_path,
+            measurement_path,
+        } => {
+            let impulse_respone = ImpulseResponse::from_files(&loopback_path, &measurement_path)?;
+
+            //let start = impulse_respone
+            //    .impulse_response
+            //    .into_iter()
+            //    .take(22050)
+            //    .collect();
+
+            //plot_heatmap(&start)?;
+            plot_heatmap(&impulse_respone.impulse_response)?;
+
+            Ok(())
+        }
+        Command::Spectrogram { file_path } => {
+            let mut reader = hound::WavReader::open(file_path)?;
+            let data: Vec<f32> = reader.samples::<f32>().collect::<Result<Vec<f32>, _>>()?;
+
+            let data: Vec<_> = data.iter().map(Complex::from).collect();
+
+            plot_heatmap(&data)?;
+
+            Ok(())
+        }
     }
+}
+
+fn plot_heatmap(ir: &Vec<Complex<f32>>) -> anyhow::Result<()> {
+    let _sample_rate = 44100;
+    let window_size = 4 * 1024;
+
+    //window = np.append(
+    //        signal.get_window("hann", window_size)[0: window_size //2],
+    //        signal.get_window("tukey", window_size, .25)[window_size//2:]
+    //)
+    //#window = signal.get_window("hamming", window_size)
+    //
+    let start_sample = 0;
+    let stop_sample = ir.len();
+    //
+    let time_shift = 15; // ms
+    let time_shift_samples = 44100 * time_shift / 1000;
+    let rem = (stop_sample - start_sample - window_size) % time_shift_samples;
+    let _stop_sample = stop_sample + time_shift - rem;
+
+    //let window_count = stop_sample - start_sample - window_size / time_shift_samples;
+    //let mut planner = FftPlanner::<f32>::new();
+    //let fft = planner.plan_fft_forward(window_size * 2);
+
+    //let mut ffts = vec![];
+    //for n in 0..window_count {
+    //    let start = n * time_shift_samples;
+    //    let end = start + window_size;
+
+    //    let mut chunk = Vec::with_capacity(window_size);
+    //    chunk.clone_from_slice(&ir[start..end]);
+
+    //    fft.process(&mut chunk);
+
+    //    ffts.push(chunk)
+    //}
+
+    let samples_array = Array::from(ir.clone());
+
+    const MAX_FREQ: usize = 1000;
+    const WINDOW_SIZE: usize = 44100 * 300 / 1000;
+    const OVERLAP: f64 = 0.9;
+    const SKIP_SIZE: usize = (WINDOW_SIZE as f64 * (1f64 - OVERLAP)) as usize;
+
+    let windows = samples_array
+        .windows(ndarray::Dim(WINDOW_SIZE))
+        .into_iter()
+        .step_by(SKIP_SIZE)
+        .collect::<Vec<_>>();
+    let mut windows = ndarray::stack(Axis(0), &windows).unwrap();
+
+    // So to perform the FFT on each window we need a Complex<f32>, and right now we have i16s, so first let's convert
+    //let mut windows = windows.map(|i| Complex::from(*i));
+
+    // get the FFT up and running
+    let mut planner = FftPlanner::new();
+    let fft = planner.plan_fft_forward(WINDOW_SIZE);
+
+    // Since we have a 2-D array of our windows with shape [WINDOW_SIZE, (num_samples / WINDOW_SIZE) - 1], we can run an FFT on every row.
+    // Next step is to do something multithreaded with Rayon, but we're not cool enough for that yet.
+    windows.axis_iter_mut(Axis(0)).for_each(|mut frame| {
+        fft.process(frame.as_slice_mut().unwrap());
+    });
+
+    // Get the real component of those complex numbers we get back from the FFT
+    //let windows = windows.map(|i| i.re);
+    let windows = windows.map(|i| i.norm());
+
+    // And finally, only look at the first half of the spectrogram - the first (n/2)+1 points of each FFT
+    // https://dsp.stackexchange.com/questions/4825/why-is-the-fft-mirrored
+    //let windows = windows.slice_move(ndarray::s![.., ..(WINDOW_SIZE / 2) + 1]);
+    let windows = windows.slice_move(ndarray::s![.., ..MAX_FREQ * WINDOW_SIZE / 44100 + 1]);
+
+    // get some dimensions for drawing
+    // The shape is in [nrows, ncols], but we want to transpose this.
+    let (width, height) = match windows.shape() {
+        &[first, second] => (first, second),
+        _ => panic!(
+            "Windows is a {}D array, expected a 2D array",
+            windows.ndim()
+        ),
+    };
+
+    println!("Generating a {} wide x {} high image", width, height);
+
+    let image_dimensions: (u32, u32) = (width as u32, height as u32);
+    let root_drawing_area = BitMapBackend::new(
+        "data/output.png",
+        image_dimensions, // width x height. Worth it if we ever want to resize the graph.
+    )
+    .into_drawing_area();
+
+    let spectrogram_cells = root_drawing_area.split_evenly((height, width));
+
+    //let scale: f32 = 1.0 / (WINDOW_SIZE as f32).sqrt();
+    //let windows_scaled = windows.map(|i| i.abs() * scale);
+    let windows_scaled = windows.map(|i| i.abs());
+
+    let highest_spectral_density = windows_scaled.max_skipnan();
+
+    // transpose and flip around to prepare for graphing
+    /* the array is currently oriented like this:
+        t = 0 |
+              |
+              |
+              |
+              |
+        t = n +-------------------
+            f = 0              f = m
+
+        so it needs to be flipped...
+        t = 0 |
+              |
+              |
+              |
+              |
+        t = n +-------------------
+            f = m              f = 0
+
+        ...and transposed...
+        f = m |
+              |
+              |
+              |
+              |
+        f = 0 +-------------------
+            t = 0              t = n
+
+        ... in order to look like a proper spectrogram
+    */
+    let windows_flipped = windows_scaled.slice(ndarray::s![.., ..; -1]); // flips the
+    let windows_flipped = windows_flipped.t();
+
+    // Finally add a color scale
+    //let color_scale = colorous::MAGMA;
+    let color_scale = colorous::TURBO;
+
+    for (cell, spectral_density) in spectrogram_cells.iter().zip(windows_flipped.iter()) {
+        let spectral_density_scaled = spectral_density.sqrt() / highest_spectral_density.sqrt();
+        //let spectral_density_scaled = spectral_density / highest_spectral_density;
+
+        //let sd_log = spectral_density_scaled.log10();
+
+        let color = color_scale.eval_continuous(spectral_density_scaled as f64);
+        cell.fill(&RGBColor(color.r, color.g, color.b)).unwrap();
+    }
+
+    Ok(())
+    //freq_time = np.zeros(ffts[0].shape, dtype="complex")
+    //for win_fft in ffts:
+    //    freq_time += win_fft ** 2
+    //
+    //#plot_frequency_domain(np.abs(np.sqrt(freq_time)))
+    //
+    //fr = 44100 / 2 / window_size
+    //freqs = np.arange(0, window_size // 2 + 1) * fr
+    //
+    //print(len(ffts))
+    //db_fs_spec = 20 * np.log10(np.abs(ffts))
+    //#db_fs_spec = np.abs(ffts)
+    //
+    //#ticks = np.array([0, 100, 500, 1000, 2000, 5000])
+    //#ha.xaxis.set_ticks(ticks)
+    //#ha.xaxis.set_ticklabels(ticks)
+    //t = np.arange(0, len(ffts)) * time_shift
+    //
+    //#    ha = plt.subplot()
+    //#    ha.set_xscale('log')
+    //#    #cb = ha.pcolormesh(freqs, t, db_fs_spec, vmin=-60.0, vmax=-20, shading='gouraud')
+    //#    cb = ha.pcolormesh(freqs, t, db_fs_spec, shading='gouraud')
+    //#    #cb = ha.pcolormesh(freqs, range(0, len(ffts)), db_fs_spec, shading='gouraud')
+    //#    plt.colorbar(cb)
+    //#    plt.xlabel('Frequency [Hz]')
+    //#    plt.ylabel('Time [ms]')
+    //#    plt.xlim([50, 5000])
+    //#    #plt.ylim([0, 0.6])
+    //#    #plt.colorbar()
+    //#    plt.show()
+    //#    #plt.plot(freq_time)
+    //#    #plt.show()
+    //import plotly.graph_objects as go
+    //
+    //# Creating 2-D grid of features
+    //#[X, Y] = np.meshgrid(feature_x, feature_y)
+    //#
+    //#Z = np.cos(X / 2) + np.sin(Y / 4)
+    //
+    //#fig = go.Figure(data =
+    //#                go.Heatmap(x = freqs, y = t, z = db_fs_spec, zmin=-70, zmax=0))
+    //#
+    //#fig.show()
+    //
+    //fig = go.Figure(data=[go.Surface(
+    //    z=db_fs_spec,
+    //    x=freqs.flatten(),
+    //    y=t.flatten()
+    //)])
+    //fig.update_layout(title='Mt Bruno Elevation',
+    //                  #autosize=False,
+    //                  #width=500, height=500,
+    //                  #margin=dict(l=65, r=50, b=65, t=90)
+    //)
+    //fig.show()
 }
 
 fn init_playback_engine<T, I, J>(dest_ports: &[T]) -> anyhow::Result<AudioEngine<I, J>>
@@ -182,7 +422,6 @@ fn play_signal(
 
     engine.play_signal(signal)
 }
-
 
 pub fn meter_rms(source_port_name: &str) -> anyhow::Result<()> {
     let jack_client_name = env!("CARGO_BIN_NAME");
