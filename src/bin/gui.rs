@@ -17,7 +17,7 @@ use iced::{
         canvas::{self, Cache, Frame, Geometry},
         Column, Container, Text,
     },
-    Application, Command, Element, Font, Length, Settings, Size, Subscription, Theme,
+    Application, Command, Element, Event, Font, Length, Settings, Size, Subscription, Theme,
 };
 use plotters::{
     coord::{
@@ -41,9 +41,11 @@ fn main() {
 #[derive(Debug)]
 enum Message {
     MouseEvent(mouse::Event, iced::Point),
+    EventOccured(Event),
 }
 
 struct State {
+    shift: bool,
     chart: SamplesChart,
 }
 
@@ -57,7 +59,10 @@ impl Application for State {
         let samples = raumklang::LinearSineSweep::new(60, 500, 5, 0.8f32, 44100);
         let chart = SamplesChart::new("Test".to_string(), samples.into_iter());
         (
-            Self { chart },
+            Self {
+                chart,
+                shift: false,
+            },
             Command::none(), //Command::batch([
                              //    font::load(include_bytes!("./fonts/notosans-regular.ttf").as_slice())
                              //        .map(Message::FontLoaded),
@@ -82,15 +87,50 @@ impl Application for State {
                 mouse::Event::WheelScrolled {
                     delta: mouse::ScrollDelta::Lines { y, .. },
                 } => {
-                    // y is always zero in iced 0.10
-                    if y.is_sign_positive() {
-                        self.chart.zoom_in(point);
-                    } else {
-                        self.chart.zoom_out(point);
+                    match self.shift {
+                        true => {
+                            // y is always zero in iced 0.10
+                            if y.is_sign_positive() {
+                                self.chart.scroll_right();
+                            } else {
+                                self.chart.scroll_left();
+                            }
+                        }
+                        false => {
+                            // y is always zero in iced 0.10
+                            if y.is_sign_positive() {
+                                self.chart.zoom_in(point);
+                            } else {
+                                self.chart.zoom_out(point);
+                            }
+                        }
                     }
                 }
                 _ => {}
             },
+            Message::EventOccured(event) => {
+                if let Event::Keyboard(event) = event {
+                    match event {
+                        iced::keyboard::Event::KeyPressed {
+                            key_code,
+                            modifiers: _,
+                        } => match key_code {
+                            iced::keyboard::KeyCode::LShift => self.shift = true,
+                            iced::keyboard::KeyCode::RShift => self.shift = true,
+                            _ => {}
+                        },
+                        iced::keyboard::Event::KeyReleased {
+                            key_code,
+                            modifiers: _,
+                        } => match key_code {
+                            iced::keyboard::KeyCode::LShift => self.shift = false,
+                            iced::keyboard::KeyCode::RShift => self.shift = false,
+                            _ => {}
+                        },
+                        _ => {}
+                    }
+                }
+            }
         }
 
         Command::none()
@@ -103,7 +143,7 @@ impl Application for State {
     fn subscription(&self) -> Subscription<Self::Message> {
         //const FPS: u64 = 50;
         //iced::time::every(Duration::from_millis(1000 / FPS)).map(|_| Message::Tick)
-        subscription::Subscription::none()
+        subscription::events().map(Message::EventOccured)
     }
 }
 
@@ -165,7 +205,7 @@ impl SamplesChart {
                 let new_start = x.saturating_sub((new_len as f32 * center_scale) as usize);
                 let new_end = new_start + new_len;
                 self.viewport = new_start..new_end;
-                
+
                 self.cache.clear();
             }
         }
@@ -191,10 +231,44 @@ impl SamplesChart {
                 let new_start = x.saturating_sub((new_len as f32 * center_scale) as usize);
                 let new_end = new_start + new_len;
                 self.viewport = new_start..new_end;
-                
+
                 self.cache.clear();
             }
         }
+    }
+
+    fn scroll_right(&mut self) {
+        let old_viewport = self.viewport.clone();
+        let length = old_viewport.end - old_viewport.start;
+
+        const SCROLL_FACTOR: f32 = 0.2;
+        let offset = (length as f32 * SCROLL_FACTOR) as usize;
+
+        let mut new_end = old_viewport.end.saturating_add(offset);
+        if new_end > self.data.len() {
+            new_end = self.data.len();
+        }
+
+        let new_start = new_end - length;
+
+        self.viewport = new_start..new_end;
+
+        self.cache.clear();
+    }
+
+    fn scroll_left(&mut self) {
+        let old_viewport = self.viewport.clone();
+        let length = old_viewport.end - old_viewport.start;
+
+        const SCROLL_FACTOR: f32 = 0.2;
+        let offset = (length as f32 * SCROLL_FACTOR) as usize;
+
+        let new_start = old_viewport.start.saturating_sub(offset);
+        let new_end = new_start + length;
+
+        self.viewport = new_start..new_end;
+
+        self.cache.clear();
     }
 }
 
@@ -224,7 +298,6 @@ impl Chart<Message> for SamplesChart {
         use plotters::prelude::*;
 
         let mut chart = chart
-            //.caption("y=x^2", ("sans-serif", 50).into_font())
             .margin(5)
             .x_label_area_size(30)
             .y_label_area_size(30)
@@ -239,8 +312,6 @@ impl Chart<Message> for SamplesChart {
                 &RED,
             ))
             .unwrap();
-        //.label("y = x^2")
-        //.legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
 
         chart.configure_mesh().disable_mesh().draw().unwrap();
 
