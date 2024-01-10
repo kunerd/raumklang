@@ -14,6 +14,7 @@ use iced::{
     alignment::{Horizontal, Vertical},
     event, executor, mouse, subscription,
     widget::{
+        self,
         canvas::{self, Cache, Frame, Geometry},
         Column, Container, Text,
     },
@@ -28,6 +29,7 @@ use plotters::{
 };
 use plotters_backend::DrawingBackend;
 use plotters_iced::{Chart, ChartWidget, Renderer};
+use raumklang::ImpulseResponse;
 
 fn main() {
     State::run(Settings {
@@ -42,6 +44,7 @@ fn main() {
 enum Message {
     MouseEvent(mouse::Event, iced::Point),
     EventOccured(Event),
+    AmplitudeUnitChanged(AmplitudeUnit)
 }
 
 struct State {
@@ -56,8 +59,16 @@ impl Application for State {
     type Theme = Theme;
 
     fn new(_flags: Self::Flags) -> (Self, Command<Self::Message>) {
-        let samples = raumklang::LinearSineSweep::new(60, 500, 5, 0.8f32, 44100);
-        let chart = SamplesChart::new("Test".to_string(), samples.into_iter());
+        let loopback_path = "data/loopback.wav";
+        let measurement_path = "data/measurement.wav";
+        let impulse_respone =
+            ImpulseResponse::from_files(&loopback_path, &measurement_path).unwrap();
+        let data: Vec<_> = impulse_respone
+            .impulse_response
+            .iter()
+            .map(|s| s.re)
+            .collect();
+        let chart = SamplesChart::new("Test".to_string(), data.into_iter());
         (
             Self {
                 chart,
@@ -131,6 +142,7 @@ impl Application for State {
                     }
                 }
             }
+            Message::AmplitudeUnitChanged(u) => self.chart.set_amplitude_unit(u)
         }
 
         Command::none()
@@ -147,34 +159,79 @@ impl Application for State {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum AmplitudeUnit {
+    #[default]
+    PercentFullScale,
+    DezibelFullScale,
+}
+
+impl AmplitudeUnit {
+    const ALL: [AmplitudeUnit; 2] = [
+        AmplitudeUnit::PercentFullScale,
+        AmplitudeUnit::DezibelFullScale,
+    ];
+}
+
+impl std::fmt::Display for AmplitudeUnit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                AmplitudeUnit::PercentFullScale => "%FS",
+                AmplitudeUnit::DezibelFullScale => "dbFS",
+            }
+        )
+    }
+}
+
 struct SamplesChart {
     cache: Cache,
     name: String,
     data: Vec<f32>,
+    processed_data: Vec<f32>,
+    min: f32,
+    max: f32,
     viewport: Range<usize>,
     spec: RefCell<Option<Cartesian2d<RangedCoordusize, RangedCoordf32>>>,
+    amplitude_unit: AmplitudeUnit,
 }
 
 impl SamplesChart {
     fn new(name: String, data: impl Iterator<Item = f32>) -> Self {
         let data: Vec<_> = data.collect();
         let viewport = 0..data.len();
-        Self {
+        let mut chart = Self {
             name,
             data,
+            min: f32::NEG_INFINITY,
+            max: f32::INFINITY,
+            processed_data: vec![],
             cache: Cache::new(),
             viewport,
             spec: RefCell::new(None),
-        }
+            amplitude_unit: AmplitudeUnit::PercentFullScale,
+        };
+        chart.process_data();
+        chart
     }
 
     fn view(&self) -> Element<Message> {
+        let header = widget::row!(
+            Text::new(&self.name),
+            widget::pick_list(
+                &AmplitudeUnit::ALL[..],
+                Some(self.amplitude_unit),
+                Message::AmplitudeUnitChanged
+            )
+        );
         Container::new(
             Column::new()
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .spacing(5)
-                .push(Text::new(format!("WAV {}", self.name)))
+                .push(header)
                 .push(ChartWidget::new(self).height(Length::Fill)),
         )
         .width(Length::Fill)
@@ -270,6 +327,27 @@ impl SamplesChart {
 
         self.cache.clear();
     }
+
+    fn process_data(&mut self) {
+        let max = self.data.iter().fold(f32::NEG_INFINITY, |a, b| a.max(*b));
+
+        // FIXME: precompute on amplitude change
+        self.processed_data = match &self.amplitude_unit {
+            AmplitudeUnit::PercentFullScale => self.data.iter().map(|s| s / max * 100f32).collect(),
+            AmplitudeUnit::DezibelFullScale => self.data.iter().map(|s| 20f32 * f32::log10(s / max)).collect(),
+        };
+
+        self.min = self.processed_data.iter().fold(f32::INFINITY, |a, b| a.min(*b));
+        self.max = self.processed_data.iter().fold(f32::NEG_INFINITY, |a, b| a.max(*b));
+
+        self.cache.clear();
+    }
+
+    fn set_amplitude_unit(&mut self, u: AmplitudeUnit) {
+        self.amplitude_unit = u;
+
+        self.process_data();
+    }
 }
 
 impl Chart<Message> for SamplesChart {
@@ -301,14 +379,14 @@ impl Chart<Message> for SamplesChart {
             .margin(5)
             .x_label_area_size(30)
             .y_label_area_size(30)
-            .build_cartesian_2d(self.viewport.clone(), -1.1f32..1.1f32)
+            .build_cartesian_2d(self.viewport.clone(), self.min..self.max)
             .unwrap();
 
         chart.configure_mesh().draw().unwrap();
 
         chart
             .draw_series(LineSeries::new(
-                self.data.iter().enumerate().map(|(n, s)| (n, *s)),
+                self.processed_data.iter().enumerate().map(|(n, s)| (n, *s)),
                 &RED,
             ))
             .unwrap();

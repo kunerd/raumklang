@@ -321,8 +321,8 @@ impl ImpulseResponse {
 
         // normalize
         let scale: f32 = 1.0 / (response.len() as f32).sqrt();
-        let response: Vec<_> = response.iter().map(|s| s * scale).collect();
-        let loopback: Vec<_> = loopback.iter().map(|s| s * scale).collect();
+        let response: Vec<_> = response.iter().map(|s| s.scale(scale)).collect();
+        let loopback: Vec<_> = loopback.iter().map(|s| s.scale(scale)).collect();
 
         // devide both
         let mut result: Vec<Complex<f32>> = response
@@ -337,7 +337,7 @@ impl ImpulseResponse {
 
         let scale: f32 = 1.0 / (result.len() as f32).sqrt();
         let len = result.len();
-        let impulse_response: Vec<_> = result.into_iter().map(|s| s * scale).skip(len/2).collect();
+        let impulse_response: Vec<_> = result.into_iter().map(|s| s.scale(scale)).skip(len / 2).collect();
 
         Ok(Self {
             loopback_fft: loopback,
