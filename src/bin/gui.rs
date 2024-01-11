@@ -44,7 +44,7 @@ fn main() {
 enum Message {
     MouseEvent(mouse::Event, iced::Point),
     EventOccured(Event),
-    AmplitudeUnitChanged(AmplitudeUnit)
+    AmplitudeUnitChanged(AmplitudeUnit),
 }
 
 struct State {
@@ -63,12 +63,17 @@ impl Application for State {
         let measurement_path = "data/measurement.wav";
         let impulse_respone =
             ImpulseResponse::from_files(&loopback_path, &measurement_path).unwrap();
-        let data: Vec<_> = impulse_respone
-            .impulse_response
-            .iter()
-            .map(|s| s.re)
-            .collect();
-        let chart = SamplesChart::new("Test".to_string(), data.into_iter());
+        //let data: Vec<_> = impulse_respone
+        //    .impulse_response
+        //    .iter()
+        //    .map(|s| s.re)
+        //    .collect();
+        let hann = HannWindow::new(500).data;
+        let tukey = TukeyWindow::new(500, 0.25).data;
+        let mut data: Vec<f32> = hann.into_iter().take(250).collect();
+        data.extend(&tukey[250..(500.0 * 0.75) as usize]);
+
+        let chart = SamplesChart::new("Test".to_string(), data.into_iter(), None);
         (
             Self {
                 chart,
@@ -142,7 +147,7 @@ impl Application for State {
                     }
                 }
             }
-            Message::AmplitudeUnitChanged(u) => self.chart.set_amplitude_unit(u)
+            Message::AmplitudeUnitChanged(u) => self.chart.set_amplitude_unit(u),
         }
 
         Command::none()
@@ -156,6 +161,100 @@ impl Application for State {
         //const FPS: u64 = 50;
         //iced::time::every(Duration::from_millis(1000 / FPS)).map(|_| Message::Tick)
         subscription::events().map(Message::EventOccured)
+    }
+}
+
+struct HannWindow {
+    data: Vec<f32>,
+}
+
+impl HannWindow {
+    pub fn new(width: usize) -> Self {
+        let data = (0..width)
+            .enumerate()
+            .map(|(n, _)| f32::sin((std::f32::consts::PI * n as f32) / width as f32).powi(2))
+            .collect();
+
+        Self { data }
+    }
+}
+
+struct TukeyWindow {
+    data: Vec<f32>,
+}
+
+impl TukeyWindow {
+    pub fn new(width: usize, alpha: f32) -> Self {
+        let lower_bound = (alpha * width as f32 / 2.0) as usize;
+        let upper_bound = width / 2;
+
+        let mut data: Vec<f32> = Vec::with_capacity(width);
+
+        for n in 0..=width {
+            let s = if n <= lower_bound {
+                let num = 2.0 * std::f32::consts::PI * n as f32;
+                let denom = alpha * width as f32;
+                0.5 * (1.0 - f32::cos(num / denom))
+            } else if lower_bound < n && n <= upper_bound {
+                1.0
+            } else {
+                *data.get(width - n).unwrap()
+            };
+
+            data.push(s);
+        }
+
+        Self { data }
+    }
+}
+
+enum Window {
+    Hann,
+    Tukey(f32),
+}
+
+struct WindowBuilder {
+    left_side: Window,
+    left_side_width: usize,
+    right_side: Window,
+    right_side_width: usize,
+    width: usize,
+}
+
+impl WindowBuilder {
+    pub fn new(left_side: Window, right_side: Window, width: usize) -> Self {
+        Self {
+            left_side,
+            left_side_width: width / 2,
+            right_side,
+            right_side_width: width / 2,
+            width,
+        }
+    }
+
+    pub fn build(&self) -> Vec<f32> {
+        let left = create_window(&self.left_side, self.left_side_width * 2);
+        let right = create_window(&self.right_side, self.right_side_width * 2);
+
+        let mut left: Vec<_> = left.into_iter().take(self.left_side_width).collect();
+        let mut right: Vec<_> = right.into_iter().skip(self.right_side_width).collect();
+
+        let mut window = Vec::with_capacity(self.width);
+        window.append(&mut left);
+        window.append(&mut vec![
+            1.0;
+            self.width - self.left_side_width - self.right_side_width
+        ]);
+        window.append(&mut right);
+
+        window
+    }
+}
+
+fn create_window(window_type: &Window, width: usize) -> Vec<f32> {
+    match window_type {
+        Window::Hann => HannWindow::new(width).data,
+        Window::Tukey(a) => TukeyWindow::new(width, *a).data,
     }
 }
 
@@ -195,11 +294,15 @@ struct SamplesChart {
     max: f32,
     viewport: Range<usize>,
     spec: RefCell<Option<Cartesian2d<RangedCoordusize, RangedCoordf32>>>,
-    amplitude_unit: AmplitudeUnit,
+    amplitude_unit: Option<AmplitudeUnit>,
 }
 
 impl SamplesChart {
-    fn new(name: String, data: impl Iterator<Item = f32>) -> Self {
+    fn new(
+        name: String,
+        data: impl Iterator<Item = f32>,
+        amplitude_unit: Option<AmplitudeUnit>,
+    ) -> Self {
         let data: Vec<_> = data.collect();
         let viewport = 0..data.len();
         let mut chart = Self {
@@ -211,7 +314,7 @@ impl SamplesChart {
             cache: Cache::new(),
             viewport,
             spec: RefCell::new(None),
-            amplitude_unit: AmplitudeUnit::PercentFullScale,
+            amplitude_unit,
         };
         chart.process_data();
         chart
@@ -222,7 +325,7 @@ impl SamplesChart {
             Text::new(&self.name),
             widget::pick_list(
                 &AmplitudeUnit::ALL[..],
-                Some(self.amplitude_unit),
+                self.amplitude_unit,
                 Message::AmplitudeUnitChanged
             )
         );
@@ -333,18 +436,31 @@ impl SamplesChart {
 
         // FIXME: precompute on amplitude change
         self.processed_data = match &self.amplitude_unit {
-            AmplitudeUnit::PercentFullScale => self.data.iter().map(|s| s / max * 100f32).collect(),
-            AmplitudeUnit::DezibelFullScale => self.data.iter().map(|s| 20f32 * f32::log10(s / max)).collect(),
+            Some(AmplitudeUnit::PercentFullScale) => {
+                self.data.iter().map(|s| s / max * 100f32).collect()
+            }
+            Some(AmplitudeUnit::DezibelFullScale) => self
+                .data
+                .iter()
+                .map(|s| 20f32 * f32::log10(s / max))
+                .collect(),
+            None => self.data.clone(),
         };
 
-        self.min = self.processed_data.iter().fold(f32::INFINITY, |a, b| a.min(*b));
-        self.max = self.processed_data.iter().fold(f32::NEG_INFINITY, |a, b| a.max(*b));
+        self.min = self
+            .processed_data
+            .iter()
+            .fold(f32::INFINITY, |a, b| a.min(*b));
+        self.max = self
+            .processed_data
+            .iter()
+            .fold(f32::NEG_INFINITY, |a, b| a.max(*b));
 
         self.cache.clear();
     }
 
     fn set_amplitude_unit(&mut self, u: AmplitudeUnit) {
-        self.amplitude_unit = u;
+        self.amplitude_unit = Some(u);
 
         self.process_data();
     }
