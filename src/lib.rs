@@ -337,7 +337,7 @@ impl ImpulseResponse {
 
         let scale: f32 = 1.0 / (result.len() as f32).sqrt();
         let len = result.len();
-        let impulse_response: Vec<_> = result.into_iter().map(|s| s.scale(scale)).skip(len / 2).collect();
+        let impulse_response: Vec<_> = result.into_iter().map(|s| s.scale(scale)).collect();
 
         Ok(Self {
             loopback_fft: loopback,

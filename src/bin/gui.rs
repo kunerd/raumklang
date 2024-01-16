@@ -16,20 +16,22 @@ use iced::{
     widget::{
         self,
         canvas::{self, Cache, Frame, Geometry},
-        Column, Container, Text,
+        text_input, Column, Container, Text,
     },
     Application, Command, Element, Event, Font, Length, Settings, Size, Subscription, Theme,
 };
+use plotters::prelude::*;
 use plotters::{
     coord::{
         types::{RangedCoordf32, RangedCoordusize},
         ReverseCoordTranslate,
     },
-    prelude::{Cartesian2d, ChartBuilder},
+    prelude::{Cartesian2d, ChartBuilder, ChartContext},
 };
 use plotters_backend::DrawingBackend;
 use plotters_iced::{Chart, ChartWidget, Renderer};
 use raumklang::ImpulseResponse;
+use rustfft::{num_complex::Complex32, FftPlanner};
 
 fn main() {
     State::run(Settings {
@@ -40,16 +42,16 @@ fn main() {
     .unwrap();
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Message {
-    MouseEvent(mouse::Event, iced::Point),
-    EventOccured(Event),
-    AmplitudeUnitChanged(AmplitudeUnit),
+    ComputeFrequencyResponse,
+    ImpulseRespone(ImpulseResponseMessage),
+    Back,
 }
 
 struct State {
-    shift: bool,
-    chart: SamplesChart,
+    chart: ImpulseResponseChart,
+    frequency_response: Option<Vec<f32>>,
 }
 
 impl Application for State {
@@ -61,23 +63,28 @@ impl Application for State {
     fn new(_flags: Self::Flags) -> (Self, Command<Self::Message>) {
         let loopback_path = "data/loopback.wav";
         let measurement_path = "data/measurement.wav";
+        //let loopback_path = "data/loopback_edit.wav";
+        //let measurement_path = "data/measurement_edit.wav";
+        //let measurement_path = "data/measurement_edit_phase_invert.wav";
         let impulse_respone =
             ImpulseResponse::from_files(&loopback_path, &measurement_path).unwrap();
-        //let data: Vec<_> = impulse_respone
-        //    .impulse_response
-        //    .iter()
-        //    .map(|s| s.re)
-        //    .collect();
-        let hann = HannWindow::new(500).data;
-        let tukey = TukeyWindow::new(500, 0.25).data;
-        let mut data: Vec<f32> = hann.into_iter().take(250).collect();
-        data.extend(&tukey[250..(500.0 * 0.75) as usize]);
+        let data: Vec<_> = impulse_respone
+            .impulse_response
+            .iter()
+            .map(|s| s.re)
+            .collect();
+        //let data: Vec<_> = WindowBuilder::new(Window::Hann, Window::Tukey(0.25), 1024).build();
+        let chart = TimeseriesChart::new(
+            "Test".to_string(),
+            data.into_iter(),
+            Some(AmplitudeUnit::PercentFullScale),
+        );
 
-        let chart = SamplesChart::new("Test".to_string(), data.into_iter(), None);
+        let chart = ImpulseResponseChart::new(chart);
         (
             Self {
                 chart,
-                shift: false,
+                frequency_response: None,
             },
             Command::none(), //Command::batch([
                              //    font::load(include_bytes!("./fonts/notosans-regular.ttf").as_slice())
@@ -94,73 +101,56 @@ impl Application for State {
 
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
-            Message::MouseEvent(evt, point) => match evt {
-                //mouse::Event::CursorEntered => todo!(),
-                //mouse::Event::CursorLeft => todo!(),
-                //mouse::Event::CursorMoved { position } => todo!(),
-                //mouse::Event::ButtonPressed(_) => todo!(),
-                //mouse::Event::ButtonReleased(_) => todo!(),
-                mouse::Event::WheelScrolled {
-                    delta: mouse::ScrollDelta::Lines { y, .. },
-                } => {
-                    match self.shift {
-                        true => {
-                            // y is always zero in iced 0.10
-                            if y.is_sign_positive() {
-                                self.chart.scroll_right();
-                            } else {
-                                self.chart.scroll_left();
-                            }
-                        }
-                        false => {
-                            // y is always zero in iced 0.10
-                            if y.is_sign_positive() {
-                                self.chart.zoom_in(point);
-                            } else {
-                                self.chart.zoom_out(point);
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            },
-            Message::EventOccured(event) => {
-                if let Event::Keyboard(event) = event {
-                    match event {
-                        iced::keyboard::Event::KeyPressed {
-                            key_code,
-                            modifiers: _,
-                        } => match key_code {
-                            iced::keyboard::KeyCode::LShift => self.shift = true,
-                            iced::keyboard::KeyCode::RShift => self.shift = true,
-                            _ => {}
-                        },
-                        iced::keyboard::Event::KeyReleased {
-                            key_code,
-                            modifiers: _,
-                        } => match key_code {
-                            iced::keyboard::KeyCode::LShift => self.shift = false,
-                            iced::keyboard::KeyCode::RShift => self.shift = false,
-                            _ => {}
-                        },
-                        _ => {}
-                    }
-                }
+            Message::ComputeFrequencyResponse => {
+                let window = self.chart.builder.build();
+                let mut windowed_ir: Vec<_> = self
+                    .chart
+                    .base_chart
+                    .data
+                    .iter()
+                    .take(window.len())
+                    .zip(window)
+                    .map(|(c, w)| c * w)
+                    .map(Complex32::from)
+                    .collect();
+
+                let mut planner = FftPlanner::<f32>::new();
+                let fft = planner.plan_fft_forward(windowed_ir.len());
+
+                fft.process(&mut windowed_ir);
+
+                let frequency_response: Vec<_> = windowed_ir.iter().map(|s| s.re).collect();
+                self.chart = ImpulseResponseChart::new(TimeseriesChart::new(
+                    "FR".to_string(),
+                    frequency_response.clone().into_iter(),
+                    None,
+                ));
+                self.frequency_response = Some(frequency_response);
             }
-            Message::AmplitudeUnitChanged(u) => self.chart.set_amplitude_unit(u),
+            Message::Back => self.frequency_response = None,
+            Message::ImpulseRespone(msg) => self.chart.update_msg(msg),
         }
 
         Command::none()
     }
 
     fn view(&self) -> Element<'_, Self::Message> {
-        self.chart.view()
+        let btn = if self.frequency_response.is_some() {
+            widget::button("Back").on_press(Message::Back)
+        } else {
+            widget::button("FR").on_press(Message::ComputeFrequencyResponse)
+        };
+
+        widget::column!(btn, self.chart.view().map(Message::ImpulseRespone)).into()
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
         //const FPS: u64 = 50;
         //iced::time::every(Duration::from_millis(1000 / FPS)).map(|_| Message::Tick)
-        subscription::events().map(Message::EventOccured)
+        subscription::events()
+            .map(TimeSeriesMessage::EventOccured)
+            .map(ImpulseResponseMessage::TimeSeries)
+            .map(Message::ImpulseRespone)
     }
 }
 
@@ -213,6 +203,23 @@ enum Window {
     Tukey(f32),
 }
 
+impl Window {
+    const ALL: [Window; 2] = [Window::Hann, Window::Tukey(0.0)];
+}
+
+impl std::fmt::Display for Window {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Window::Hann => "Hann",
+                Window::Tukey(_) => "Tukey",
+            }
+        )
+    }
+}
+
 struct WindowBuilder {
     left_side: Window,
     left_side_width: usize,
@@ -243,11 +250,29 @@ impl WindowBuilder {
         window.append(&mut left);
         window.append(&mut vec![
             1.0;
-            self.width - self.left_side_width - self.right_side_width
+            self.width
+                - self.left_side_width
+                - self.right_side_width
         ]);
         window.append(&mut right);
 
         window
+    }
+
+    pub fn set_left_side_width(&mut self, width: usize) {
+        self.left_side_width = width;
+    }
+
+    pub fn set_right_side_width(&mut self, width: usize) {
+        self.right_side_width = width;
+    }
+
+    pub fn get_left_side_width(&self) -> usize {
+        self.left_side_width
+    }
+
+    pub fn get_right_side_width(&self) -> usize {
+        self.right_side_width
     }
 }
 
@@ -258,8 +283,151 @@ fn create_window(window_type: &Window, width: usize) -> Vec<f32> {
     }
 }
 
+pub struct ImpulseResponseChart {
+    builder: WindowBuilder,
+    base_chart: TimeseriesChart,
+    cache: Cache,
+
+    left_window_width: String,
+    right_window_width: String,
+}
+
+impl ImpulseResponseChart {
+    pub fn new(base_chart: TimeseriesChart) -> Self {
+        let builder = WindowBuilder::new(Window::Tukey(0.25), Window::Tukey(0.25), 27562);
+        let left_window_width = builder.get_left_side_width().to_string();
+        let right_window_width = builder.get_right_side_width().to_string();
+
+        Self {
+            builder,
+            base_chart,
+            cache: Cache::new(),
+            left_window_width,
+            right_window_width,
+        }
+    }
+
+    pub fn view(&self) -> Element<ImpulseResponseMessage> {
+        let header: Element<_> = widget::row!(
+            Text::new("Window:"),
+            text_input("", &self.left_window_width)
+                .on_input(ImpulseResponseMessage::LeftWidthChanged)
+                .on_submit(ImpulseResponseMessage::LeftWidthSubmit),
+            text_input("", &self.right_window_width)
+                .on_input(ImpulseResponseMessage::RightWidthChanged)
+                .on_submit(ImpulseResponseMessage::RightWidthSubmit),
+        )
+        .into();
+
+        Container::new(
+            Column::new()
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .spacing(5)
+                .push(header)
+                .push(ChartWidget::new(self).height(Length::Fill)),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(Horizontal::Center)
+        .align_y(Vertical::Center)
+        .into()
+    }
+
+    pub fn update_msg(&mut self, msg: ImpulseResponseMessage) {
+        match msg {
+            ImpulseResponseMessage::LeftWidthChanged(s) => self.left_window_width = s,
+            ImpulseResponseMessage::LeftWidthSubmit => {
+                if let Ok(width) = self.left_window_width.parse() {
+                    self.builder.set_left_side_width(width);
+                    self.cache.clear();
+                }
+            }
+            ImpulseResponseMessage::RightWidthChanged(s) => self.right_window_width = s,
+            ImpulseResponseMessage::RightWidthSubmit => {
+                if let Ok(width) = self.right_window_width.parse() {
+                    self.builder.set_right_side_width(width);
+                    self.cache.clear();
+                }
+            }
+            ImpulseResponseMessage::TimeSeries(msg) => self.base_chart.update_msg(msg),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum ImpulseResponseMessage {
+    RightWidthChanged(String),
+    RightWidthSubmit,
+    LeftWidthChanged(String),
+    LeftWidthSubmit,
+    TimeSeries(TimeSeriesMessage),
+}
+
+impl Chart<ImpulseResponseMessage> for ImpulseResponseChart {
+    type State = ();
+
+    fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, builder: ChartBuilder<DB>) {
+        let mut chart = self.base_chart.draw(builder);
+
+        let window = self.builder.build();
+        let max = window.iter().fold(f32::NEG_INFINITY, |a, b| a.max(*b));
+        // FIXME: remove duplicate code with data processing
+        let window = match &self.base_chart.amplitude_unit {
+            Some(AmplitudeUnit::PercentFullScale) => {
+                window.iter().map(|s| s / max * 100f32).collect()
+            }
+            Some(AmplitudeUnit::DezibelFullScale) => window
+                .iter()
+                .map(|s| {
+                    let s = 20f32 * f32::log10(s / max);
+                    match (s.is_nan(), s.is_infinite(), s.is_sign_negative()) {
+                        (false, true, true) => -80.0,
+                        (false, true, false) => 0.0,
+                        (true, false, false) => -80.0,
+                        _ => s,
+                    }
+                })
+                .collect(),
+            None => window,
+        };
+        chart
+            .draw_series(LineSeries::new(
+                window.iter().enumerate().map(|(n, s)| (n, *s)),
+                &BLUE,
+            ))
+            .unwrap();
+    }
+
+    fn draw_chart<DB: DrawingBackend>(
+        &self,
+        state: &Self::State,
+        root: DrawingArea<DB, plotters::coord::Shift>,
+    ) {
+        let builder = ChartBuilder::on(&root);
+        self.build_chart(state, builder);
+    }
+
+    fn draw<R: Renderer, F: Fn(&mut Frame)>(&self, renderer: &R, size: Size, f: F) -> Geometry {
+        R::draw(renderer, size, f)
+    }
+
+    fn update(
+        &self,
+        state: &mut Self::State,
+        event: canvas::Event,
+        bounds: iced::Rectangle,
+        cursor: mouse::Cursor,
+    ) -> (event::Status, Option<ImpulseResponseMessage>) {
+        let (status, message) = self.base_chart.update(state, event, bounds, cursor);
+        let msg = message.map(ImpulseResponseMessage::TimeSeries);
+
+        (status, msg)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum AmplitudeUnit {
+pub enum AmplitudeUnit {
     #[default]
     PercentFullScale,
     DezibelFullScale,
@@ -285,7 +453,15 @@ impl std::fmt::Display for AmplitudeUnit {
     }
 }
 
-struct SamplesChart {
+#[derive(Debug, Clone)]
+pub enum TimeSeriesMessage {
+    MouseEvent(mouse::Event, iced::Point),
+    EventOccured(Event),
+    AmplitudeUnitChanged(AmplitudeUnit),
+}
+
+pub struct TimeseriesChart {
+    shift: bool,
     cache: Cache,
     name: String,
     data: Vec<f32>,
@@ -297,7 +473,7 @@ struct SamplesChart {
     amplitude_unit: Option<AmplitudeUnit>,
 }
 
-impl SamplesChart {
+impl TimeseriesChart {
     fn new(
         name: String,
         data: impl Iterator<Item = f32>,
@@ -315,20 +491,22 @@ impl SamplesChart {
             viewport,
             spec: RefCell::new(None),
             amplitude_unit,
+            shift: false,
         };
         chart.process_data();
         chart
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self) -> Element<TimeSeriesMessage> {
         let header = widget::row!(
             Text::new(&self.name),
             widget::pick_list(
                 &AmplitudeUnit::ALL[..],
                 self.amplitude_unit,
-                Message::AmplitudeUnitChanged
-            )
+                TimeSeriesMessage::AmplitudeUnitChanged
+            ),
         );
+
         Container::new(
             Column::new()
                 .width(Length::Fill)
@@ -342,6 +520,65 @@ impl SamplesChart {
         .align_x(Horizontal::Center)
         .align_y(Vertical::Center)
         .into()
+    }
+
+    fn update_msg(&mut self, msg: TimeSeriesMessage) {
+        match msg {
+            TimeSeriesMessage::MouseEvent(evt, point) => match evt {
+                //mouse::Event::CursorEntered => todo!(),
+                //mouse::Event::CursorLeft => todo!(),
+                //mouse::Event::CursorMoved { position } => todo!(),
+                //mouse::Event::ButtonPressed(_) => todo!(),
+                //mouse::Event::ButtonReleased(_) => todo!(),
+                mouse::Event::WheelScrolled {
+                    delta: mouse::ScrollDelta::Lines { y, .. },
+                } => {
+                    match self.shift {
+                        true => {
+                            // y is always zero in iced 0.10
+                            if y.is_sign_positive() {
+                                self.scroll_right();
+                            } else {
+                                self.scroll_left();
+                            }
+                        }
+                        false => {
+                            // y is always zero in iced 0.10
+                            if y.is_sign_positive() {
+                                self.zoom_in(point);
+                            } else {
+                                self.zoom_out(point);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            },
+            TimeSeriesMessage::EventOccured(event) => {
+                if let Event::Keyboard(event) = event {
+                    match event {
+                        iced::keyboard::Event::KeyPressed {
+                            key_code,
+                            modifiers: _,
+                        } => match key_code {
+                            iced::keyboard::KeyCode::LShift => self.shift = true,
+                            iced::keyboard::KeyCode::RShift => self.shift = true,
+                            _ => {}
+                        },
+                        iced::keyboard::Event::KeyReleased {
+                            key_code,
+                            modifiers: _,
+                        } => match key_code {
+                            iced::keyboard::KeyCode::LShift => self.shift = false,
+                            iced::keyboard::KeyCode::RShift => self.shift = false,
+                            _ => {}
+                        },
+                        _ => {}
+                    }
+                }
+            }
+            TimeSeriesMessage::AmplitudeUnitChanged(u) => self.set_amplitude_unit(u),
+        }
     }
 
     fn zoom_in(&mut self, p: iced::Point) {
@@ -442,7 +679,15 @@ impl SamplesChart {
             Some(AmplitudeUnit::DezibelFullScale) => self
                 .data
                 .iter()
-                .map(|s| 20f32 * f32::log10(s / max))
+                .map(|s| {
+                    let s = 20f32 * f32::log10(s / max);
+                    match (s.is_nan(), s.is_infinite(), s.is_sign_negative()) {
+                        (false, true, true) => -150.0,
+                        (false, true, false) => 0.0,
+                        (true, false, false) => -150.0,
+                        _ => s,
+                    }
+                })
                 .collect(),
             None => self.data.clone(),
         };
@@ -464,9 +709,41 @@ impl SamplesChart {
 
         self.process_data();
     }
+
+    fn draw<'a, DB: DrawingBackend>(
+        &'a self,
+        mut builder: ChartBuilder<'a, 'a, DB>,
+    ) -> ChartContext<DB, Cartesian2d<RangedCoordusize, RangedCoordf32>> {
+        use plotters::prelude::*;
+
+        let mut chart = builder
+            .margin(5)
+            .x_label_area_size(30)
+            .y_label_area_size(30)
+            .build_cartesian_2d(self.viewport.clone(), self.min..self.max)
+            .unwrap();
+
+        chart
+            .draw_series(LineSeries::new(
+                self.processed_data.iter().enumerate().map(|(n, s)| (n, *s)),
+                &RED,
+            ))
+            .unwrap();
+
+        chart
+            .configure_mesh()
+            .disable_mesh()
+            //.disable_axes()
+            .draw()
+            .unwrap();
+
+        *self.spec.borrow_mut() = Some(chart.as_coord_spec().clone());
+
+        chart
+    }
 }
 
-impl Chart<Message> for SamplesChart {
+impl Chart<TimeSeriesMessage> for TimeseriesChart {
     type State = ();
     // fn update(
     //     &mut self,
@@ -489,27 +766,7 @@ impl Chart<Message> for SamplesChart {
     }
 
     fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut chart: ChartBuilder<DB>) {
-        use plotters::prelude::*;
-
-        let mut chart = chart
-            .margin(5)
-            .x_label_area_size(30)
-            .y_label_area_size(30)
-            .build_cartesian_2d(self.viewport.clone(), self.min..self.max)
-            .unwrap();
-
-        chart.configure_mesh().draw().unwrap();
-
-        chart
-            .draw_series(LineSeries::new(
-                self.processed_data.iter().enumerate().map(|(n, s)| (n, *s)),
-                &RED,
-            ))
-            .unwrap();
-
-        chart.configure_mesh().disable_mesh().draw().unwrap();
-
-        *self.spec.borrow_mut() = Some(chart.as_coord_spec().clone());
+        self.draw(chart);
     }
 
     fn update(
@@ -518,7 +775,7 @@ impl Chart<Message> for SamplesChart {
         event: canvas::Event,
         bounds: iced::Rectangle,
         cursor: mouse::Cursor,
-    ) -> (event::Status, Option<Message>) {
+    ) -> (event::Status, Option<TimeSeriesMessage>) {
         if let mouse::Cursor::Available(point) = cursor {
             match event {
                 canvas::Event::Mouse(evt) if bounds.contains(point) => {
@@ -526,7 +783,10 @@ impl Chart<Message> for SamplesChart {
                     let p = point - p_origin;
                     return (
                         event::Status::Captured,
-                        Some(Message::MouseEvent(evt, iced::Point::new(p.x, p.y))),
+                        Some(TimeSeriesMessage::MouseEvent(
+                            evt,
+                            iced::Point::new(p.x, p.y),
+                        )),
                     );
                 }
                 _ => {}
