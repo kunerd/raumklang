@@ -51,7 +51,7 @@ enum Message {
 
 struct State {
     chart: ImpulseResponseChart,
-    frequency_response: Option<Vec<f32>>,
+    frequency_response: Option<()>,
 }
 
 impl Application for State {
@@ -77,7 +77,7 @@ impl Application for State {
         //let data: Vec<_> = WindowBuilder::new(Window::Hann, Window::Tukey(0.25), 1024).build();
         let chart = TimeseriesChart::new(
             "Test".to_string(),
-            data.into_iter(),
+            data.into_iter().enumerate().map(|(i, s)| (i as i64, s)),
             Some(AmplitudeUnit::PercentFullScale),
         );
 
@@ -104,11 +104,13 @@ impl Application for State {
         match message {
             Message::ComputeFrequencyResponse => {
                 let window = self.chart.builder.build();
+                let window_len = window.len();
                 let mut windowed_ir: Vec<_> = self
                     .chart
                     .base_chart
                     .data
                     .iter()
+                    .map(|(i, s)| s)
                     .take(window.len())
                     .zip(window)
                     .map(|(c, w)| c * w)
@@ -120,7 +122,12 @@ impl Application for State {
 
                 fft.process(&mut windowed_ir);
 
-                let frequency_response: Vec<_> = windowed_ir.iter().map(|s| s.re).collect();
+                let bin_width = 44100.0 / window_len as f32;
+                let frequency_response: Vec<_> = windowed_ir
+                    .iter()
+                    .enumerate()
+                    .map(|(n, s)| (n as i64 , s.re))
+                    .collect();
                 self.chart = ImpulseResponseChart::new(TimeseriesChart::new(
                     "FR".to_string(),
                     frequency_response
@@ -130,7 +137,7 @@ impl Application for State {
                         .skip(32),
                     Some(AmplitudeUnit::DezibelFullScale),
                 ));
-                self.frequency_response = Some(frequency_response);
+                self.frequency_response = Some(());
             }
             Message::Back => self.frequency_response = None,
             Message::ImpulseRespone(msg) => self.chart.update_msg(msg),
@@ -356,7 +363,10 @@ impl ImpulseResponseChart {
                     self.cache.clear();
                 }
             }
-            ImpulseResponseMessage::TimeSeries(msg) => self.base_chart.update_msg(msg),
+            ImpulseResponseMessage::TimeSeries(msg) => {
+                self.cache.clear();
+                self.base_chart.update_msg(msg);
+            }
         }
     }
 }
@@ -476,8 +486,8 @@ pub struct TimeseriesChart {
     shift: bool,
     cache: Cache,
     name: String,
-    data: Vec<f32>,
-    processed_data: Vec<f32>,
+    data: Vec<(i64, f32)>,
+    processed_data: Vec<(i64, f32)>,
     min: f32,
     max: f32,
     viewport: Range<i64>,
@@ -488,7 +498,7 @@ pub struct TimeseriesChart {
 impl TimeseriesChart {
     fn new(
         name: String,
-        data: impl Iterator<Item = f32>,
+        data: impl Iterator<Item = (i64, f32)>,
         amplitude_unit: Option<AmplitudeUnit>,
     ) -> Self {
         let data: Vec<_> = data.collect();
@@ -685,18 +695,18 @@ impl TimeseriesChart {
         let max = self
             .data
             .iter()
-            .map(|s| s.powi(2).sqrt())
+            .map(|s| s.1.powi(2).sqrt())
             .fold(f32::NEG_INFINITY, |a, b| a.max(b));
 
         // FIXME: precompute on amplitude change
         self.processed_data = match &self.amplitude_unit {
             Some(AmplitudeUnit::PercentFullScale) => {
-                self.data.iter().map(|s| s / max * 100f32).collect()
+                self.data.iter().map(|(n, s)| (*n, *s / max * 100f32)).collect()
             }
             Some(AmplitudeUnit::DezibelFullScale) => self
                 .data
                 .iter()
-                .map(|s| 20f32 * f32::log10(s.abs() / max))
+                .map(|(n, s)| (*n, 20f32 * f32::log10(s.abs() / max)))
                 .collect(),
             None => self.data.clone(),
         };
@@ -704,11 +714,11 @@ impl TimeseriesChart {
         self.min = self
             .processed_data
             .iter()
-            .fold(f32::INFINITY, |a, b| a.min(*b));
+            .fold(f32::INFINITY, |a, b| a.min(b.1));
         self.max = self
             .processed_data
             .iter()
-            .fold(f32::NEG_INFINITY, |a, b| a.max(*b));
+            .fold(f32::NEG_INFINITY, |a, b| a.max(b.1));
 
         self.cache.clear();
     }
@@ -733,13 +743,7 @@ impl TimeseriesChart {
             .unwrap();
 
         chart
-            .draw_series(LineSeries::new(
-                self.processed_data
-                    .iter()
-                    .enumerate()
-                    .map(|(n, s)| (n as i64, *s)),
-                &RED,
-            ))
+            .draw_series(LineSeries::new(self.processed_data.iter().cloned(), &RED))
             .unwrap();
 
         chart
