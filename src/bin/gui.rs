@@ -20,7 +20,7 @@ use iced::{
     },
     Application, Command, Element, Event, Font, Length, Settings, Size, Subscription, Theme,
 };
-use plotters::prelude::*;
+use plotters::{coord::types::RangedCoordi64, prelude::*};
 use plotters::{
     coord::{
         types::{RangedCoordf32, RangedCoordusize},
@@ -68,11 +68,12 @@ impl Application for State {
         //let measurement_path = "data/measurement_edit_phase_invert.wav";
         let impulse_respone =
             ImpulseResponse::from_files(&loopback_path, &measurement_path).unwrap();
-        let data: Vec<_> = impulse_respone
+        let mut data: Vec<_> = impulse_respone
             .impulse_response
             .iter()
             .map(|s| s.re)
             .collect();
+
         //let data: Vec<_> = WindowBuilder::new(Window::Hann, Window::Tukey(0.25), 1024).build();
         let chart = TimeseriesChart::new(
             "Test".to_string(),
@@ -122,8 +123,12 @@ impl Application for State {
                 let frequency_response: Vec<_> = windowed_ir.iter().map(|s| s.re).collect();
                 self.chart = ImpulseResponseChart::new(TimeseriesChart::new(
                     "FR".to_string(),
-                    frequency_response.clone().into_iter(),
-                    None,
+                    frequency_response
+                        .clone()
+                        .into_iter()
+                        .take((1000.0 / (44100.0 / 27624.0)) as usize)
+                        .skip(32),
+                    Some(AmplitudeUnit::DezibelFullScale),
                 ));
                 self.frequency_response = Some(frequency_response);
             }
@@ -331,6 +336,7 @@ impl ImpulseResponseChart {
         .height(Length::Fill)
         .align_x(Horizontal::Center)
         .align_y(Vertical::Center)
+        .padding(10)
         .into()
     }
 
@@ -381,10 +387,10 @@ impl Chart<ImpulseResponseMessage> for ImpulseResponseChart {
                 .iter()
                 .map(|s| {
                     let s = 20f32 * f32::log10(s / max);
-                    match (s.is_nan(), s.is_infinite(), s.is_sign_negative()) {
-                        (false, true, true) => -80.0,
-                        (false, true, false) => 0.0,
-                        (true, false, false) => -80.0,
+                    // clip the signal
+                    match (s.is_infinite(), s.is_sign_negative()) {
+                        (true, true) => -100.0,
+                        (true, false) => -100.0,
                         _ => s,
                     }
                 })
@@ -393,7 +399,7 @@ impl Chart<ImpulseResponseMessage> for ImpulseResponseChart {
         };
         chart
             .draw_series(LineSeries::new(
-                window.iter().enumerate().map(|(n, s)| (n, *s)),
+                window.iter().enumerate().map(|(n, s)| (n as i64, *s)),
                 &BLUE,
             ))
             .unwrap();
@@ -408,8 +414,14 @@ impl Chart<ImpulseResponseMessage> for ImpulseResponseChart {
         self.build_chart(state, builder);
     }
 
-    fn draw<R: Renderer, F: Fn(&mut Frame)>(&self, renderer: &R, size: Size, f: F) -> Geometry {
-        R::draw(renderer, size, f)
+    #[inline]
+    fn draw<R: Renderer, F: Fn(&mut Frame)>(
+        &self,
+        renderer: &R,
+        bounds: Size,
+        draw_fn: F,
+    ) -> Geometry {
+        renderer.draw_cache(&self.cache, bounds, draw_fn)
     }
 
     fn update(
@@ -468,8 +480,8 @@ pub struct TimeseriesChart {
     processed_data: Vec<f32>,
     min: f32,
     max: f32,
-    viewport: Range<usize>,
-    spec: RefCell<Option<Cartesian2d<RangedCoordusize, RangedCoordf32>>>,
+    viewport: Range<i64>,
+    spec: RefCell<Option<Cartesian2d<RangedCoordi64, RangedCoordf32>>>,
     amplitude_unit: Option<AmplitudeUnit>,
 }
 
@@ -480,7 +492,7 @@ impl TimeseriesChart {
         amplitude_unit: Option<AmplitudeUnit>,
     ) -> Self {
         let data: Vec<_> = data.collect();
-        let viewport = 0..data.len();
+        let viewport = 0..data.len() as i64;
         let mut chart = Self {
             name,
             data,
@@ -593,13 +605,13 @@ impl TimeseriesChart {
 
                 // FIXME make configurable
                 const ZOOM_FACTOR: f32 = 0.8;
-                const LOWER_BOUND: usize = 256;
-                let mut new_len = (old_len as f32 * ZOOM_FACTOR) as usize;
+                const LOWER_BOUND: i64 = 256;
+                let mut new_len = (old_len as f32 * ZOOM_FACTOR) as i64;
                 if new_len < LOWER_BOUND {
                     new_len = LOWER_BOUND;
                 }
 
-                let new_start = x.saturating_sub((new_len as f32 * center_scale) as usize);
+                let new_start = x.saturating_sub((new_len as f32 * center_scale) as i64);
                 let new_end = new_start + new_len;
                 self.viewport = new_start..new_end;
 
@@ -620,12 +632,12 @@ impl TimeseriesChart {
 
                 // FIXME make configurable
                 const ZOOM_FACTOR: f32 = 1.2;
-                let mut new_len = (old_len as f32 * ZOOM_FACTOR) as usize;
-                if new_len >= self.data.len() {
-                    new_len = self.data.len();
+                let mut new_len = (old_len as f32 * ZOOM_FACTOR) as i64;
+                if new_len >= self.data.len() as i64 {
+                    new_len = self.data.len() as i64;
                 }
 
-                let new_start = x.saturating_sub((new_len as f32 * center_scale) as usize);
+                let new_start = x.saturating_sub((new_len as f32 * center_scale) as i64);
                 let new_end = new_start + new_len;
                 self.viewport = new_start..new_end;
 
@@ -639,11 +651,11 @@ impl TimeseriesChart {
         let length = old_viewport.end - old_viewport.start;
 
         const SCROLL_FACTOR: f32 = 0.2;
-        let offset = (length as f32 * SCROLL_FACTOR) as usize;
+        let offset = (length as f32 * SCROLL_FACTOR) as i64;
 
         let mut new_end = old_viewport.end.saturating_add(offset);
-        if new_end > self.data.len() {
-            new_end = self.data.len();
+        if new_end > self.data.len() as i64 {
+            new_end = self.data.len() as i64;
         }
 
         let new_start = new_end - length;
@@ -658,7 +670,7 @@ impl TimeseriesChart {
         let length = old_viewport.end - old_viewport.start;
 
         const SCROLL_FACTOR: f32 = 0.2;
-        let offset = (length as f32 * SCROLL_FACTOR) as usize;
+        let offset = (length as f32 * SCROLL_FACTOR) as i64;
 
         let new_start = old_viewport.start.saturating_sub(offset);
         let new_end = new_start + length;
@@ -669,7 +681,12 @@ impl TimeseriesChart {
     }
 
     fn process_data(&mut self) {
-        let max = self.data.iter().fold(f32::NEG_INFINITY, |a, b| a.max(*b));
+        //let max = self.data.iter().fold(f32::NEG_INFINITY, |a, b| a.max(*b));
+        let max = self
+            .data
+            .iter()
+            .map(|s| s.powi(2).sqrt())
+            .fold(f32::NEG_INFINITY, |a, b| a.max(b));
 
         // FIXME: precompute on amplitude change
         self.processed_data = match &self.amplitude_unit {
@@ -679,15 +696,7 @@ impl TimeseriesChart {
             Some(AmplitudeUnit::DezibelFullScale) => self
                 .data
                 .iter()
-                .map(|s| {
-                    let s = 20f32 * f32::log10(s / max);
-                    match (s.is_nan(), s.is_infinite(), s.is_sign_negative()) {
-                        (false, true, true) => -150.0,
-                        (false, true, false) => 0.0,
-                        (true, false, false) => -150.0,
-                        _ => s,
-                    }
-                })
+                .map(|s| 20f32 * f32::log10(s.abs() / max))
                 .collect(),
             None => self.data.clone(),
         };
@@ -713,7 +722,7 @@ impl TimeseriesChart {
     fn draw<'a, DB: DrawingBackend>(
         &'a self,
         mut builder: ChartBuilder<'a, 'a, DB>,
-    ) -> ChartContext<DB, Cartesian2d<RangedCoordusize, RangedCoordf32>> {
+    ) -> ChartContext<DB, Cartesian2d<RangedCoordi64, RangedCoordf32>> {
         use plotters::prelude::*;
 
         let mut chart = builder
@@ -725,7 +734,10 @@ impl TimeseriesChart {
 
         chart
             .draw_series(LineSeries::new(
-                self.processed_data.iter().enumerate().map(|(n, s)| (n, *s)),
+                self.processed_data
+                    .iter()
+                    .enumerate()
+                    .map(|(n, s)| (n as i64, *s)),
                 &RED,
             ))
             .unwrap();

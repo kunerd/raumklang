@@ -320,9 +320,10 @@ impl ImpulseResponse {
         fft.process(&mut loopback);
 
         // normalize
-        let scale: f32 = 1.0 / (response.len() as f32).sqrt();
-        let response: Vec<_> = response.iter().map(|s| s.scale(scale)).collect();
-        let loopback: Vec<_> = loopback.iter().map(|s| s.scale(scale)).collect();
+        // normalization should cancel each other out by the follwing devision
+        //let scale: f32 = 1.0 / (response.len() as f32).sqrt();
+        //let response: Vec<_> = response.iter().map(|s| s.scale(scale)).collect();
+        //let loopback: Vec<_> = loopback.iter().map(|s| s.scale(scale)).collect();
 
         // devide both
         let mut result: Vec<Complex<f32>> = response
