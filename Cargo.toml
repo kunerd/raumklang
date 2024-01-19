@@ -5,7 +5,7 @@ members = [
     "raumklang-gui"
 ]
 
-workspace.resolver = "2"
+resolver = "2"
 
 [workspace.dependencies]
 raumklang-core = { path = "./raumklang-core" }
