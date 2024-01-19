@@ -12,7 +12,7 @@ use plotters::{
     prelude::{BitMapBackend, IntoDrawingArea},
     style::RGBColor,
 };
-use raumklang::{
+use raumklang_core::{
     dbfs, volume_to_amplitude, AudioEngine, FiniteSignal, ImpulseResponse, LinearSineSweep,
     LoudnessMeter, PinkNoise, WhiteNoise,
 };

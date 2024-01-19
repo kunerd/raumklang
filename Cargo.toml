@@ -1,29 +1,11 @@
-[package]
-name = "raumklang"
-version = "0.1.0"
-edition = "2018"
+[workspace]
+members = [
+    "raumklang-core",
+    "raumklang-cli",
+    "raumklang-gui"
+]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-[lib]
-name = "raumklang"
-path = "src/lib.rs"
+workspace.resolver = "2"
 
-[dependencies]
-anyhow = "1.0.42"
-clap = { version = "4.1.11", features = ["derive"] }
-plotters-iced = "0.9"
-iced = { version = "0.10", features = ["canvas", "tokio"] }
-chrono = { version = "0.4", default-features = false }
-plotters = { version = "0.3", features = ["chrono"] }
-plotters-backend = "0.3"
-sysinfo = { version = "0.29", default_features = false }
-ringbuf = "0.3.2"
-config = "0.13.1"
-rustfft = "6.0"
-ndarray = "0.15.4"
-ndarray-stats = "0.5.0"
-colorous = "1.0.3"
-hound = "3.5"
-rand = { version = "0.8", features = ["std", "std_rng", "small_rng"] }
-dasp = { version = "0.11", features = ["rms", "peak", "ring_buffer"] }
-jack = "0.11.4"
+[workspace.dependencies]
+raumklang-core = { path = "./raumklang-core" }

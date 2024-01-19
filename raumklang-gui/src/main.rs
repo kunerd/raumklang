@@ -1,13 +1,3 @@
-// plotters-iced
-//
-// Iced backend for Plotters
-// Copyright: 2022, Joylei <leingliu@gmail.com>
-// License: MIT
-
-extern crate iced;
-extern crate plotters;
-extern crate sysinfo;
-
 use std::{cell::RefCell, ops::Range};
 
 use iced::{
@@ -38,7 +28,7 @@ use plotters::{
 };
 use plotters_backend::DrawingBackend;
 use plotters_iced::{Chart, ChartWidget, Renderer};
-use raumklang::ImpulseResponse;
+use raumklang_core::ImpulseResponse;
 use rustfft::{num_complex::Complex32, FftPlanner};
 
 fn main() {

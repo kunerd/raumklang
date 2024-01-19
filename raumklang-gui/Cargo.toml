@@ -1,0 +1,13 @@
+[package]
+name = "gui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+raumklang-core = { workspace = true }
+
+iced = { version = "0.10", features = ["canvas", "tokio"] }
+plotters-iced = "0.9"
+plotters-backend = "0.3"
+plotters = { version = "0.3", features = ["chrono"] }
+rustfft = "6.0"
