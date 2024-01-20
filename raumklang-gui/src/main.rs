@@ -10,12 +10,14 @@ use thiserror::Error;
 
 struct State {
     loopback_signal: Option<Signal>,
+    measurement_signal: Option<Signal>,
 }
 
 impl State {
     fn new() -> Self {
         Self {
             loopback_signal: None,
+            measurement_signal: None,
         }
     }
 }
@@ -23,7 +25,9 @@ impl State {
 #[derive(Debug, Clone)]
 enum Message {
     LoadLoopbackSignal,
+    LoadMeasurementSignal,
     LoopbackSignalLoaded(Result<Arc<Signal>, Error>),
+    MeasurementSignalLoaded(Result<Arc<Signal>, Error>),
 }
 
 impl Application for State {
@@ -44,12 +48,27 @@ impl Application for State {
 
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
-            Message::LoadLoopbackSignal => {
-                Command::perform(pick_file_and_load_signal("Loopback"), Message::LoopbackSignalLoaded)
-            }
+            Message::LoadLoopbackSignal => Command::perform(
+                pick_file_and_load_signal("loopback"),
+                Message::LoopbackSignalLoaded,
+            ),
             Message::LoopbackSignalLoaded(result) => match result {
                 Ok(signal) => {
                     self.loopback_signal = Arc::into_inner(signal);
+                    Command::none()
+                }
+                Err(err) => {
+                    println!("{:?}", err);
+                    Command::none()
+                }
+            },
+            Message::LoadMeasurementSignal => Command::perform(
+                pick_file_and_load_signal("measurement"),
+                Message::MeasurementSignalLoaded,
+            ),
+            Message::MeasurementSignalLoaded(result) => match result {
+                Ok(signal) => {
+                    self.measurement_signal = Arc::into_inner(signal);
                     Command::none()
                 }
                 Err(err) => {
@@ -61,8 +80,10 @@ impl Application for State {
     }
 
     fn view(&self) -> Element<'_, Self::Message> {
-        let menu =
-            row!(button(text("Load loopback".to_string())).on_press(Message::LoadLoopbackSignal));
+        let menu = row!(
+            button(text("Load loopback".to_string())).on_press(Message::LoadLoopbackSignal),
+            button(text("Load measurement".to_string())).on_press(Message::LoadMeasurementSignal)
+        );
 
         let mut signal_list = vec![];
 
@@ -76,6 +97,18 @@ impl Application for State {
             );
             //let loopback_entry = text("Loopback Signal".to_string());
             signal_list.push(loopback_entry.into());
+        }
+
+        if let Some(signal) = &self.measurement_signal {
+            let samples = signal.data.len();
+            let sample_rate = signal.sample_rate as f32;
+            let measurement_entry = column!(
+                text(&signal.name),
+                text(format!("Length: {}", samples)),
+                text(format!("Duration: {}", samples as f32 / sample_rate)),
+            );
+            //let loopback_entry = text("Loopback Signal".to_string());
+            signal_list.push(measurement_entry.into());
         }
 
         let left_container = container(column(signal_list)).width(Length::FillPortion(1));
