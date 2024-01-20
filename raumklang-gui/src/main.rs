@@ -1,3 +1,5 @@
+mod widgets;
+
 use std::{io::ErrorKind, path::Path, sync::Arc};
 
 use iced::{
@@ -7,10 +9,12 @@ use iced::{
 };
 use rfd::FileHandle;
 use thiserror::Error;
+use widgets::chart::{TimeSeriesMessageNew, TimeSeriesUnit, TimeseriesChartNew};
 
 struct State {
     loopback_signal: Option<Signal>,
     measurement_signal: Option<Signal>,
+    chart: Option<TimeseriesChartNew>,
 }
 
 impl State {
@@ -18,6 +22,7 @@ impl State {
         Self {
             loopback_signal: None,
             measurement_signal: None,
+            chart: None,
         }
     }
 }
@@ -28,6 +33,8 @@ enum Message {
     LoadMeasurementSignal,
     LoopbackSignalLoaded(Result<Arc<Signal>, Error>),
     MeasurementSignalLoaded(Result<Arc<Signal>, Error>),
+    SignalSelected,
+    TimeSeriesChart(TimeSeriesMessageNew),
 }
 
 impl Application for State {
@@ -76,6 +83,21 @@ impl Application for State {
                     Command::none()
                 }
             },
+            Message::SignalSelected => {
+                if let Some(signal) = &self.loopback_signal {
+                    self.chart = Some(TimeseriesChartNew::new(
+                        signal.data.clone().into_iter(),
+                        TimeSeriesUnit::Time,
+                    ));
+                }
+                Command::none()
+            }
+            Message::TimeSeriesChart(msg) => {
+                if let Some(chart) = &mut self.chart {
+                    chart.update_msg(msg);
+                }
+                Command::none()
+            }
         }
     }
 
@@ -87,7 +109,11 @@ impl Application for State {
 
         let mut signal_list = vec![];
         if let Some(signal) = &self.loopback_signal {
-            signal_list.push(signal.view());
+            signal_list.push(
+                button(signal.view())
+                    .on_press(Message::SignalSelected)
+                    .into(),
+            );
         }
 
         if let Some(signal) = &self.measurement_signal {
@@ -98,10 +124,18 @@ impl Application for State {
             .padding(5)
             .width(Length::FillPortion(1));
 
-        let right_container = container(text("TODO".to_string())).width(Length::FillPortion(5));
+        let right_container: Element<_> = if let Some(chart) = &self.chart {
+            container(chart.view().map(Message::TimeSeriesChart))
+                .width(Length::FillPortion(5))
+                .into()
+        } else {
+            container(text("TODO".to_string()))
+                .width(Length::FillPortion(5))
+                .into()
+        };
 
         let content = column!(menu, row!(left_container, right_container));
-        container(content).into()
+        content.into()
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
