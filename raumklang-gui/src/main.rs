@@ -2,13 +2,14 @@ use std::{io::ErrorKind, path::Path, sync::Arc};
 
 use iced::{
     executor,
-    widget::{button, container, row, text},
-    Application, Command, Element, Font, Settings, Subscription, Theme,
+    widget::{button, column, container, row, text},
+    Application, Command, Element, Font, Length, Settings, Subscription, Theme,
 };
+use rfd::FileHandle;
 use thiserror::Error;
 
 struct State {
-    loopback_signal: Option<Vec<f32>>,
+    loopback_signal: Option<Signal>,
 }
 
 impl State {
@@ -22,7 +23,7 @@ impl State {
 #[derive(Debug, Clone)]
 enum Message {
     LoadLoopbackSignal,
-    LoopbackSignalLoaded(Result<Arc<Vec<f32>>, Error>),
+    LoopbackSignalLoaded(Result<Arc<Signal>, Error>),
 }
 
 impl Application for State {
@@ -44,11 +45,11 @@ impl Application for State {
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
             Message::LoadLoopbackSignal => {
-                Command::perform(pick_file("Loopback"), Message::LoopbackSignalLoaded)
+                Command::perform(pick_file_and_load_signal("Loopback"), Message::LoopbackSignalLoaded)
             }
             Message::LoopbackSignalLoaded(result) => match result {
-                Ok(data) => {
-                    self.loopback_signal = Some(data.to_vec());
+                Ok(signal) => {
+                    self.loopback_signal = Arc::into_inner(signal);
                     Command::none()
                 }
                 Err(err) => {
@@ -60,10 +61,27 @@ impl Application for State {
     }
 
     fn view(&self) -> Element<'_, Self::Message> {
-        let menu = button(text("Load loopback".to_string())).on_press(Message::LoadLoopbackSignal);
+        let menu =
+            row!(button(text("Load loopback".to_string())).on_press(Message::LoadLoopbackSignal));
 
-        let content = row!(menu);
+        let mut signal_list = vec![];
 
+        if let Some(signal) = &self.loopback_signal {
+            let samples = signal.data.len();
+            let sample_rate = signal.sample_rate as f32;
+            let loopback_entry = column!(
+                text(&signal.name),
+                text(format!("Length: {}", samples)),
+                text(format!("Duration: {}", samples as f32 / sample_rate)),
+            );
+            //let loopback_entry = text("Loopback Signal".to_string());
+            signal_list.push(loopback_entry.into());
+        }
+
+        let left_container = container(column(signal_list)).width(Length::FillPortion(1));
+        let right_container = container(text("TODO".to_string())).width(Length::FillPortion(5));
+
+        let content = column!(menu, row!(left_container, right_container));
         container(content).into()
     }
 
@@ -73,6 +91,45 @@ impl Application for State {
         //    .map(ImpulseResponseMessage::TimeSeries)
         //    .map(Message::ImpulseRespone)
         Subscription::none()
+    }
+}
+
+#[derive(Debug)]
+struct Signal {
+    name: String,
+    sample_rate: u32,
+    data: Vec<f32>,
+}
+
+impl Signal {
+    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError> {
+        let name = path
+            .as_ref()
+            .file_name()
+            .and_then(|n| n.to_os_string().into_string().ok())
+            .unwrap_or("Unknown".to_string());
+
+        let mut loopback = hound::WavReader::open(path).map_err(map_hound_error)?;
+        let sample_rate = loopback.spec().sample_rate;
+        // only mono files
+        // currently only 32bit float
+        let data = loopback
+            .samples::<f32>()
+            .collect::<hound::Result<Vec<f32>>>()
+            .map_err(map_hound_error)?;
+
+        Ok(Self {
+            name,
+            sample_rate,
+            data,
+        })
+    }
+}
+
+fn map_hound_error(err: hound::Error) -> WavLoadError {
+    match err {
+        hound::Error::IoError(err) => WavLoadError::IoError(err.kind()),
+        _ => WavLoadError::Other,
     }
 }
 
@@ -90,39 +147,32 @@ enum Error {
     DialogClosed,
 }
 
-async fn pick_file(file_type: impl AsRef<str>) -> Result<Arc<Vec<f32>>, Error> {
-    let handle = rfd::AsyncFileDialog::new()
+async fn pick_file_and_load_signal(file_type: impl AsRef<str>) -> Result<Arc<Signal>, Error> {
+    let handle = pick_file(file_type).await?;
+    load_signal_from_file(handle.path())
+        .await
+        .map(Arc::new)
+        .map_err(Error::File)
+}
+
+async fn pick_file(file_type: impl AsRef<str>) -> Result<FileHandle, Error> {
+    rfd::AsyncFileDialog::new()
         .set_title(format!("Choose {} file", file_type.as_ref()))
         .add_filter("wav", &["wav", "wave"])
         .add_filter("all", &["*"])
         .pick_file()
         .await
-        .ok_or(Error::DialogClosed)?;
-
-    load_audio_file(handle.path()).await.map_err(Error::File)
+        .ok_or(Error::DialogClosed)
 }
 
-async fn load_audio_file<P>(path: P) -> Result<Arc<Vec<f32>>, WavLoadError>
+async fn load_signal_from_file<P>(path: P) -> Result<Signal, WavLoadError>
 where
     P: AsRef<Path> + Send + Sync,
 {
     let path = path.as_ref().to_owned();
-    tokio::task::spawn_blocking(move || {
-        let mut loopback = hound::WavReader::open(path)?;
-        // TODO: check the file spec
-        // only mono files
-        // currently only 32bit float
-        loopback
-            .samples::<f32>()
-            .collect::<hound::Result<Vec<f32>>>()
-            .map(Arc::new)
-    })
-    .await
-    .unwrap()
-    .map_err(|err| match err {
-        hound::Error::IoError(err) => WavLoadError::IoError(err.kind()),
-        _ => WavLoadError::Other,
-    })
+    tokio::task::spawn_blocking(move || Signal::from_file(path))
+        .await
+        .unwrap()
 }
 
 fn main() {
