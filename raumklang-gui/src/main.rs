@@ -86,32 +86,18 @@ impl Application for State {
         );
 
         let mut signal_list = vec![];
-
         if let Some(signal) = &self.loopback_signal {
-            let samples = signal.data.len();
-            let sample_rate = signal.sample_rate as f32;
-            let loopback_entry = column!(
-                text(&signal.name),
-                text(format!("Length: {}", samples)),
-                text(format!("Duration: {}", samples as f32 / sample_rate)),
-            );
-            //let loopback_entry = text("Loopback Signal".to_string());
-            signal_list.push(loopback_entry.into());
+            signal_list.push(signal.view());
         }
 
         if let Some(signal) = &self.measurement_signal {
-            let samples = signal.data.len();
-            let sample_rate = signal.sample_rate as f32;
-            let measurement_entry = column!(
-                text(&signal.name),
-                text(format!("Length: {}", samples)),
-                text(format!("Duration: {}", samples as f32 / sample_rate)),
-            );
-            //let loopback_entry = text("Loopback Signal".to_string());
-            signal_list.push(measurement_entry.into());
+            signal_list.push(signal.view());
         }
 
-        let left_container = container(column(signal_list)).width(Length::FillPortion(1));
+        let left_container = container(column(signal_list).spacing(5))
+            .padding(5)
+            .width(Length::FillPortion(1));
+
         let right_container = container(text("TODO".to_string())).width(Length::FillPortion(5));
 
         let content = column!(menu, row!(left_container, right_container));
@@ -135,6 +121,17 @@ struct Signal {
 }
 
 impl Signal {
+    pub fn view(&self) -> Element<Message> {
+        let samples = self.data.len();
+        let sample_rate = self.sample_rate as f32;
+        column!(
+            text(&self.name),
+            text(format!("Length: {}", samples)),
+            text(format!("Duration: {}", samples as f32 / sample_rate)),
+        )
+        .into()
+    }
+
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError> {
         let name = path
             .as_ref()
