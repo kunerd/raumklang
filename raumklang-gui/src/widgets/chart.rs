@@ -19,9 +19,11 @@ use plotters::{
 use plotters_backend::DrawingBackend;
 use plotters_iced::{Chart, ChartBuilder, ChartWidget, Renderer};
 
+use crate::Signal;
+
 pub enum TimeSeriesRange {
     Samples(RangedCoordusize),
-    Time(usize, RangedCoordusize),
+    Time(u32, RangedCoordusize),
 }
 
 impl ValueFormatter<usize> for TimeSeriesRange {
@@ -75,7 +77,7 @@ impl Ranged for TimeSeriesRange {
 
 pub struct TimeseriesChartNew {
     cache: Cache,
-    data: Vec<f32>,
+    signal: Signal,
     time_unit: TimeSeriesUnit,
 }
 
@@ -108,10 +110,9 @@ pub enum TimeSeriesMessageNew {
 }
 
 impl TimeseriesChartNew {
-    pub fn new(data: impl Iterator<Item = f32>, time_unit: TimeSeriesUnit) -> Self {
-        let data = data.collect();
+    pub fn new(signal: Signal, time_unit: TimeSeriesUnit) -> Self {
         Self {
-            data,
+            signal,
             time_unit,
             cache: Cache::new(),
         }
@@ -169,12 +170,24 @@ impl Chart<TimeSeriesMessageNew> for TimeseriesChartNew {
         use plotters::prelude::*;
 
         let x_range = match self.time_unit {
-            TimeSeriesUnit::Samples => TimeSeriesRange::Samples((0..self.data.len()).into()),
-            TimeSeriesUnit::Time => TimeSeriesRange::Time(44100, (0..self.data.len()).into()),
+            TimeSeriesUnit::Samples => TimeSeriesRange::Samples((0..self.signal.data.len()).into()),
+            TimeSeriesUnit::Time => {
+                TimeSeriesRange::Time(self.signal.sample_rate, (0..self.signal.data.len()).into())
+            }
         };
 
-        let min = self.data.iter().fold(f32::INFINITY, |a, b| a.min(*b));
-        let max = self.data.iter().fold(f32::NEG_INFINITY, |a, b| a.max(*b));
+        let min = self
+            .signal
+            .data
+            .iter()
+            .fold(f32::INFINITY, |a, b| a.min(*b));
+
+        let max = self
+            .signal
+            .data
+            .iter()
+            .fold(f32::NEG_INFINITY, |a, b| a.max(*b));
+
         let mut chart = builder
             .margin(5)
             .x_label_area_size(30)
@@ -183,7 +196,10 @@ impl Chart<TimeSeriesMessageNew> for TimeseriesChartNew {
             .unwrap();
 
         chart
-            .draw_series(LineSeries::new(self.data.iter().cloned().enumerate(), &RED))
+            .draw_series(LineSeries::new(
+                self.signal.data.iter().cloned().enumerate(),
+                &RED,
+            ))
             .unwrap();
 
         chart

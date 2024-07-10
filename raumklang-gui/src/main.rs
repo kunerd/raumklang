@@ -86,7 +86,7 @@ impl Application for State {
             Message::SignalSelected => {
                 if let Some(signal) = &self.loopback_signal {
                     self.chart = Some(TimeseriesChartNew::new(
-                        signal.data.clone().into_iter(),
+                        signal.clone(),
                         TimeSeriesUnit::Time,
                     ));
                 }
@@ -147,7 +147,7 @@ impl Application for State {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Signal {
     name: String,
     sample_rate: u32,
