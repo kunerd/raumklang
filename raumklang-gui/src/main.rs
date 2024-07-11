@@ -66,7 +66,10 @@ impl Application for State {
                     Command::none()
                 }
                 Err(err) => {
-                    println!("{:?}", err);
+                    match err {
+                        Error::File(reason) => println!("Error: {reason}"),
+                        Error::DialogClosed => {},
+                    }
                     Command::none()
                 }
             },
@@ -266,11 +269,10 @@ where
         .unwrap()
 }
 
-fn main() {
+fn main() -> iced::Result {
     State::run(Settings {
         antialiasing: true,
         default_font: Font::with_name("Noto Sans"),
         ..Settings::default()
     })
-    .unwrap();
 }

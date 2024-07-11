@@ -13,8 +13,8 @@ use iced::{
 use plotters::{
     coord::{
         cartesian::Cartesian2d,
-        ranged1d::{DefaultFormatting, NoDefaultFormatting, ReversibleRanged, ValueFormatter},
-        types::{RangedCoordf32, RangedCoordi64, RangedCoordusize},
+        ranged1d::{NoDefaultFormatting, ReversibleRanged, ValueFormatter},
+        types::{RangedCoordf32, RangedCoordi64},
         ReverseCoordTranslate,
     },
     prelude::Ranged,
@@ -49,66 +49,6 @@ pub enum TimeSeriesUnit {
 pub enum TimeSeriesRange {
     Samples(RangedCoordi64),
     Time(u32, RangedCoordi64),
-}
-
-impl TimeSeriesRange {
-    fn range(&self) -> &RangedCoordi64 {
-        match self {
-            TimeSeriesRange::Samples(range) => range,
-            TimeSeriesRange::Time(_, range) => range,
-        }
-    }
-}
-
-impl ValueFormatter<i64> for TimeSeriesRange {
-    fn format_ext(&self, value: &i64) -> String {
-        match self {
-            TimeSeriesRange::Samples(_) => format!("{}", value),
-            TimeSeriesRange::Time(sample_rate, _) => {
-                format!("{} s", *value as f32 / *sample_rate as f32)
-            }
-        }
-    }
-}
-
-impl Ranged for TimeSeriesRange {
-    type FormatOption = NoDefaultFormatting;
-
-    type ValueType = i64;
-
-    fn map(&self, value: &Self::ValueType, limit: (i32, i32)) -> i32 {
-        self.range().map(value, limit)
-    }
-
-    fn key_points<Hint: plotters::coord::ranged1d::KeyPointHint>(
-        &self,
-        hint: Hint,
-    ) -> Vec<Self::ValueType> {
-        self.range().key_points(hint)
-    }
-
-    fn range(&self) -> Range<Self::ValueType> {
-        self.range().range()
-    }
-
-    fn axis_pixel_range(&self, limit: (i32, i32)) -> Range<i32> {
-        if limit.0 < limit.1 {
-            limit.0..limit.1
-        } else {
-            limit.1..limit.0
-        }
-    }
-}
-
-impl ReversibleRanged for TimeSeriesRange {
-    fn unmap(&self, input: i32, limit: (i32, i32)) -> Option<Self::ValueType> {
-        let range = match self {
-            TimeSeriesRange::Samples(range) => range,
-            TimeSeriesRange::Time(_, range) => range,
-        };
-
-        range.unmap(input, limit)
-    }
 }
 
 impl TimeSeriesUnit {
@@ -396,3 +336,64 @@ impl Chart<Message> for TimeseriesChart {
         (event::Status::Ignored, None)
     }
 }
+
+impl TimeSeriesRange {
+    fn range(&self) -> &RangedCoordi64 {
+        match self {
+            TimeSeriesRange::Samples(range) => range,
+            TimeSeriesRange::Time(_, range) => range,
+        }
+    }
+}
+
+impl ValueFormatter<i64> for TimeSeriesRange {
+    fn format_ext(&self, value: &i64) -> String {
+        match self {
+            TimeSeriesRange::Samples(_) => format!("{}", value),
+            TimeSeriesRange::Time(sample_rate, _) => {
+                format!("{} s", *value as f32 / *sample_rate as f32)
+            }
+        }
+    }
+}
+
+impl Ranged for TimeSeriesRange {
+    type FormatOption = NoDefaultFormatting;
+
+    type ValueType = i64;
+
+    fn map(&self, value: &Self::ValueType, limit: (i32, i32)) -> i32 {
+        self.range().map(value, limit)
+    }
+
+    fn key_points<Hint: plotters::coord::ranged1d::KeyPointHint>(
+        &self,
+        hint: Hint,
+    ) -> Vec<Self::ValueType> {
+        self.range().key_points(hint)
+    }
+
+    fn range(&self) -> Range<Self::ValueType> {
+        self.range().range()
+    }
+
+    fn axis_pixel_range(&self, limit: (i32, i32)) -> Range<i32> {
+        if limit.0 < limit.1 {
+            limit.0..limit.1
+        } else {
+            limit.1..limit.0
+        }
+    }
+}
+
+impl ReversibleRanged for TimeSeriesRange {
+    fn unmap(&self, input: i32, limit: (i32, i32)) -> Option<Self::ValueType> {
+        let range = match self {
+            TimeSeriesRange::Samples(range) => range,
+            TimeSeriesRange::Time(_, range) => range,
+        };
+
+        range.unmap(input, limit)
+    }
+}
+
