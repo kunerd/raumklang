@@ -68,7 +68,7 @@ impl Application for State {
                 Err(err) => {
                     match err {
                         Error::File(reason) => println!("Error: {reason}"),
-                        Error::DialogClosed => {},
+                        Error::DialogClosed => {}
                     }
                     Command::none()
                 }
@@ -102,22 +102,16 @@ impl Application for State {
             Message::Event(event) => {
                 match event {
                     iced::Event::Keyboard(event) => match event {
-                        iced::keyboard::Event::KeyPressed {
-                            key_code,
-                            modifiers: _,
-                        } => match key_code {
-                            iced::keyboard::KeyCode::LShift | iced::keyboard::KeyCode::RShift => {
+                        iced::keyboard::Event::KeyPressed { key, .. } => match key {
+                            iced::keyboard::Key::Named(iced::keyboard::key::Named::Shift) => {
                                 if let Some(chart) = &mut self.chart {
                                     chart.shift_key_pressed();
                                 }
                             }
                             _ => {}
                         },
-                        iced::keyboard::Event::KeyReleased {
-                            key_code,
-                            modifiers: _,
-                        } => match key_code {
-                            iced::keyboard::KeyCode::LShift | iced::keyboard::KeyCode::RShift => {
+                        iced::keyboard::Event::KeyReleased { key, .. } => match key {
+                            iced::keyboard::Key::Named(iced::keyboard::key::Named::Shift) => {
                                 if let Some(chart) = &mut self.chart {
                                     chart.shift_key_released();
                                 }
@@ -127,7 +121,7 @@ impl Application for State {
                         _ => {}
                     },
                     iced::Event::Mouse(_) => {}
-                    iced::Event::Window(_) => {}
+                    iced::Event::Window(..) => {}
                     iced::Event::Touch(_) => {}
                 }
                 Command::none()
@@ -173,7 +167,7 @@ impl Application for State {
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
-        iced::subscription::events().map(Message::Event)
+        iced::event::listen().map(Message::Event)
     }
 }
 

@@ -6,13 +6,13 @@ edition = "2021"
 [dependencies]
 raumklang-core = { workspace = true }
 
-rfd = "0.13"
+iced = { version = "0.12", features = ["canvas", "tokio"] }
 tokio = { version = "1.35", features = [ "fs" ] }
-hound = "3.5"
-thiserror = "1.0"
-iced = { version = "0.10", features = ["canvas", "tokio"] }
-plotters-iced = "0.9"
+rfd = "0.13"
+plotters-iced = "0.10"
 plotters-backend = "0.3"
 plotters = { version = "0.3", features = ["chrono"] }
+hound = "3.5"
+thiserror = "1.0"
 
 rustfft = "6.0"
