@@ -1,18 +1,21 @@
-use std::ops::Range;
+use std::{cell::RefCell, ops::Range};
 
 use iced::{
     alignment::{Horizontal, Vertical},
+    event, mouse,
     widget::{
         self,
-        canvas::{Cache, Frame, Geometry},
+        canvas::{self, Cache, Frame, Geometry},
         Column, Container,
     },
     Element, Length, Size,
 };
 use plotters::{
     coord::{
-        ranged1d::{NoDefaultFormatting, ValueFormatter},
-        types::RangedCoordusize,
+        cartesian::Cartesian2d,
+        ranged1d::{DefaultFormatting, NoDefaultFormatting, ReversibleRanged, ValueFormatter},
+        types::{RangedCoordf32, RangedCoordi64, RangedCoordusize},
+        ReverseCoordTranslate,
     },
     prelude::Ranged,
 };
@@ -21,17 +24,48 @@ use plotters_iced::{Chart, ChartBuilder, ChartWidget, Renderer};
 
 use crate::Signal;
 
-pub enum TimeSeriesRange {
-    Samples(RangedCoordusize),
-    Time(u32, RangedCoordusize),
+pub struct TimeseriesChart {
+    signal: Signal,
+    time_unit: TimeSeriesUnit,
+    shift_key_pressed: bool,
+    spec: RefCell<Option<Cartesian2d<TimeSeriesRange, RangedCoordf32>>>,
+    viewport: Range<i64>,
+    cache: Cache,
 }
 
-impl ValueFormatter<usize> for TimeSeriesRange {
-    fn format_ext(&self, value: &usize) -> String {
+#[derive(Debug, Clone)]
+pub enum Message {
+    MouseEvent(mouse::Event, iced::Point),
+    TimeUnitChanged(TimeSeriesUnit),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TimeSeriesUnit {
+    Samples,
+    Time,
+}
+
+#[derive(Clone)]
+pub enum TimeSeriesRange {
+    Samples(RangedCoordi64),
+    Time(u32, RangedCoordi64),
+}
+
+impl TimeSeriesRange {
+    fn range(&self) -> &RangedCoordi64 {
+        match self {
+            TimeSeriesRange::Samples(range) => range,
+            TimeSeriesRange::Time(_, range) => range,
+        }
+    }
+}
+
+impl ValueFormatter<i64> for TimeSeriesRange {
+    fn format_ext(&self, value: &i64) -> String {
         match self {
             TimeSeriesRange::Samples(_) => format!("{}", value),
             TimeSeriesRange::Time(sample_rate, _) => {
-                format!("{}", *value as f32 / *sample_rate as f32)
+                format!("{} s", *value as f32 / *sample_rate as f32)
             }
         }
     }
@@ -40,30 +74,21 @@ impl ValueFormatter<usize> for TimeSeriesRange {
 impl Ranged for TimeSeriesRange {
     type FormatOption = NoDefaultFormatting;
 
-    type ValueType = usize;
+    type ValueType = i64;
 
     fn map(&self, value: &Self::ValueType, limit: (i32, i32)) -> i32 {
-        match self {
-            TimeSeriesRange::Samples(ranged) => ranged.map(value, limit),
-            TimeSeriesRange::Time(_sample_rate, ranged) => ranged.map(value, limit),
-        }
+        self.range().map(value, limit)
     }
 
     fn key_points<Hint: plotters::coord::ranged1d::KeyPointHint>(
         &self,
         hint: Hint,
     ) -> Vec<Self::ValueType> {
-        match self {
-            TimeSeriesRange::Samples(ranged) => ranged.key_points(hint),
-            TimeSeriesRange::Time(_, ranged) => ranged.key_points(hint),
-        }
+        self.range().key_points(hint)
     }
 
     fn range(&self) -> Range<Self::ValueType> {
-        match self {
-            TimeSeriesRange::Samples(ranged) => ranged.range(),
-            TimeSeriesRange::Time(_, ranged) => ranged.range(),
-        }
+        self.range().range()
     }
 
     fn axis_pixel_range(&self, limit: (i32, i32)) -> Range<i32> {
@@ -75,16 +100,15 @@ impl Ranged for TimeSeriesRange {
     }
 }
 
-pub struct TimeseriesChartNew {
-    cache: Cache,
-    signal: Signal,
-    time_unit: TimeSeriesUnit,
-}
+impl ReversibleRanged for TimeSeriesRange {
+    fn unmap(&self, input: i32, limit: (i32, i32)) -> Option<Self::ValueType> {
+        let range = match self {
+            TimeSeriesRange::Samples(range) => range,
+            TimeSeriesRange::Time(_, range) => range,
+        };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TimeSeriesUnit {
-    Samples,
-    Time,
+        range.unmap(input, limit)
+    }
 }
 
 impl TimeSeriesUnit {
@@ -104,25 +128,25 @@ impl std::fmt::Display for TimeSeriesUnit {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum TimeSeriesMessageNew {
-    TimeUnitChanged(TimeSeriesUnit),
-}
-
-impl TimeseriesChartNew {
+impl TimeseriesChart {
     pub fn new(signal: Signal, time_unit: TimeSeriesUnit) -> Self {
+        let spec = RefCell::new(None);
+        let viewport = 0..signal.data.len() as i64;
         Self {
             signal,
             time_unit,
+            shift_key_pressed: false,
+            viewport,
+            spec,
             cache: Cache::new(),
         }
     }
 
-    pub fn view(&self) -> Element<TimeSeriesMessageNew> {
+    pub fn view(&self) -> Element<Message> {
         let header = widget::row!(widget::pick_list(
             &TimeSeriesUnit::ALL[..],
             Some(self.time_unit.clone()),
-            TimeSeriesMessageNew::TimeUnitChanged
+            Message::TimeUnitChanged
         ));
         Container::new(
             Column::new()
@@ -143,17 +167,149 @@ impl TimeseriesChartNew {
         .into()
     }
 
-    pub fn update_msg(&mut self, msg: TimeSeriesMessageNew) {
+    pub fn update_msg(&mut self, msg: Message) {
         match msg {
-            TimeSeriesMessageNew::TimeUnitChanged(u) => {
+            Message::MouseEvent(evt, point) => match evt {
+                mouse::Event::CursorEntered => {}
+                mouse::Event::CursorLeft => {}
+                mouse::Event::CursorMoved { position: _ } => {}
+                mouse::Event::ButtonPressed(_) => {}
+                mouse::Event::ButtonReleased(_) => {}
+                mouse::Event::WheelScrolled {
+                    delta: mouse::ScrollDelta::Pixels { x: _, y: _ },
+                } => {}
+                mouse::Event::WheelScrolled {
+                    delta: mouse::ScrollDelta::Lines { y, .. },
+                } => {
+                    match self.shift_key_pressed {
+                        true => {
+                            // y is always zero in iced 0.10
+                            if y.is_sign_positive() {
+                                self.scroll_right();
+                            } else {
+                                self.scroll_left();
+                            }
+                        }
+                        false => {
+                            // y is always zero in iced 0.10
+                            if y.is_sign_positive() {
+                                self.zoom_in(point);
+                            } else {
+                                self.zoom_out(point);
+                            }
+                        }
+                    }
+                }
+            },
+            Message::TimeUnitChanged(u) => {
                 self.time_unit = u;
                 self.cache.clear();
             }
         }
     }
+
+    fn scroll_right(&mut self) {
+        let old_viewport = self.viewport.clone();
+        let length = old_viewport.end - old_viewport.start;
+
+        const SCROLL_FACTOR: f32 = 0.2;
+        let offset = (length as f32 * SCROLL_FACTOR) as i64;
+
+        let mut new_end = old_viewport.end.saturating_add(offset);
+        let viewport_max = self.signal.data.len() as i64 + (length / 2);
+        if new_end > viewport_max {
+            new_end = viewport_max;
+        }
+
+        let new_start = new_end - length;
+
+        self.viewport = new_start..new_end;
+
+        self.cache.clear();
+    }
+
+    fn scroll_left(&mut self) {
+        let old_viewport = self.viewport.clone();
+        let length = old_viewport.end - old_viewport.start;
+
+        const SCROLL_FACTOR: f32 = 0.2;
+        let offset = (length as f32 * SCROLL_FACTOR) as i64;
+
+        let mut new_start = old_viewport.start.saturating_sub(offset);
+        let viewport_min = -(length / 2);
+        if new_start < viewport_min {
+            new_start = viewport_min;
+        }
+        let new_end = new_start + length;
+
+        self.viewport = new_start..new_end;
+
+        self.cache.clear();
+    }
+
+    fn zoom_in(&mut self, p: iced::Point) {
+        if let Some(spec) = self.spec.borrow().as_ref() {
+            let cur_pos = spec.reverse_translate((p.x as i32, p.y as i32));
+
+            if let Some((x, ..)) = cur_pos {
+                let old_viewport = self.viewport.clone();
+                let old_len = old_viewport.end - old_viewport.start;
+
+                let center_scale = (x - old_viewport.start) as f32 / old_len as f32;
+
+                // FIXME make configurable
+                const ZOOM_FACTOR: f32 = 0.8;
+                const LOWER_BOUND: i64 = 256;
+                let mut new_len = (old_len as f32 * ZOOM_FACTOR) as i64;
+                if new_len < LOWER_BOUND {
+                    new_len = LOWER_BOUND;
+                }
+
+                let new_start = x.saturating_sub((new_len as f32 * center_scale) as i64);
+                let new_end = new_start + new_len;
+                self.viewport = new_start..new_end;
+
+                self.cache.clear();
+            }
+        }
+    }
+
+    fn zoom_out(&mut self, p: iced::Point) {
+        if let Some(spec) = self.spec.borrow().as_ref() {
+            let cur_pos = spec.reverse_translate((p.x as i32, p.y as i32));
+
+            if let Some((x, ..)) = cur_pos {
+                let old_viewport = self.viewport.clone();
+                let old_len = old_viewport.end - old_viewport.start;
+
+                let center_scale = (x - old_viewport.start) as f32 / old_len as f32;
+
+                // FIXME make configurable
+                const ZOOM_FACTOR: f32 = 1.2;
+                let mut new_len = (old_len as f32 * ZOOM_FACTOR) as i64;
+                if new_len >= self.signal.data.len() as i64 {
+                    new_len = self.signal.data.len() as i64;
+                }
+
+                let new_start = x.saturating_sub((new_len as f32 * center_scale) as i64);
+                let new_end = new_start + new_len;
+                self.viewport = new_start..new_end;
+
+                self.cache.clear();
+            }
+        }
+    }
+
+    pub fn shift_key_pressed(&mut self) {
+        self.shift_key_pressed = true;
+    }
+
+    pub(crate) fn shift_key_released(&mut self) {
+        self.shift_key_pressed = false;
+    }
 }
 
-impl Chart<TimeSeriesMessageNew> for TimeseriesChartNew {
+impl Chart<Message> for TimeseriesChart {
     type State = ();
 
     #[inline]
@@ -170,9 +326,9 @@ impl Chart<TimeSeriesMessageNew> for TimeseriesChartNew {
         use plotters::prelude::*;
 
         let x_range = match self.time_unit {
-            TimeSeriesUnit::Samples => TimeSeriesRange::Samples((0..self.signal.data.len()).into()),
+            TimeSeriesUnit::Samples => TimeSeriesRange::Samples(self.viewport.clone().into()),
             TimeSeriesUnit::Time => {
-                TimeSeriesRange::Time(self.signal.sample_rate, (0..self.signal.data.len()).into())
+                TimeSeriesRange::Time(self.signal.sample_rate, self.viewport.clone().into())
             }
         };
 
@@ -197,7 +353,12 @@ impl Chart<TimeSeriesMessageNew> for TimeseriesChartNew {
 
         chart
             .draw_series(LineSeries::new(
-                self.signal.data.iter().cloned().enumerate(),
+                self.signal
+                    .data
+                    .iter()
+                    .cloned()
+                    .enumerate()
+                    .map(|(i, s)| (i as i64, s)),
                 &RED,
             ))
             .unwrap();
@@ -208,5 +369,30 @@ impl Chart<TimeSeriesMessageNew> for TimeseriesChartNew {
             //.disable_axes()
             .draw()
             .unwrap();
+
+        *self.spec.borrow_mut() = Some(chart.as_coord_spec().clone());
+    }
+
+    fn update(
+        &self,
+        _state: &mut Self::State,
+        event: canvas::Event,
+        bounds: iced::Rectangle,
+        cursor: mouse::Cursor,
+    ) -> (event::Status, Option<Message>) {
+        if let mouse::Cursor::Available(point) = cursor {
+            match event {
+                canvas::Event::Mouse(evt) if bounds.contains(point) => {
+                    let p_origin = bounds.position();
+                    let p = point - p_origin;
+                    return (
+                        event::Status::Captured,
+                        Some(Message::MouseEvent(evt, iced::Point::new(p.x, p.y))),
+                    );
+                }
+                _ => {}
+            }
+        }
+        (event::Status::Ignored, None)
     }
 }

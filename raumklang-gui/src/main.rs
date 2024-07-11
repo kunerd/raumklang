@@ -9,12 +9,12 @@ use iced::{
 };
 use rfd::FileHandle;
 use thiserror::Error;
-use widgets::chart::{TimeSeriesMessageNew, TimeSeriesUnit, TimeseriesChartNew};
+use widgets::chart::{self, TimeSeriesUnit, TimeseriesChart};
 
 struct State {
     loopback_signal: Option<Signal>,
     measurement_signal: Option<Signal>,
-    chart: Option<TimeseriesChartNew>,
+    chart: Option<TimeseriesChart>,
 }
 
 impl State {
@@ -34,7 +34,8 @@ enum Message {
     LoopbackSignalLoaded(Result<Arc<Signal>, Error>),
     MeasurementSignalLoaded(Result<Arc<Signal>, Error>),
     SignalSelected,
-    TimeSeriesChart(TimeSeriesMessageNew),
+    TimeSeriesChart(chart::Message),
+    Event(iced::Event),
 }
 
 impl Application for State {
@@ -85,16 +86,46 @@ impl Application for State {
             },
             Message::SignalSelected => {
                 if let Some(signal) = &self.loopback_signal {
-                    self.chart = Some(TimeseriesChartNew::new(
-                        signal.clone(),
-                        TimeSeriesUnit::Time,
-                    ));
+                    self.chart = Some(TimeseriesChart::new(signal.clone(), TimeSeriesUnit::Time));
                 }
                 Command::none()
             }
             Message::TimeSeriesChart(msg) => {
                 if let Some(chart) = &mut self.chart {
                     chart.update_msg(msg);
+                }
+                Command::none()
+            }
+            Message::Event(event) => {
+                match event {
+                    iced::Event::Keyboard(event) => match event {
+                        iced::keyboard::Event::KeyPressed {
+                            key_code,
+                            modifiers: _,
+                        } => match key_code {
+                            iced::keyboard::KeyCode::LShift | iced::keyboard::KeyCode::RShift => {
+                                if let Some(chart) = &mut self.chart {
+                                    chart.shift_key_pressed();
+                                }
+                            }
+                            _ => {}
+                        },
+                        iced::keyboard::Event::KeyReleased {
+                            key_code,
+                            modifiers: _,
+                        } => match key_code {
+                            iced::keyboard::KeyCode::LShift | iced::keyboard::KeyCode::RShift => {
+                                if let Some(chart) = &mut self.chart {
+                                    chart.shift_key_released();
+                                }
+                            }
+                            _ => {}
+                        },
+                        _ => {}
+                    },
+                    iced::Event::Mouse(_) => {}
+                    iced::Event::Window(_) => {}
+                    iced::Event::Touch(_) => {}
                 }
                 Command::none()
             }
@@ -139,11 +170,7 @@ impl Application for State {
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
-        //subscription::events()
-        //    .map(TimeSeriesMessage::EventOccured)
-        //    .map(ImpulseResponseMessage::TimeSeries)
-        //    .map(Message::ImpulseRespone)
-        Subscription::none()
+        iced::subscription::events().map(Message::Event)
     }
 }
 
