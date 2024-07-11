@@ -2,10 +2,6 @@ use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 
 use ringbuf::{HeapConsumer, HeapProducer, HeapRb};
 
-struct Notifications;
-
-impl jack::NotificationHandler for Notifications {}
-
 enum Message<I, J>
 where
     I: Iterator<Item = f32>,
