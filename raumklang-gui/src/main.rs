@@ -3,9 +3,8 @@ mod widgets;
 use std::{io::ErrorKind, path::Path, sync::Arc};
 
 use iced::{
-    executor,
     widget::{button, column, container, row, text},
-    Application, Command, Element, Font, Length, Settings, Theme,
+    Element, Font, Length, Task,
 };
 use rfd::FileHandle;
 use thiserror::Error;
@@ -18,12 +17,15 @@ struct State {
 }
 
 impl State {
-    fn new() -> Self {
-        Self {
-            loopback_signal: None,
-            measurement_signal: None,
-            chart: None,
-        }
+    fn new() -> (Self, Task<Message>) {
+        (
+            Self {
+                loopback_signal: None,
+                measurement_signal: None,
+                chart: None,
+            },
+            Task::none(),
+        )
     }
 }
 
@@ -38,77 +40,66 @@ enum Message {
     TimeSeriesChart(chart::Message),
 }
 
-impl Application for State {
-    type Message = self::Message;
-    type Executor = executor::Default;
-    type Flags = ();
-    type Theme = Theme;
-
-    fn new(_flags: Self::Flags) -> (Self, Command<Self::Message>) {
-        let app = Self::new();
-
-        (app, Command::none())
-    }
-
+impl State {
     fn title(&self) -> String {
         "Raumklang".to_owned()
     }
 
-    fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
+    fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::LoadLoopbackSignal => Command::perform(
+            Message::LoadLoopbackSignal => Task::perform(
                 pick_file_and_load_signal("loopback"),
                 Message::LoopbackSignalLoaded,
             ),
             Message::LoopbackSignalLoaded(result) => match result {
                 Ok(signal) => {
                     self.loopback_signal = Arc::into_inner(signal);
-                    Command::none()
+                    Task::none()
                 }
                 Err(err) => {
                     match err {
                         Error::File(reason) => println!("Error: {reason}"),
                         Error::DialogClosed => {}
                     }
-                    Command::none()
+                    Task::none()
                 }
             },
-            Message::LoadMeasurementSignal => Command::perform(
+            Message::LoadMeasurementSignal => Task::perform(
                 pick_file_and_load_signal("measurement"),
                 Message::MeasurementSignalLoaded,
             ),
             Message::MeasurementSignalLoaded(result) => match result {
                 Ok(signal) => {
                     self.measurement_signal = Arc::into_inner(signal);
-                    Command::none()
+                    Task::none()
                 }
                 Err(err) => {
                     println!("{:?}", err);
-                    Command::none()
+                    Task::none()
                 }
             },
             Message::LoopbackSignalSelected => {
                 if let Some(signal) = &self.loopback_signal {
                     self.chart = Some(TimeseriesChart::new(signal.clone(), TimeSeriesUnit::Time));
                 }
-                Command::none()
+                Task::none()
             }
             Message::MeasurementSignalSelected => {
                 if let Some(signal) = &self.measurement_signal {
                     self.chart = Some(TimeseriesChart::new(signal.clone(), TimeSeriesUnit::Time));
                 }
-                Command::none()
+                Task::none()
             }
             Message::TimeSeriesChart(msg) => {
                 if let Some(chart) = &mut self.chart {
                     chart.update_msg(msg);
                 }
-                Command::none()
+                Task::none()
             }
         }
     }
 
-    fn view(&self) -> Element<'_, Self::Message> {
+    fn view(&self) -> Element<'_, Message> {
         let side_menu = {
             let loopback_entry = {
                 let header = text("Loopback");
@@ -117,7 +108,7 @@ impl Application for State {
                 } else {
                     button(text("load ...".to_string())).on_press(Message::LoadLoopbackSignal)
                 }
-                .style(iced::theme::Button::Secondary);
+                .style(button::secondary);
 
                 column!(header, btn).width(Length::Fill).spacing(5)
             };
@@ -129,7 +120,7 @@ impl Application for State {
                 } else {
                     button(text("load ...".to_string())).on_press(Message::LoadMeasurementSignal)
                 }
-                .style(iced::theme::Button::Secondary);
+                .style(button::secondary);
 
                 column!(header, btn).width(Length::Fill).spacing(5)
             };
@@ -246,9 +237,9 @@ where
 }
 
 fn main() -> iced::Result {
-    State::run(Settings {
-        antialiasing: true,
-        default_font: Font::with_name("Noto Sans"),
-        ..Settings::default()
-    })
+    iced::application(State::title, State::update, State::view)
+        //.subscription(State::subscription)
+        .default_font(Font::with_name("Noto Sans"))
+        .antialiasing(true)
+        .run_with(State::new)
 }
