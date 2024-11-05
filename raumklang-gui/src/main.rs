@@ -5,7 +5,7 @@ use std::{io::ErrorKind, path::Path, sync::Arc};
 use iced::{
     executor,
     widget::{button, column, container, row, text},
-    Application, Command, Element, Font, Length, Settings, Subscription, Theme,
+    Application, Command, Element, Font, Length, Settings, Theme,
 };
 use rfd::FileHandle;
 use thiserror::Error;
@@ -33,9 +33,9 @@ enum Message {
     LoadMeasurementSignal,
     LoopbackSignalLoaded(Result<Arc<Signal>, Error>),
     MeasurementSignalLoaded(Result<Arc<Signal>, Error>),
-    SignalSelected,
+    LoopbackSignalSelected,
+    MeasurementSignalSelected,
     TimeSeriesChart(chart::Message),
-    Event(iced::Event),
 }
 
 impl Application for State {
@@ -87,8 +87,14 @@ impl Application for State {
                     Command::none()
                 }
             },
-            Message::SignalSelected => {
+            Message::LoopbackSignalSelected => {
                 if let Some(signal) = &self.loopback_signal {
+                    self.chart = Some(TimeseriesChart::new(signal.clone(), TimeSeriesUnit::Time));
+                }
+                Command::none()
+            }
+            Message::MeasurementSignalSelected => {
+                if let Some(signal) = &self.measurement_signal {
                     self.chart = Some(TimeseriesChart::new(signal.clone(), TimeSeriesUnit::Time));
                 }
                 Command::none()
@@ -99,75 +105,50 @@ impl Application for State {
                 }
                 Command::none()
             }
-            Message::Event(event) => {
-                match event {
-                    iced::Event::Keyboard(event) => match event {
-                        iced::keyboard::Event::KeyPressed { key, .. } => match key {
-                            iced::keyboard::Key::Named(iced::keyboard::key::Named::Shift) => {
-                                if let Some(chart) = &mut self.chart {
-                                    chart.shift_key_pressed();
-                                }
-                            }
-                            _ => {}
-                        },
-                        iced::keyboard::Event::KeyReleased { key, .. } => match key {
-                            iced::keyboard::Key::Named(iced::keyboard::key::Named::Shift) => {
-                                if let Some(chart) = &mut self.chart {
-                                    chart.shift_key_released();
-                                }
-                            }
-                            _ => {}
-                        },
-                        _ => {}
-                    },
-                    iced::Event::Mouse(_) => {}
-                    iced::Event::Window(..) => {}
-                    iced::Event::Touch(_) => {}
-                }
-                Command::none()
-            }
         }
     }
 
     fn view(&self) -> Element<'_, Self::Message> {
-        let menu = row!(
-            button(text("Load loopback".to_string())).on_press(Message::LoadLoopbackSignal),
-            button(text("Load measurement".to_string())).on_press(Message::LoadMeasurementSignal)
-        );
+        let side_menu = {
+            let loopback_entry = {
+                let header = text("Loopback");
+                let btn = if let Some(signal) = &self.loopback_signal {
+                    button(signal.view()).on_press(Message::LoopbackSignalSelected)
+                } else {
+                    button(text("load ...".to_string())).on_press(Message::LoadLoopbackSignal)
+                }
+                .style(iced::theme::Button::Secondary);
 
-        let mut signal_list = vec![];
-        if let Some(signal) = &self.loopback_signal {
-            signal_list.push(
-                button(signal.view())
-                    .on_press(Message::SignalSelected)
-                    .into(),
-            );
-        }
+                column!(header, btn).width(Length::Fill).spacing(5)
+            };
 
-        if let Some(signal) = &self.measurement_signal {
-            signal_list.push(signal.view());
-        }
+            let measurement_entry = {
+                let header = text("Measurements");
+                let btn = if let Some(signal) = &self.measurement_signal {
+                    button(signal.view()).on_press(Message::MeasurementSignalSelected)
+                } else {
+                    button(text("load ...".to_string())).on_press(Message::LoadMeasurementSignal)
+                }
+                .style(iced::theme::Button::Secondary);
 
-        let left_container = container(column(signal_list).spacing(5))
-            .padding(5)
-            .width(Length::FillPortion(1));
+                column!(header, btn).width(Length::Fill).spacing(5)
+            };
 
-        let right_container: Element<_> = if let Some(chart) = &self.chart {
-            container(chart.view().map(Message::TimeSeriesChart))
-                .width(Length::FillPortion(5))
-                .into()
-        } else {
-            container(text("TODO".to_string()))
-                .width(Length::FillPortion(5))
-                .into()
+            container(column!(loopback_entry, measurement_entry).spacing(10))
+                .padding(5)
+                .width(Length::FillPortion(1))
         };
 
-        let content = column!(menu, row!(left_container, right_container));
-        content.into()
-    }
+        let right_container = if let Some(chart) = &self.chart {
+            container(chart.view().map(Message::TimeSeriesChart)).width(Length::FillPortion(5))
+        } else {
+            container(text("TODO".to_string()))
+        };
 
-    fn subscription(&self) -> Subscription<Self::Message> {
-        iced::event::listen().map(Message::Event)
+        let right_container = right_container.width(Length::FillPortion(4));
+
+        let content = row!(side_menu, right_container);
+        content.into()
     }
 }
 
@@ -184,9 +165,10 @@ impl Signal {
         let sample_rate = self.sample_rate as f32;
         column!(
             text(&self.name),
-            text(format!("Length: {}", samples)),
-            text(format!("Duration: {}", samples as f32 / sample_rate)),
+            text(format!("Samples: {}", samples)),
+            text(format!("Duration: {} s", samples as f32 / sample_rate)),
         )
+        .padding(2)
         .into()
     }
 

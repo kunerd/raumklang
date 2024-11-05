@@ -2,7 +2,7 @@ use std::{cell::RefCell, ops::Range};
 
 use iced::{
     alignment::{Horizontal, Vertical},
-    event, mouse,
+    event, keyboard, mouse,
     widget::{
         self,
         canvas::{self, Cache, Frame, Geometry},
@@ -18,6 +18,7 @@ use plotters::{
         ReverseCoordTranslate,
     },
     prelude::Ranged,
+    style,
 };
 use plotters_backend::DrawingBackend;
 use plotters_iced::{Chart, ChartBuilder, ChartWidget, Renderer};
@@ -37,6 +38,8 @@ pub struct TimeseriesChart {
 pub enum Message {
     MouseEvent(mouse::Event, iced::Point),
     TimeUnitChanged(TimeSeriesUnit),
+    ShiftKeyReleased,
+    ShiftKeyPressed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,6 +144,12 @@ impl TimeseriesChart {
                     }
                 }
             },
+            Message::ShiftKeyPressed => {
+                self.shift_key_pressed = true;
+            },
+            Message::ShiftKeyReleased => {
+                self.shift_key_pressed = false;
+            }
             Message::TimeUnitChanged(u) => {
                 self.time_unit = u;
                 self.cache.clear();
@@ -239,14 +248,6 @@ impl TimeseriesChart {
             }
         }
     }
-
-    pub fn shift_key_pressed(&mut self) {
-        self.shift_key_pressed = true;
-    }
-
-    pub(crate) fn shift_key_released(&mut self) {
-        self.shift_key_pressed = false;
-    }
 }
 
 impl Chart<Message> for TimeseriesChart {
@@ -299,7 +300,7 @@ impl Chart<Message> for TimeseriesChart {
                     .cloned()
                     .enumerate()
                     .map(|(i, s)| (i as i64, s)),
-                &RED,
+                &style::RGBColor(2, 125, 66),
             ))
             .unwrap();
 
@@ -330,7 +331,27 @@ impl Chart<Message> for TimeseriesChart {
                         Some(Message::MouseEvent(evt, iced::Point::new(p.x, p.y))),
                     );
                 }
-                _ => {}
+                canvas::Event::Mouse(_) => {}
+                canvas::Event::Touch(_) => {}
+                canvas::Event::Keyboard(event) => match event {
+                    iced::keyboard::Event::KeyPressed { key, .. } => match key {
+                        iced::keyboard::Key::Named(keyboard::key::Named::Shift) => {
+                            return (event::Status::Captured, Some(Message::ShiftKeyPressed))
+                        }
+                        iced::keyboard::Key::Named(_) => {},
+                        iced::keyboard::Key::Character(_) => {},
+                        iced::keyboard::Key::Unidentified => {},
+                    },
+                    iced::keyboard::Event::KeyReleased { key, .. } => match key {
+                        iced::keyboard::Key::Named(keyboard::key::Named::Shift) => {
+                            return (event::Status::Captured, Some(Message::ShiftKeyReleased))
+                        }
+                        iced::keyboard::Key::Named(_) => {},
+                        iced::keyboard::Key::Character(_) => {},
+                        iced::keyboard::Key::Unidentified => {},
+                    },
+                    iced::keyboard::Event::ModifiersChanged(_) => {}
+                },
             }
         }
         (event::Status::Ignored, None)
@@ -396,4 +417,3 @@ impl ReversibleRanged for TimeSeriesRange {
         range.unmap(input, limit)
     }
 }
-
