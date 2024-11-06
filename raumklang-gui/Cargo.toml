@@ -7,6 +7,7 @@ edition = "2021"
 raumklang-core = { workspace = true }
 
 iced = { version = "0.13", features = ["canvas", "tokio"] }
+iced_aw = { version = "0.11.0", default-features = false, features = ["tabs"] }
 tokio = { version = "1.35", features = [ "fs" ] }
 rfd = "0.13"
 plotters-iced = "0.11"

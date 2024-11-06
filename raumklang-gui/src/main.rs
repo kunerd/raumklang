@@ -6,11 +6,19 @@ use iced::{
     widget::{button, column, container, row, text},
     Element, Font, Length, Task,
 };
+use iced_aw::Tabs;
 use rfd::FileHandle;
 use thiserror::Error;
 use widgets::chart::{self, TimeSeriesUnit, TimeseriesChart};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TabId {
+    Measurements,
+    RoomResponse,
+}
+
 struct State {
+    active_tab: TabId,
     loopback_signal: Option<Signal>,
     measurement_signal: Option<Signal>,
     chart: Option<TimeseriesChart>,
@@ -20,6 +28,7 @@ impl State {
     fn new() -> (Self, Task<Message>) {
         (
             Self {
+                active_tab: TabId::Measurements,
                 loopback_signal: None,
                 measurement_signal: None,
                 chart: None,
@@ -38,6 +47,8 @@ enum Message {
     LoopbackSignalSelected,
     MeasurementSignalSelected,
     TimeSeriesChart(chart::Message),
+    TabSelected(TabId),
+    TabClosed(TabId),
 }
 
 impl State {
@@ -96,6 +107,14 @@ impl State {
                 }
                 Task::none()
             }
+            Message::TabSelected(id) => {
+                self.active_tab = id;
+                Task::none()
+            }
+            Message::TabClosed(id) => {
+                println!("Tab closed: {:?}", id);
+                Task::none()
+            },
         }
     }
 
@@ -130,11 +149,30 @@ impl State {
                 .width(Length::FillPortion(1))
         };
 
-        let right_container = if let Some(chart) = &self.chart {
-            container(chart.view().map(Message::TimeSeriesChart)).width(Length::FillPortion(5))
-        } else {
-            container(text("TODO".to_string()))
-        };
+        let right_container = Tabs::new(Message::TabSelected)
+            //.tab_icon_position(iced_aw::tabs::Position::Bottom)
+            .on_close(Message::TabClosed)
+            .push(
+                TabId::Measurements,
+                iced_aw::TabLabel::Text("Measurements".to_string()),
+                {
+                    if let Some(chart) = &self.chart {
+                        container(chart.view().map(Message::TimeSeriesChart))
+                            .width(Length::FillPortion(5))
+                    } else {
+                        container(text("Not implemented.".to_string()))
+                    }
+                },
+            )
+            .push(
+                TabId::RoomResponse,
+                iced_aw::TabLabel::Text("Room impulse response".to_string()),
+                text("Not implemented"),
+            )
+            .set_active_tab(&self.active_tab)
+            //.tab_bar_style(style_from_index(theme))
+            //.icon_font(ICON)
+            .tab_bar_position(iced_aw::TabBarPosition::Top);
 
         let right_container = right_container.width(Length::FillPortion(4));
 
