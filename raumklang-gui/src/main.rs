@@ -1,43 +1,50 @@
+mod tabs;
 mod widgets;
 
-use std::{io::ErrorKind, path::Path, sync::Arc};
+use std::path::Path;
 
 use iced::{
-    widget::{button, column, container, row, text},
-    Element, Font, Length, Task,
+    widget::{column, text},
+    Element, Font, Task,
 };
-use rfd::FileHandle;
-use thiserror::Error;
-use widgets::chart::{self, TimeSeriesUnit, TimeseriesChart};
+use iced_aw::Tabs;
 
+use tabs::{signals::WavLoadError, Tab};
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+enum TabId {
+    #[default]
+    Signals,
+    ImpulseResponse,
+}
+
+#[derive(Default)]
 struct State {
-    loopback_signal: Option<Signal>,
-    measurement_signal: Option<Signal>,
-    chart: Option<TimeseriesChart>,
+    active_tab: TabId,
+    signals_tab: tabs::Signals,
+    impulse_response_tab: tabs::ImpulseResponse,
 }
 
-impl State {
-    fn new() -> (Self, Task<Message>) {
-        (
-            Self {
-                loopback_signal: None,
-                measurement_signal: None,
-                chart: None,
-            },
-            Task::none(),
-        )
-    }
-}
+//impl State {
+//    fn new() -> (Self, Task<Message>) {
+//        (
+//            Self {
+//                active_tab: TabId::Signals,
+//                signals_tab: tabs::Signals::
+//                loopback_signal: None,
+//                measurement_signal: None,
+//                chart: None,
+//            },
+//            Task::none(),
+//        )
+//    }
+//}
 
 #[derive(Debug, Clone)]
 enum Message {
-    LoadLoopbackSignal,
-    LoadMeasurementSignal,
-    LoopbackSignalLoaded(Result<Arc<Signal>, Error>),
-    MeasurementSignalLoaded(Result<Arc<Signal>, Error>),
-    LoopbackSignalSelected,
-    MeasurementSignalSelected,
-    TimeSeriesChart(chart::Message),
+    TabSelected(TabId),
+    SignalsTab(tabs::signals::SignalsMessage),
+    ImpulseResponse(tabs::impulse_resposne::Message),
 }
 
 impl State {
@@ -47,99 +54,94 @@ impl State {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::LoadLoopbackSignal => Task::perform(
-                pick_file_and_load_signal("loopback"),
-                Message::LoopbackSignalLoaded,
-            ),
-            Message::LoopbackSignalLoaded(result) => match result {
-                Ok(signal) => {
-                    self.loopback_signal = Arc::into_inner(signal);
-                    Task::none()
-                }
-                Err(err) => {
-                    match err {
-                        Error::File(reason) => println!("Error: {reason}"),
-                        Error::DialogClosed => {}
-                    }
-                    Task::none()
-                }
-            },
-            Message::LoadMeasurementSignal => Task::perform(
-                pick_file_and_load_signal("measurement"),
-                Message::MeasurementSignalLoaded,
-            ),
-            Message::MeasurementSignalLoaded(result) => match result {
-                Ok(signal) => {
-                    self.measurement_signal = Arc::into_inner(signal);
-                    Task::none()
-                }
-                Err(err) => {
-                    println!("{:?}", err);
-                    Task::none()
-                }
-            },
-            Message::LoopbackSignalSelected => {
-                if let Some(signal) = &self.loopback_signal {
-                    self.chart = Some(TimeseriesChart::new(signal.clone(), TimeSeriesUnit::Time));
-                }
+            Message::TabSelected(id) => {
+                self.active_tab = id;
                 Task::none()
             }
-            Message::MeasurementSignalSelected => {
-                if let Some(signal) = &self.measurement_signal {
-                    self.chart = Some(TimeseriesChart::new(signal.clone(), TimeSeriesUnit::Time));
-                }
-                Task::none()
-            }
-            Message::TimeSeriesChart(msg) => {
-                if let Some(chart) = &mut self.chart {
-                    chart.update_msg(msg);
-                }
-                Task::none()
-            }
+            Message::SignalsTab(msg) => self.signals_tab.update(msg).map(Message::SignalsTab),
+            Message::ImpulseResponse(_) => todo!(),
         }
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let side_menu = {
-            let loopback_entry = {
-                let header = text("Loopback");
-                let btn = if let Some(signal) = &self.loopback_signal {
-                    button(signal.view()).on_press(Message::LoopbackSignalSelected)
-                } else {
-                    button(text("load ...".to_string())).on_press(Message::LoadLoopbackSignal)
-                }
-                .style(button::secondary);
+        let tabs = Tabs::new(Message::TabSelected)
+            .push(
+                TabId::Signals,
+                self.signals_tab.label(),
+                self.signals_tab.view().map(Message::SignalsTab),
+            )
+            .push(
+                TabId::ImpulseResponse,
+                self.impulse_response_tab.label(),
+                self.impulse_response_tab
+                    .view()
+                    .map(Message::ImpulseResponse),
+            )
+            .set_active_tab(&self.active_tab)
+            //.tab_bar_style(style_from_index(theme))
+            //.icon_font(ICON)
+            .tab_bar_position(iced_aw::TabBarPosition::Top);
 
-                column!(header, btn).width(Length::Fill).spacing(5)
-            };
+        tabs.into()
+        //let side_menu = {
+        //    let loopback_entry = {
+        //        let header = text("Loopback");
+        //        let btn = if let Some(signal) = &self.loopback_signal {
+        //            button(signal.view()).on_press(Message::LoopbackSignalSelected)
+        //        } else {
+        //            button(text("load ...".to_string())).on_press(Message::LoadLoopbackSignal)
+        //        }
+        //        .style(button::secondary);
 
-            let measurement_entry = {
-                let header = text("Measurements");
-                let btn = if let Some(signal) = &self.measurement_signal {
-                    button(signal.view()).on_press(Message::MeasurementSignalSelected)
-                } else {
-                    button(text("load ...".to_string())).on_press(Message::LoadMeasurementSignal)
-                }
-                .style(button::secondary);
+        //        column!(header, btn).width(Length::Fill).spacing(5)
+        //    };
 
-                column!(header, btn).width(Length::Fill).spacing(5)
-            };
+        //    let measurement_entry = {
+        //        let header = text("Measurements");
+        //        let btn = if let Some(signal) = &self.measurement_signal {
+        //            button(signal.view()).on_press(Message::MeasurementSignalSelected)
+        //        } else {
+        //            button(text("load ...".to_string())).on_press(Message::LoadMeasurementSignal)
+        //        }
+        //        .style(button::secondary);
 
-            container(column!(loopback_entry, measurement_entry).spacing(10))
-                .padding(5)
-                .width(Length::FillPortion(1))
-        };
+        //        column!(header, btn).width(Length::Fill).spacing(5)
+        //    };
 
-        let right_container = if let Some(chart) = &self.chart {
-            container(chart.view().map(Message::TimeSeriesChart)).width(Length::FillPortion(5))
-        } else {
-            container(text("TODO".to_string()))
-        };
+        //    container(column!(loopback_entry, measurement_entry).spacing(10))
+        //        .padding(5)
+        //        .width(Length::FillPortion(1))
+        //};
 
-        let right_container = right_container.width(Length::FillPortion(4));
+        //let right_container = Tabs::new(Message::TabSelected)
+        //    //.tab_icon_position(iced_aw::tabs::Position::Bottom)
+        //    .on_close(Message::TabClosed)
+        //    .push(
+        //        TabId::Measurements,
+        //        iced_aw::TabLabel::Text("Measurements".to_string()),
+        //        {
+        //            if let Some(chart) = &self.chart {
+        //                container(chart.view().map(Message::TimeSeriesChart))
+        //                    .width(Length::FillPortion(5))
+        //            } else {
+        //                container(text("Not implemented.".to_string()))
+        //            }
+        //        },
+        //    )
+        //    .push(
+        //        TabId::RoomResponse,
+        //        iced_aw::TabLabel::Text("Room impulse response".to_string()),
+        //        text("Not implemented"),
+        //    )
+        //    .set_active_tab(&self.active_tab)
+        //    //.tab_bar_style(style_from_index(theme))
+        //    //.icon_font(ICON)
+        //    .tab_bar_position(iced_aw::TabBarPosition::Top);
 
-        let content = row!(side_menu, right_container);
-        content.into()
+        //let right_container = right_container.width(Length::FillPortion(4));
+
+        //let content = row!(side_menu, right_container);
+        //content.into()
     }
 }
 
@@ -151,7 +153,7 @@ struct Signal {
 }
 
 impl Signal {
-    pub fn view(&self) -> Element<Message> {
+    pub fn view(&self) -> Element<tabs::signals::SignalsMessage> {
         let samples = self.data.len();
         let sample_rate = self.sample_rate as f32;
         column!(
@@ -194,52 +196,10 @@ fn map_hound_error(err: hound::Error) -> WavLoadError {
     }
 }
 
-#[derive(Error, Debug, Clone)]
-enum WavLoadError {
-    #[error("couldn't read file")]
-    IoError(ErrorKind),
-    #[error("unknown")]
-    Other,
-}
-
-#[derive(Debug, Clone)]
-enum Error {
-    File(WavLoadError),
-    DialogClosed,
-}
-
-async fn pick_file_and_load_signal(file_type: impl AsRef<str>) -> Result<Arc<Signal>, Error> {
-    let handle = pick_file(file_type).await?;
-    load_signal_from_file(handle.path())
-        .await
-        .map(Arc::new)
-        .map_err(Error::File)
-}
-
-async fn pick_file(file_type: impl AsRef<str>) -> Result<FileHandle, Error> {
-    rfd::AsyncFileDialog::new()
-        .set_title(format!("Choose {} file", file_type.as_ref()))
-        .add_filter("wav", &["wav", "wave"])
-        .add_filter("all", &["*"])
-        .pick_file()
-        .await
-        .ok_or(Error::DialogClosed)
-}
-
-async fn load_signal_from_file<P>(path: P) -> Result<Signal, WavLoadError>
-where
-    P: AsRef<Path> + Send + Sync,
-{
-    let path = path.as_ref().to_owned();
-    tokio::task::spawn_blocking(move || Signal::from_file(path))
-        .await
-        .unwrap()
-}
-
 fn main() -> iced::Result {
     iced::application(State::title, State::update, State::view)
         //.subscription(State::subscription)
         .default_font(Font::with_name("Noto Sans"))
         .antialiasing(true)
-        .run_with(State::new)
+        .run()
 }
