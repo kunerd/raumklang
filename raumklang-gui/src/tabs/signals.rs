@@ -1,7 +1,8 @@
 use std::{io::ErrorKind, path::Path, sync::Arc};
 
 use iced::{
-    widget::{button, column, container, row, text}, Element, Length, Task
+    widget::{button, column, container, row, text},
+    Element, Length, Task,
 };
 use iced_aw::TabLabel;
 use rfd::FileHandle;
@@ -118,9 +119,10 @@ impl Tab for Signals {
             let loopback_entry = {
                 let header = text("Loopback");
                 let btn = if let Some(signal) = &self.loopback_signal {
-                    button(signal.view()).on_press(SignalsMessage::LoopbackSignalSelected)
+                    button(signal_list_entry(signal)).on_press(SignalsMessage::LoopbackSignalSelected)
                 } else {
-                    button(text("load ...".to_string())).on_press(SignalsMessage::LoadLoopbackSignal)
+                    button(text("load ...".to_string()))
+                        .on_press(SignalsMessage::LoadLoopbackSignal)
                 }
                 .style(button::secondary);
 
@@ -130,9 +132,10 @@ impl Tab for Signals {
             let measurement_entry = {
                 let header = text("Measurements");
                 let btn = if let Some(signal) = &self.measurement_signal {
-                    button(signal.view()).on_press(SignalsMessage::MeasurementSignalSelected)
+                    button(signal_list_entry(signal)).on_press(SignalsMessage::MeasurementSignalSelected)
                 } else {
-                    button(text("load ...".to_string())).on_press(SignalsMessage::LoadMeasurementSignal)
+                    button(text("load ...".to_string()))
+                        .on_press(SignalsMessage::LoadMeasurementSignal)
                 }
                 .style(button::secondary);
 
@@ -141,12 +144,14 @@ impl Tab for Signals {
 
             container(column!(loopback_entry, measurement_entry).spacing(10))
                 .padding(5)
-                .width(Length::FillPortion(1)).into()
+                .width(Length::FillPortion(1))
+                .into()
         };
 
         let content = {
             if let Some(chart) = &self.chart {
-                container(chart.view().map(SignalsMessage::TimeSeriesChart)).width(Length::FillPortion(5))
+                container(chart.view().map(SignalsMessage::TimeSeriesChart))
+                    .width(Length::FillPortion(5))
             } else {
                 container(text("Not implemented.".to_string()))
             }
@@ -154,6 +159,18 @@ impl Tab for Signals {
 
         row!(side_menu, content).into()
     }
+}
+
+fn signal_list_entry(signal: &Signal) -> Element<'_, SignalsMessage> {
+    let samples = signal.data.len();
+    let sample_rate = signal.sample_rate as f32;
+    column!(
+        text(&signal.name),
+        text(format!("Samples: {}", samples)),
+        text(format!("Duration: {} s", samples as f32 / sample_rate)),
+    )
+    .padding(2)
+    .into()
 }
 
 async fn pick_file_and_load_signal(file_type: impl AsRef<str>) -> Result<Arc<Signal>, Error> {
