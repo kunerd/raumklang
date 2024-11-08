@@ -17,9 +17,16 @@ enum TabId {
 
 #[derive(Default)]
 struct State {
+    signals: Signals,
     active_tab: TabId,
     signals_tab: tabs::Signals,
     impulse_response_tab: tabs::ImpulseResponse,
+}
+
+#[derive(Default)]
+struct Signals {
+    loopback: Option<Signal>,
+    measurements: Vec<Signal>,
 }
 
 #[derive(Debug, Clone)]
@@ -40,8 +47,14 @@ impl State {
                 self.active_tab = id;
                 Task::none()
             }
-            Message::SignalsTab(msg) => self.signals_tab.update(msg).map(Message::SignalsTab),
-            Message::ImpulseResponse(_) => todo!(),
+            Message::SignalsTab(msg) => self
+                .signals_tab
+                .update(msg, &mut self.signals)
+                .map(Message::SignalsTab),
+            Message::ImpulseResponse(msg) => self
+                .impulse_response_tab
+                .update(msg, &self.signals)
+                .map(Message::ImpulseResponse),
         }
     }
 
@@ -50,13 +63,15 @@ impl State {
             .push(
                 TabId::Signals,
                 self.signals_tab.label(),
-                self.signals_tab.view().map(Message::SignalsTab),
+                self.signals_tab
+                    .view(&self.signals)
+                    .map(Message::SignalsTab),
             )
             .push(
                 TabId::ImpulseResponse,
                 self.impulse_response_tab.label(),
                 self.impulse_response_tab
-                    .view()
+                    .view(&self.signals)
                     .map(Message::ImpulseResponse),
             )
             .set_active_tab(&self.active_tab)
@@ -74,6 +89,14 @@ struct Signal {
 }
 
 impl Signal {
+    pub fn new(name: String, sample_rate: u32, data: Vec<f32>) -> Self {
+        Self {
+            name,
+            sample_rate,
+            data
+        }
+    }
+
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError> {
         let name = path
             .as_ref()

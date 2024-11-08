@@ -6,7 +6,7 @@ use rand::{distributions, distributions::Distribution, rngs, SeedableRng};
 use ringbuf::Rb;
 use rustfft::{num_complex::Complex, FftPlanner};
 
-use std::path::Path;
+use std::{f32, path::Path};
 
 pub enum Signal<F, I>
 where
@@ -274,6 +274,7 @@ impl LoudnessMeter {
     }
 }
 
+#[derive(Debug)]
 pub struct ImpulseResponse {
     pub loopback_fft: Vec<Complex<f32>>,
     pub response_fft: Vec<Complex<f32>>,
@@ -281,17 +282,7 @@ pub struct ImpulseResponse {
 }
 
 impl ImpulseResponse {
-    pub fn from_files(loopback_path: &str, measurment_path: &str) -> anyhow::Result<Self> {
-        let mut loopback = hound::WavReader::open(loopback_path)?;
-        let mut response = hound::WavReader::open(measurment_path)?;
-
-        let mut loopback: Vec<f32> = loopback
-            .samples::<f32>()
-            .collect::<Result<Vec<f32>, _>>()?;
-        let mut response: Vec<f32> = response
-            .samples::<f32>()
-            .collect::<Result<Vec<f32>, _>>()?;
-
+    pub fn from_signals(mut loopback: Vec<f32>, mut response: Vec<f32>) -> anyhow::Result<Self> {
         let response_len = response.len();
         let loopback_len = loopback.len();
 
@@ -342,8 +333,18 @@ impl ImpulseResponse {
         Ok(Self {
             loopback_fft: loopback,
             response_fft: response,
-            impulse_response
+            impulse_response,
         })
+    }
+
+    pub fn from_files(loopback_path: &str, measurment_path: &str) -> anyhow::Result<Self> {
+        let mut loopback = hound::WavReader::open(loopback_path)?;
+        let mut response = hound::WavReader::open(measurment_path)?;
+
+        let loopback: Vec<f32> = loopback.samples::<f32>().collect::<Result<Vec<f32>, _>>()?;
+        let response: Vec<f32> = response.samples::<f32>().collect::<Result<Vec<f32>, _>>()?;
+
+        Self::from_signals(loopback, response)
     }
 }
 

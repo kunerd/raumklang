@@ -18,8 +18,6 @@ use super::Tab;
 #[derive(Default)]
 pub struct Signals {
     chart: Option<TimeseriesChart>,
-    loopback_signal: Option<Signal>,
-    measurement_signal: Option<Signal>,
 }
 
 #[derive(Debug, Clone)]
@@ -48,7 +46,7 @@ pub enum WavLoadError {
 }
 
 impl Signals {
-    pub fn update(&mut self, msg: SignalsMessage) -> Task<SignalsMessage> {
+    pub fn update(&mut self, msg: SignalsMessage, signals: &mut crate::Signals) -> Task<SignalsMessage> {
         match msg {
             SignalsMessage::LoadLoopbackSignal => Task::perform(
                 pick_file_and_load_signal("loopback"),
@@ -56,7 +54,7 @@ impl Signals {
             ),
             SignalsMessage::LoopbackSignalLoaded(result) => match result {
                 Ok(signal) => {
-                    self.loopback_signal = Arc::into_inner(signal);
+                    signals.loopback = Arc::into_inner(signal);
                     Task::none()
                 }
                 Err(err) => {
@@ -73,7 +71,7 @@ impl Signals {
             ),
             SignalsMessage::MeasurementSignalLoaded(result) => match result {
                 Ok(signal) => {
-                    self.measurement_signal = Arc::into_inner(signal);
+                    signals.measurements.push(Arc::into_inner(signal).unwrap());
                     Task::none()
                 }
                 Err(err) => {
@@ -82,13 +80,13 @@ impl Signals {
                 }
             },
             SignalsMessage::LoopbackSignalSelected => {
-                if let Some(signal) = &self.loopback_signal {
+                if let Some(signal) = &signals.loopback {
                     self.chart = Some(TimeseriesChart::new(signal.clone(), TimeSeriesUnit::Time));
                 }
                 Task::none()
             }
             SignalsMessage::MeasurementSignalSelected => {
-                if let Some(signal) = &self.measurement_signal {
+                if let Some(signal) = signals.measurements.first() {
                     self.chart = Some(TimeseriesChart::new(signal.clone(), TimeSeriesUnit::Time));
                 }
                 Task::none()
@@ -114,11 +112,11 @@ impl Tab for Signals {
         TabLabel::Text(self.title())
     }
 
-    fn content(&self) -> iced::Element<'_, Self::Message> {
+    fn content<'a>(&'a self, signals: &'a crate::Signals) -> iced::Element<'a, Self::Message> {
         let side_menu: Element<'_, SignalsMessage> = {
             let loopback_entry = {
                 let header = text("Loopback");
-                let btn = if let Some(signal) = &self.loopback_signal {
+                let btn = if let Some(signal) = &signals.loopback {
                     button(signal_list_entry(signal)).on_press(SignalsMessage::LoopbackSignalSelected)
                 } else {
                     button(text("load ...".to_string()))
@@ -131,7 +129,7 @@ impl Tab for Signals {
 
             let measurement_entry = {
                 let header = text("Measurements");
-                let btn = if let Some(signal) = &self.measurement_signal {
+                let btn = if let Some(signal) =signals.measurements.first() {
                     button(signal_list_entry(signal)).on_press(SignalsMessage::MeasurementSignalSelected)
                 } else {
                     button(text("load ...".to_string()))
