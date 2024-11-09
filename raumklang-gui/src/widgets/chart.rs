@@ -27,6 +27,7 @@ use crate::Signal;
 
 pub struct TimeseriesChart {
     signal: Signal,
+    noise_floor: Option<f32>,
     time_unit: TimeSeriesUnit,
     shift_key_pressed: bool,
     spec: RefCell<Option<Cartesian2d<TimeSeriesRange, RangedCoordf32>>>,
@@ -40,6 +41,7 @@ pub enum Message {
     TimeUnitChanged(TimeSeriesUnit),
     ShiftKeyReleased,
     ShiftKeyPressed,
+    NoiseFloorUpdated(f32)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +79,7 @@ impl TimeseriesChart {
         let viewport = 0..signal.data.len() as i64;
         Self {
             signal,
+            noise_floor: None,
             time_unit,
             shift_key_pressed: false,
             viewport,
@@ -146,12 +149,16 @@ impl TimeseriesChart {
             },
             Message::ShiftKeyPressed => {
                 self.shift_key_pressed = true;
-            },
+            }
             Message::ShiftKeyReleased => {
                 self.shift_key_pressed = false;
             }
             Message::TimeUnitChanged(u) => {
                 self.time_unit = u;
+                self.cache.clear();
+            }
+            Message::NoiseFloorUpdated(nf) => {
+                self.noise_floor = Some(nf);
                 self.cache.clear();
             }
         }
@@ -304,6 +311,16 @@ impl Chart<Message> for TimeseriesChart {
             ))
             .unwrap();
 
+        if let Some(nf) = self.noise_floor {
+            chart
+                .draw_series(LineSeries::new(
+                    (0..self.signal.data.len())
+                        .map(|i| (i as i64, nf)),
+                    &style::RGBColor(0, 0, 128),
+                ))
+                .unwrap();
+        }
+
         chart
             .configure_mesh()
             .disable_mesh()
@@ -338,17 +355,17 @@ impl Chart<Message> for TimeseriesChart {
                         iced::keyboard::Key::Named(keyboard::key::Named::Shift) => {
                             return (event::Status::Captured, Some(Message::ShiftKeyPressed))
                         }
-                        iced::keyboard::Key::Named(_) => {},
-                        iced::keyboard::Key::Character(_) => {},
-                        iced::keyboard::Key::Unidentified => {},
+                        iced::keyboard::Key::Named(_) => {}
+                        iced::keyboard::Key::Character(_) => {}
+                        iced::keyboard::Key::Unidentified => {}
                     },
                     iced::keyboard::Event::KeyReleased { key, .. } => match key {
                         iced::keyboard::Key::Named(keyboard::key::Named::Shift) => {
                             return (event::Status::Captured, Some(Message::ShiftKeyReleased))
                         }
-                        iced::keyboard::Key::Named(_) => {},
-                        iced::keyboard::Key::Character(_) => {},
-                        iced::keyboard::Key::Unidentified => {},
+                        iced::keyboard::Key::Named(_) => {}
+                        iced::keyboard::Key::Character(_) => {}
+                        iced::keyboard::Key::Unidentified => {}
                     },
                     iced::keyboard::Event::ModifiersChanged(_) => {}
                 },

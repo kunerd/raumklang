@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use iced::{
-    widget::{button, column, container, row, text},
-    Element, Length, Task,
+    futures::FutureExt, widget::{button, column, container, row, text}, Element, Length, Task
 };
 use iced_aw::TabLabel;
+use raumklang_core::dbfs;
 
 use crate::{widgets::chart::{self, TimeSeriesUnit, TimeseriesChart}, Signal, Signals};
 
@@ -38,17 +38,24 @@ impl ImpulseResponse {
                 }
             }
             Message::ImpulseResponseComputed(impulse_response) => {
-                let data = impulse_response.impulse_response.iter().map(|c| c.norm()).collect();
-                let signal = Signal::new("Impulse response".to_string(), 44100, data);
+                let data: Vec<_> = impulse_response.impulse_response.iter().map(|c| dbfs(c.norm())).collect();
+                let signal = Signal::new("Impulse response".to_string(), 44100, data.clone());
+
 
                 self.chart = Some(TimeseriesChart::new(
                     signal,
                     TimeSeriesUnit::Time,
                 ));
 
-                Task::none()
+                Task::perform(async move {
+                    let mut data = data.clone();
+                    windowed_median(&mut data).await
+                }.map(chart::Message::NoiseFloorUpdated), Message::TimeSeriesChart)
             }
-            Message::TimeSeriesChart(_) => {
+            Message::TimeSeriesChart(msg) => {
+                if let Some(chart) = &mut self.chart {
+                    chart.update_msg(msg);
+                }
                 Task::none()
             },
         }
@@ -60,6 +67,25 @@ async fn compute_impulse_response(
     response: Vec<f32>,
 ) -> Arc<raumklang_core::ImpulseResponse> {
     Arc::new(raumklang_core::ImpulseResponse::from_signals(loopback, response).unwrap())
+}
+
+async fn windowed_median(data: &mut [f32]) -> f32 {
+    const WINDOW_SIZE: usize = 512;
+
+    let mut mean = 0f32;
+    let window_count = data.len() / WINDOW_SIZE;
+
+    for window_num in 0..window_count {
+        let start = window_num * WINDOW_SIZE;
+        let end = start + WINDOW_SIZE;
+        
+        let window = &mut data[start..end];
+        window.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        mean += window[256];
+    }
+
+    mean / window_count as f32
 }
 
 impl Tab for ImpulseResponse {
