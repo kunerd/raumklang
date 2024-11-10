@@ -49,7 +49,10 @@ impl ImpulseResponse {
 
                 Task::perform(async move {
                     let mut data = data.clone();
-                    windowed_median(&mut data).await
+                    let nf = windowed_median(&mut data).await;
+                    let nfb = estimate_noise_floor_border(nf, &data).await;
+                    println!("Noise floor border: {nfb}");
+                    nf
                 }.map(chart::Message::NoiseFloorUpdated), Message::TimeSeriesChart)
             }
             Message::TimeSeriesChart(msg) => {
@@ -72,7 +75,7 @@ async fn compute_impulse_response(
 async fn windowed_median(data: &mut [f32]) -> f32 {
     const WINDOW_SIZE: usize = 512;
 
-    let mut mean = 0f32;
+    let mut mean_of_median = 0f32;
     let window_count = data.len() / WINDOW_SIZE;
 
     for window_num in 0..window_count {
@@ -82,10 +85,31 @@ async fn windowed_median(data: &mut [f32]) -> f32 {
         let window = &mut data[start..end];
         window.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-        mean += window[256];
+        mean_of_median += window[256];
     }
 
-    mean / window_count as f32
+    mean_of_median / window_count as f32
+}
+
+async fn estimate_noise_floor_border(noise_floor: f32, data: &[f32]) -> usize {
+    const WINDOW_SIZE: usize = 1024 * 2;
+
+    let window_count = data.len() / WINDOW_SIZE;
+    let nf_border = 0;
+
+    for window_num in 0..window_count {
+        let start = window_num * WINDOW_SIZE;
+        let end = start + WINDOW_SIZE;
+        
+        let window = &data[start..end];
+
+        let mean = window.iter().fold(0f32, |acc, e| acc + e) / WINDOW_SIZE as f32;
+        if mean < noise_floor {
+            return end;
+        }
+    }
+
+    nf_border
 }
 
 impl Tab for ImpulseResponse {
