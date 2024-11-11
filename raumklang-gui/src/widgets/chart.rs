@@ -28,11 +28,16 @@ use crate::Signal;
 pub struct TimeseriesChart {
     signal: Signal,
     noise_floor: Option<f32>,
+    noise_floor_crossing: Option<usize>,
     time_unit: TimeSeriesUnit,
     shift_key_pressed: bool,
     spec: RefCell<Option<Cartesian2d<TimeSeriesRange, RangedCoordf32>>>,
     viewport: Range<i64>,
     cache: Cache,
+}
+
+pub struct FrequencyResponseChart {
+    data: Vec<f32>,
 }
 
 #[derive(Debug, Clone)]
@@ -41,7 +46,7 @@ pub enum Message {
     TimeUnitChanged(TimeSeriesUnit),
     ShiftKeyReleased,
     ShiftKeyPressed,
-    NoiseFloorUpdated(f32)
+    NoiseFloorUpdated((f32, usize)),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +85,7 @@ impl TimeseriesChart {
         Self {
             signal,
             noise_floor: None,
+            noise_floor_crossing: None,
             time_unit,
             shift_key_pressed: false,
             viewport,
@@ -157,8 +163,9 @@ impl TimeseriesChart {
                 self.time_unit = u;
                 self.cache.clear();
             }
-            Message::NoiseFloorUpdated(nf) => {
+            Message::NoiseFloorUpdated((nf, nfc)) => {
                 self.noise_floor = Some(nf);
+                self.noise_floor_crossing = Some(nfc);
                 self.cache.clear();
             }
         }
@@ -314,8 +321,7 @@ impl Chart<Message> for TimeseriesChart {
         if let Some(nf) = self.noise_floor {
             chart
                 .draw_series(LineSeries::new(
-                    (0..self.signal.data.len())
-                        .map(|i| (i as i64, nf)),
+                    (0..self.signal.data.len()).map(|i| (i as i64, nf)),
                     &style::RGBColor(0, 0, 128),
                 ))
                 .unwrap();
@@ -373,6 +379,115 @@ impl Chart<Message> for TimeseriesChart {
         }
         (event::Status::Ignored, None)
     }
+}
+
+impl FrequencyResponseChart {
+    pub fn new(data: Vec<f32>) -> Self {
+        Self { data }
+    }
+
+    pub fn view(&self) -> Element<()> {
+        ChartWidget::new(self)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    }
+}
+
+impl Chart<()> for FrequencyResponseChart {
+    type State = ();
+
+    //#[inline]
+    //fn draw<R: Renderer, F: Fn(&mut Frame)>(
+    //    &self,
+    //    renderer: &R,
+    //    bounds: Size,
+    //    draw_fn: F,
+    //) -> Geometry {
+    //    renderer.draw_cache(&self.cache, bounds, draw_fn)
+    //}
+
+    fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut builder: ChartBuilder<DB>) {
+        use plotters::prelude::*;
+
+        //let x_range = match self.time_unit {
+        //    TimeSeriesUnit::Samples => TimeSeriesRange::Samples(self.viewport.clone().into()),
+        //    TimeSeriesUnit::Time => {
+        //        TimeSeriesRange::Time(self.signal.sample_rate, self.viewport.clone().into())
+        //    }
+        //};
+
+        let min = self.data.iter().fold(f32::INFINITY, |a, b| a.min(*b));
+
+        let max = self.data.iter().fold(f32::NEG_INFINITY, |a, b| a.max(*b));
+
+        let mut chart = builder
+            .margin(5)
+            .x_label_area_size(30)
+            .y_label_area_size(30)
+            .build_cartesian_2d(0..self.data.len(), min..max)
+            .unwrap();
+
+        chart
+            .draw_series(LineSeries::new(
+                self.data
+                    .iter()
+                    .cloned()
+                    .enumerate(),
+                &style::RGBColor(2, 125, 66),
+            ))
+            .unwrap();
+
+        chart
+            .configure_mesh()
+            .disable_mesh()
+            //.disable_axes()
+            .draw()
+            .unwrap();
+    }
+
+    //fn update(
+    //    &self,
+    //    _state: &mut Self::State,
+    //    event: canvas::Event,
+    //    bounds: iced::Rectangle,
+    //    cursor: mouse::Cursor,
+    //) -> (event::Status, Option<Message>) {
+    //    if let mouse::Cursor::Available(point) = cursor {
+    //        match event {
+    //            canvas::Event::Mouse(evt) if bounds.contains(point) => {
+    //                let p_origin = bounds.position();
+    //                let p = point - p_origin;
+    //                return (
+    //                    event::Status::Captured,
+    //                    Some(Message::MouseEvent(evt, iced::Point::new(p.x, p.y))),
+    //                );
+    //            }
+    //            canvas::Event::Mouse(_) => {}
+    //            canvas::Event::Touch(_) => {}
+    //            canvas::Event::Keyboard(event) => match event {
+    //                iced::keyboard::Event::KeyPressed { key, .. } => match key {
+    //                    iced::keyboard::Key::Named(keyboard::key::Named::Shift) => {
+    //                        return (event::Status::Captured, Some(Message::ShiftKeyPressed))
+    //                    }
+    //                    iced::keyboard::Key::Named(_) => {}
+    //                    iced::keyboard::Key::Character(_) => {}
+    //                    iced::keyboard::Key::Unidentified => {}
+    //                },
+    //                iced::keyboard::Event::KeyReleased { key, .. } => match key {
+    //                    iced::keyboard::Key::Named(keyboard::key::Named::Shift) => {
+    //                        return (event::Status::Captured, Some(Message::ShiftKeyReleased))
+    //                    }
+    //                    iced::keyboard::Key::Named(_) => {}
+    //                    iced::keyboard::Key::Character(_) => {}
+    //                    iced::keyboard::Key::Unidentified => {}
+    //                },
+    //                iced::keyboard::Event::ModifiersChanged(_) => {}
+    //            },
+    //        }
+    //    }
+    //    (event::Status::Ignored, None)
+    //}
 }
 
 impl TimeSeriesRange {

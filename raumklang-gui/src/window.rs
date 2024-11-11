@@ -42,7 +42,7 @@ impl TukeyWindow {
     }
 }
 
-enum Window {
+pub enum Window {
     Hann,
     Tukey(f32),
 }
@@ -64,7 +64,7 @@ impl std::fmt::Display for Window {
     }
 }
 
-struct WindowBuilder {
+pub struct WindowBuilder {
     left_side: Window,
     left_side_width: usize,
     right_side: Window,

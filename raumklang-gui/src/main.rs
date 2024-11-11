@@ -1,5 +1,6 @@
 mod tabs;
 mod widgets;
+mod window;
 
 use std::path::Path;
 

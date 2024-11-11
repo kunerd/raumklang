@@ -274,7 +274,7 @@ impl LoudnessMeter {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ImpulseResponse {
     pub loopback_fft: Vec<Complex<f32>>,
     pub response_fft: Vec<Complex<f32>>,
