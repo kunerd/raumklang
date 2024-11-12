@@ -1,7 +1,8 @@
 use std::io::ErrorKind;
 
 use iced::{
-    widget::{container, text}, Length, Task,
+    widget::{container, text},
+    Length, Task,
 };
 use iced_aw::TabLabel;
 use thiserror::Error;
@@ -92,4 +93,3 @@ impl Tab for Signals {
         content.into()
     }
 }
-

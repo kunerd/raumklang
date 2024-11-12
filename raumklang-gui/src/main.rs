@@ -10,8 +10,8 @@ use std::{
 
 use iced::{
     border::Radius,
-    widget::{button, column, container, row, scrollable, text},
-    Border, Element, Font, Length, Task,
+    widget::{button, column, container, horizontal_rule, horizontal_space, row, scrollable, text},
+    Alignment, Border, Element, Font, Length, Task,
 };
 use iced_aw::{
     menu::{self, primary, Item},
@@ -233,8 +233,7 @@ impl State {
 
         let side_menu: Element<_> = {
             let loopback_entry = {
-                let header = text("Loopback");
-                let btn: Element<_> = match &self.signals.loopback {
+                let content: Element<_> = match &self.signals.loopback {
                     Some(SignalState::Loaded(signal)) => {
                         let btn = button(signal_list_entry(signal));
 
@@ -244,24 +243,25 @@ impl State {
                             )),
                             TabId::ImpulseResponse => btn,
                         };
-                        btn.into()
+                        btn.style(button::secondary).width(Length::Fill).into()
                     }
                     Some(SignalState::NotLoaded(signal)) => offline_signal_list_entry(signal),
-                    None => button(text("load ...".to_string()))
-                        .on_press(Message::LoadLoopbackSignal)
-                        .into(),
+                    None => text("Please load a loopback signal.").into(),
                 };
 
-                column!(header, btn).width(Length::Fill).spacing(5)
+                let add_msg = self
+                    .signals
+                    .loopback
+                    .as_ref()
+                    .map_or(Some(Message::LoadLoopbackSignal), |_| None);
+
+                signal_list_category("Loopback", add_msg, content)
             };
 
             let measurement_entry = {
-                let header = text("Measurements");
                 let content: Element<_> = {
                     if self.signals.measurements.is_empty() {
-                        button(text("load ...".to_string()))
-                            .on_press(Message::LoadMeasurementSignal)
-                            .into()
+                        text("Please load a measurement.").into()
                     } else {
                         let entries: Vec<Element<_>> = self
                             .signals
@@ -281,19 +281,21 @@ impl State {
                                         )),
                                     };
 
-                                    btn.into()
+                                    btn.width(Length::Fill).style(button::secondary).into()
                                 }
                                 SignalState::NotLoaded(signal) => offline_signal_list_entry(signal),
                             })
                             .collect();
 
-                        column(entries)
-                            .push(button("add").on_press(Message::LoadMeasurementSignal))
-                            .into()
+                        column(entries).padding(5).spacing(5).into()
                     }
                 };
 
-                column!(header, content).width(Length::Fill).spacing(5)
+                signal_list_category(
+                    "Measurements",
+                    Some(Message::LoadMeasurementSignal),
+                    content,
+                )
             };
 
             container(column!(loopback_entry, measurement_entry).spacing(10))
@@ -326,6 +328,26 @@ impl State {
 
         back.into()
     }
+}
+
+fn signal_list_category<'a>(
+    name: &'a str,
+    add_msg: Option<Message>,
+    content: Element<'a, Message>,
+) -> Element<'a, Message> {
+    let header = row!(text(name), horizontal_space()).align_y(Alignment::Center);
+
+    let header = if let Some(msg) = add_msg {
+        header.push(button("+").on_press(msg))
+    } else {
+        header
+    };
+
+    column!(header, horizontal_rule(1), content)
+        .width(Length::Fill)
+        .spacing(5)
+        .padding(10)
+        .into()
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
