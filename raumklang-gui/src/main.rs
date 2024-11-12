@@ -9,6 +9,7 @@ use std::{
 };
 
 use iced::{
+    alignment::Vertical,
     border::Radius,
     widget::{button, column, container, horizontal_rule, horizontal_space, row, scrollable, text},
     Alignment, Border, Element, Font, Length, Task,
@@ -40,6 +41,7 @@ enum Message {
     Save,
     SignalsLoaded(Result<(Signals, PathBuf), PickAndLoadError>),
     SignalsSaved(Result<PathBuf, PickAndSaveError>),
+    Debug,
 }
 
 #[derive(Default)]
@@ -212,22 +214,28 @@ impl State {
                     Task::none()
                 }
             },
+            Message::Debug => Task::none(),
         }
     }
 
     fn view(&self) -> Element<'_, Message> {
         let project_menu = Item::with_menu(
-            button("Projekt").width(Length::Shrink),
+            button(text("Projekt").align_y(Vertical::Center))
+                .width(Length::Shrink)
+                .style(button::primary)
+                .on_press(Message::Debug),
             Menu::new(
                 [
                     Item::new(
                         button("laden...")
                             .width(Length::Fill)
+                            .style(button::secondary)
                             .on_press(Message::Load),
                     ),
                     Item::new(
                         button("speichern...")
                             .width(Length::Fill)
+                            .style(button::secondary)
                             .on_press(Message::Save),
                     ),
                 ]
@@ -240,7 +248,7 @@ impl State {
             .draw_path(menu::DrawPath::Backdrop)
             .style(|theme: &iced::Theme, status: Status| menu::Style {
                 path_border: Border {
-                    radius: Radius::new(6.0),
+                    radius: Radius::new(3.0),
                     ..Default::default()
                 },
                 ..primary(theme, status)
