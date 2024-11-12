@@ -140,8 +140,6 @@ impl State {
             }
             Message::SignalsLoaded(res) => match &res {
                 Ok((signals, _)) => {
-                    self.signals = signals.clone();
-
                     let mut tasks = vec![];
                     if let Some(SignalState::NotLoaded(signal)) = &signals.loopback {
                         let path = signal.path.clone();
