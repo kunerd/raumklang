@@ -84,7 +84,7 @@ struct Signals {
 enum Message {
     TabSelected(TabId),
     SignalsTab(tabs::signals::SignalsMessage),
-    ImpulseResponse(tabs::impulse_resposne::Message),
+    ImpulseResponse(tabs::impulse_response::Message),
     Load,
     Save,
     SignalsLoaded(Result<(Signals, PathBuf), PickAndLoadError>),

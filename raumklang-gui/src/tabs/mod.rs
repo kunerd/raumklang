@@ -1,11 +1,11 @@
 pub mod signals;
-pub mod impulse_resposne;
+pub mod impulse_response;
 
 use iced::{widget::Container, Element, Length};
 use iced_aw::TabLabel;
 
 pub use signals::Signals;
-pub use impulse_resposne::ImpulseResponse;
+pub use impulse_response::ImpulseResponse;
 
 pub trait Tab {
     type Message;
