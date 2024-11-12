@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::{
     widgets::chart::{self, TimeSeriesUnit, TimeseriesChart},
-    Signal,
+    OfflineSignal, Signal, SignalState,
 };
 
 use super::Tab;
@@ -46,7 +46,11 @@ pub enum WavLoadError {
 }
 
 impl Signals {
-    pub fn update(&mut self, msg: SignalsMessage, signals: &mut crate::Signals) -> Task<SignalsMessage> {
+    pub fn update(
+        &mut self,
+        msg: SignalsMessage,
+        signals: &mut crate::Signals,
+    ) -> Task<SignalsMessage> {
         match msg {
             SignalsMessage::LoadLoopbackSignal => Task::perform(
                 pick_file_and_load_signal("loopback"),
@@ -54,7 +58,7 @@ impl Signals {
             ),
             SignalsMessage::LoopbackSignalLoaded(result) => match result {
                 Ok(signal) => {
-                    signals.loopback = Arc::into_inner(signal);
+                    signals.loopback = Arc::into_inner(signal).map(SignalState::Loaded);
                     Task::none()
                 }
                 Err(err) => {
@@ -71,7 +75,8 @@ impl Signals {
             ),
             SignalsMessage::MeasurementSignalLoaded(result) => match result {
                 Ok(signal) => {
-                    signals.measurements.push(Arc::into_inner(signal).unwrap());
+                    let signal = Arc::into_inner(signal).map(SignalState::Loaded).unwrap();
+                    signals.measurements.push(signal);
                     Task::none()
                 }
                 Err(err) => {
@@ -80,13 +85,13 @@ impl Signals {
                 }
             },
             SignalsMessage::LoopbackSignalSelected => {
-                if let Some(signal) = &signals.loopback {
+                if let Some(SignalState::Loaded(signal)) = &signals.loopback {
                     self.chart = Some(TimeseriesChart::new(signal.clone(), TimeSeriesUnit::Time));
                 }
                 Task::none()
             }
             SignalsMessage::MeasurementSignalSelected => {
-                if let Some(signal) = signals.measurements.first() {
+                if let Some(SignalState::Loaded(signal)) = signals.measurements.first() {
                     self.chart = Some(TimeseriesChart::new(signal.clone(), TimeSeriesUnit::Time));
                 }
                 Task::none()
@@ -116,28 +121,47 @@ impl Tab for Signals {
         let side_menu: Element<'_, SignalsMessage> = {
             let loopback_entry = {
                 let header = text("Loopback");
-                let btn = if let Some(signal) = &signals.loopback {
-                    button(signal_list_entry(signal)).on_press(SignalsMessage::LoopbackSignalSelected)
-                } else {
-                    button(text("load ...".to_string()))
+                let btn: Element<'_, SignalsMessage> = match &signals.loopback {
+                    Some(SignalState::Loaded(signal)) => button(signal_list_entry(signal))
+                        .on_press(SignalsMessage::LoopbackSignalSelected)
+                        .into(),
+                    Some(SignalState::NotLoaded(signal)) => {
+                        offline_signal_list_entry(signal).into()
+                    }
+                    None => button(text("load ...".to_string()))
                         .on_press(SignalsMessage::LoadLoopbackSignal)
-                }
-                .style(button::secondary);
+                        .into(),
+                };
 
                 column!(header, btn).width(Length::Fill).spacing(5)
             };
 
             let measurement_entry = {
                 let header = text("Measurements");
-                let btn = if let Some(signal) =signals.measurements.first() {
-                    button(signal_list_entry(signal)).on_press(SignalsMessage::MeasurementSignalSelected)
-                } else {
-                    button(text("load ...".to_string()))
-                        .on_press(SignalsMessage::LoadMeasurementSignal)
-                }
-                .style(button::secondary);
+                let content: Element<_> = {
+                    if signals.measurements.is_empty() {
+                        button(text("load ...".to_string()))
+                            .on_press(SignalsMessage::LoadMeasurementSignal)
+                            .into()
+                    } else {
+                        let entries: Vec<Element<_>> = signals
+                            .measurements
+                            .iter()
+                            .map(|state| match state {
+                                SignalState::Loaded(signal) => button(signal_list_entry(signal))
+                                    .on_press(SignalsMessage::MeasurementSignalSelected)
+                                    .into(),
+                                SignalState::NotLoaded(signal) => offline_signal_list_entry(signal),
+                            })
+                            .collect();
 
-                column!(header, btn).width(Length::Fill).spacing(5)
+                        column(entries)
+                            .push(button("add").on_press(SignalsMessage::LoadMeasurementSignal))
+                            .into()
+                    }
+                };
+
+                column!(header, content).width(Length::Fill).spacing(5)
             };
 
             container(column!(loopback_entry, measurement_entry).spacing(10))
@@ -171,6 +195,12 @@ fn signal_list_entry(signal: &Signal) -> Element<'_, SignalsMessage> {
     .into()
 }
 
+fn offline_signal_list_entry(signal: &OfflineSignal) -> Element<'_, SignalsMessage> {
+    column!(text(&signal.name), button("Reload"))
+        .padding(2)
+        .into()
+}
+
 async fn pick_file_and_load_signal(file_type: impl AsRef<str>) -> Result<Arc<Signal>, Error> {
     let handle = pick_file(file_type).await?;
     load_signal_from_file(handle.path())
@@ -189,7 +219,7 @@ async fn pick_file(file_type: impl AsRef<str>) -> Result<FileHandle, Error> {
         .ok_or(Error::DialogClosed)
 }
 
-async fn load_signal_from_file<P>(path: P) -> Result<Signal, WavLoadError>
+pub async fn load_signal_from_file<P>(path: P) -> Result<Signal, WavLoadError>
 where
     P: AsRef<Path> + Send + Sync,
 {

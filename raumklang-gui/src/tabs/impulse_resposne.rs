@@ -12,7 +12,7 @@ use rustfft::{num_complex::Complex32, FftPlanner};
 use crate::{
     widgets::chart::{self, FrequencyResponseChart, TimeSeriesUnit, TimeseriesChart},
     window::{Window, WindowBuilder},
-    Signal, Signals,
+    OfflineSignal, Signal, SignalState, Signals,
 };
 
 use super::Tab;
@@ -27,8 +27,7 @@ pub struct ImpulseResponse {
 }
 
 #[derive(Debug)]
-struct FrequencyResponse {
-    impulse_response: raumklang_core::ImpulseResponse,
+pub struct FrequencyResponse {
     data: Vec<Complex32>,
 }
 
@@ -48,18 +47,20 @@ impl FrequencyResponse {
         fft.process(&mut windowed_impulse_response);
 
         let data_len = windowed_impulse_response.len() / 2;
-        let data = windowed_impulse_response.into_iter().take(data_len).collect();
+        let data = windowed_impulse_response
+            .into_iter()
+            .take(data_len)
+            .collect();
 
         Self {
-            impulse_response,
-            data
+            data,
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    MeasurementSignalSelected,
+    MeasurementSignalSelected(usize),
     ImpulseResponseComputed(Arc<raumklang_core::ImpulseResponse>),
     TimeSeriesChart(chart::Message),
     TabSelected(TabId),
@@ -70,9 +71,9 @@ pub enum Message {
 impl ImpulseResponse {
     pub fn update(&mut self, msg: Message, signals: &Signals) -> Task<Message> {
         match msg {
-            Message::MeasurementSignalSelected => {
-                if let (Some(loopback), Some(response)) =
-                    (&signals.loopback, &signals.measurements.first())
+            Message::MeasurementSignalSelected(id) => {
+                if let (Some(SignalState::Loaded(loopback)), Some(SignalState::Loaded(response))) =
+                    (&signals.loopback, &signals.measurements.get(id))
                 {
                     Task::perform(
                         compute_impulse_response(loopback.data.clone(), response.data.clone()),
@@ -157,10 +158,10 @@ impl Tab for ImpulseResponse {
         let side_menu: Element<'_, Message> = {
             let loopback_entry = {
                 let header = text("Loopback");
-                let entry: Element<_> = if let Some(signal) = &signals.loopback {
-                    signal_list_entry(signal)
-                } else {
-                    text("Please load a loopback signal, first!".to_string()).into()
+                let entry: Element<_> = match &signals.loopback {
+                    Some(SignalState::Loaded(signal)) => signal_list_entry(signal),
+                    Some(SignalState::NotLoaded(signal)) => offline_signal_list_entry(signal),
+                    None => text("Please load a loopback signal, first!".to_string()).into(),
                 };
 
                 column!(header, entry).width(Length::Fill).spacing(5)
@@ -168,17 +169,22 @@ impl Tab for ImpulseResponse {
 
             let measurement_entry = {
                 let header = text("Measurements");
-                let entry: Element<'_, Message> =
-                    if let Some(signal) = &signals.measurements.first() {
-                        button(signal_list_entry(signal))
-                            .on_press(Message::MeasurementSignalSelected)
+                let entries: Vec<Element<_>> = signals
+                    .measurements
+                    .iter()
+                    .enumerate()
+                    .map(|(i, state)| match state {
+                        SignalState::Loaded(signal) => button(signal_list_entry(signal))
+                            .on_press(Message::MeasurementSignalSelected(i))
                             .style(button::secondary)
-                            .into()
-                    } else {
-                        text("Please load a measurent signal, first!".to_string()).into()
-                    };
+                            .into(),
+                        SignalState::NotLoaded(signal) => offline_signal_list_entry(signal),
+                    })
+                    .collect();
 
-                column!(header, entry).width(Length::Fill).spacing(5)
+                column!(header, column(entries))
+                    .width(Length::Fill)
+                    .spacing(5)
             };
 
             container(column!(loopback_entry, measurement_entry).spacing(10))
@@ -241,6 +247,12 @@ fn signal_list_entry(signal: &Signal) -> Element<'_, Message> {
     )
     .padding(2)
     .into()
+}
+
+fn offline_signal_list_entry(signal: &OfflineSignal) -> Element<'_, Message> {
+    column!(text(&signal.name), button("Reload"))
+        .padding(2)
+        .into()
 }
 
 async fn compute_impulse_response(
