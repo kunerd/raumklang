@@ -17,6 +17,16 @@ use crate::{
 
 use super::Tab;
 
+#[derive(Debug, Clone)]
+pub enum Message {
+    MeasurementSignalSelected(usize),
+    ImpulseResponseComputed(Arc<raumklang_core::ImpulseResponse>),
+    TimeSeriesChart(chart::Message),
+    TabSelected(TabId),
+    FrequencyResponseComputed(Arc<FrequencyResponse>),
+    FrequencyResponseChart(()),
+}
+
 #[derive(Default)]
 pub struct ImpulseResponse {
     active_tab: TabId,
@@ -24,6 +34,13 @@ pub struct ImpulseResponse {
     impulse_response: Option<raumklang_core::ImpulseResponse>,
     frequency_response: Option<Arc<FrequencyResponse>>,
     frequency_response_chart: Option<FrequencyResponseChart>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum TabId {
+    #[default]
+    ImpulseResponse,
+    FrequencyResponse,
 }
 
 #[derive(Debug)]
@@ -56,16 +73,6 @@ impl FrequencyResponse {
             data,
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum Message {
-    MeasurementSignalSelected(usize),
-    ImpulseResponseComputed(Arc<raumklang_core::ImpulseResponse>),
-    TimeSeriesChart(chart::Message),
-    TabSelected(TabId),
-    FrequencyResponseComputed(Arc<FrequencyResponse>),
-    FrequencyResponseChart(()),
 }
 
 impl ImpulseResponse {
@@ -136,13 +143,6 @@ impl ImpulseResponse {
     }
 }
 
-async fn compute_frequency_response(
-    impulse_response: raumklang_core::ImpulseResponse,
-) -> Arc<FrequencyResponse> {
-    let window = WindowBuilder::new(Window::Tukey(0.25), Window::Tukey(0.25), 4000).build();
-    Arc::new(FrequencyResponse::new(impulse_response, &window))
-}
-
 impl Tab for ImpulseResponse {
     type Message = Message;
 
@@ -191,11 +191,11 @@ impl Tab for ImpulseResponse {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum TabId {
-    #[default]
-    ImpulseResponse,
-    FrequencyResponse,
+async fn compute_frequency_response(
+    impulse_response: raumklang_core::ImpulseResponse,
+) -> Arc<FrequencyResponse> {
+    let window = WindowBuilder::new(Window::Tukey(0.25), Window::Tukey(0.25), 4000).build();
+    Arc::new(FrequencyResponse::new(impulse_response, &window))
 }
 
 async fn compute_impulse_response(

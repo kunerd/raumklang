@@ -27,61 +27,6 @@ use tabs::{
     Tab,
 };
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-enum TabId {
-    #[default]
-    Signals,
-    ImpulseResponse,
-}
-
-#[derive(Default)]
-struct State {
-    signals: Signals,
-    active_tab: TabId,
-    signals_tab: tabs::Signals,
-    impulse_response_tab: tabs::ImpulseResponse,
-}
-
-#[derive(Debug, Clone)]
-enum SignalState {
-    NotLoaded(OfflineSignal),
-    Loaded(Signal),
-}
-
-impl serde::Serialize for SignalState {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let offline_signal = match self {
-            SignalState::NotLoaded(signal) => signal,
-            SignalState::Loaded(signal) => &OfflineSignal {
-                name: signal.name.clone(),
-                path: signal.path.clone(),
-            },
-        };
-
-        offline_signal.serialize(serializer)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for SignalState {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let offline_signal = Deserialize::deserialize(deserializer)?;
-
-        Ok(SignalState::NotLoaded(offline_signal))
-    }
-}
-
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-struct Signals {
-    loopback: Option<SignalState>,
-    measurements: Vec<SignalState>,
-}
-
 #[derive(Debug, Clone)]
 enum Message {
     TabSelected(TabId),
@@ -95,6 +40,78 @@ enum Message {
     Save,
     SignalsLoaded(Result<(Signals, PathBuf), PickAndLoadError>),
     SignalsSaved(Result<PathBuf, PickAndSaveError>),
+}
+
+#[derive(Default)]
+struct State {
+    signals: Signals,
+    active_tab: TabId,
+    signals_tab: tabs::Signals,
+    impulse_response_tab: tabs::ImpulseResponse,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+enum TabId {
+    #[default]
+    Signals,
+    ImpulseResponse,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct Signals {
+    loopback: Option<SignalState>,
+    measurements: Vec<SignalState>,
+}
+
+#[derive(Debug, Clone)]
+enum SignalState {
+    NotLoaded(OfflineSignal),
+    Loaded(Signal),
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct OfflineSignal {
+    name: String,
+    path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+struct Signal {
+    name: String,
+    path: PathBuf,
+    sample_rate: u32,
+    data: Vec<f32>,
+}
+
+#[derive(thiserror::Error, Debug, Clone)]
+pub enum FileError {
+    #[error("Fehler beim laden der Datei: {0}")]
+    Io(io::ErrorKind),
+    #[error("Dateiinhalt fehlerhaft: {0}")]
+    Json(String),
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum PickAndLoadError {
+    #[error("Dateiauswahl wurde geschlossen")]
+    DialogClosed,
+    #[error(transparent)]
+    File(#[from] FileError),
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum PickAndSaveError {
+    #[error("Dateiauswahl wurde geschlossen")]
+    DialogClosed,
+    #[error(transparent)]
+    File(#[from] FileError),
+}
+
+fn main() -> iced::Result {
+    iced::application(State::title, State::update, State::view)
+        .default_font(Font::with_name("Noto Sans"))
+        .antialiasing(true)
+        .run()
 }
 
 impl State {
@@ -350,34 +367,6 @@ fn signal_list_category<'a>(
         .into()
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct OfflineSignal {
-    name: String,
-    path: PathBuf,
-}
-
-#[derive(Debug, Clone)]
-struct Signal {
-    name: String,
-    path: PathBuf,
-    sample_rate: u32,
-    data: Vec<f32>,
-}
-
-impl serde::Serialize for Signal {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let unloaded_signal = OfflineSignal {
-            name: self.name.clone(),
-            path: self.path.clone(),
-        };
-
-        unloaded_signal.serialize(serializer)
-    }
-}
-
 impl Signal {
     pub fn new(name: String, sample_rate: u32, data: Vec<f32>) -> Self {
         Self {
@@ -413,43 +402,53 @@ impl Signal {
     }
 }
 
+impl serde::Serialize for SignalState {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let offline_signal = match self {
+            SignalState::NotLoaded(signal) => signal,
+            SignalState::Loaded(signal) => &OfflineSignal {
+                name: signal.name.clone(),
+                path: signal.path.clone(),
+            },
+        };
+
+        offline_signal.serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SignalState {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let offline_signal = Deserialize::deserialize(deserializer)?;
+
+        Ok(SignalState::NotLoaded(offline_signal))
+    }
+}
+
+impl serde::Serialize for Signal {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let unloaded_signal = OfflineSignal {
+            name: self.name.clone(),
+            path: self.path.clone(),
+        };
+
+        unloaded_signal.serialize(serializer)
+    }
+}
+
 fn map_hound_error(err: hound::Error) -> WavLoadError {
     match err {
         hound::Error::IoError(err) => WavLoadError::IoError(err.kind()),
         _ => WavLoadError::Other,
     }
-}
-
-fn main() -> iced::Result {
-    iced::application(State::title, State::update, State::view)
-        //.subscription(State::subscription)
-        .default_font(Font::with_name("Noto Sans"))
-        .antialiasing(true)
-        .run()
-}
-
-#[derive(thiserror::Error, Debug, Clone)]
-pub enum FileError {
-    #[error("Fehler beim laden der Datei: {0}")]
-    Io(io::ErrorKind),
-    #[error("Dateiinhalt fehlerhaft: {0}")]
-    Json(String),
-}
-
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum PickAndLoadError {
-    #[error("Dateiauswahl wurde geschlossen")]
-    DialogClosed,
-    #[error(transparent)]
-    File(#[from] FileError),
-}
-
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum PickAndSaveError {
-    #[error("Dateiauswahl wurde geschlossen")]
-    DialogClosed,
-    #[error(transparent)]
-    File(#[from] FileError),
 }
 
 fn signal_list_entry(signal: &Signal) -> Element<'_, Message> {
@@ -502,8 +501,6 @@ async fn pick_file_and_load() -> Result<(Signals, PathBuf), PickAndLoadError> {
 }
 
 async fn save_to_file(path: PathBuf, content: String) -> Result<(), FileError> {
-    //log::debug!("Save store to file: {path:?}");
-
     tokio::fs::write(path, content)
         .await
         .map_err(|err| FileError::Io(err.kind()))

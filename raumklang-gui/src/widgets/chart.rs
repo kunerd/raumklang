@@ -25,6 +25,15 @@ use plotters_iced::{Chart, ChartBuilder, ChartWidget, Renderer};
 
 use crate::Signal;
 
+#[derive(Debug, Clone)]
+pub enum Message {
+    MouseEvent(mouse::Event, iced::Point),
+    TimeUnitChanged(TimeSeriesUnit),
+    ShiftKeyReleased,
+    ShiftKeyPressed,
+    NoiseFloorUpdated((f32, usize)),
+}
+
 pub struct TimeseriesChart {
     signal: Signal,
     noise_floor: Option<f32>,
@@ -38,15 +47,6 @@ pub struct TimeseriesChart {
 
 pub struct FrequencyResponseChart {
     data: Vec<f32>,
-}
-
-#[derive(Debug, Clone)]
-pub enum Message {
-    MouseEvent(mouse::Event, iced::Point),
-    TimeUnitChanged(TimeSeriesUnit),
-    ShiftKeyReleased,
-    ShiftKeyPressed,
-    NoiseFloorUpdated((f32, usize)),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -397,25 +397,8 @@ impl FrequencyResponseChart {
 impl Chart<()> for FrequencyResponseChart {
     type State = ();
 
-    //#[inline]
-    //fn draw<R: Renderer, F: Fn(&mut Frame)>(
-    //    &self,
-    //    renderer: &R,
-    //    bounds: Size,
-    //    draw_fn: F,
-    //) -> Geometry {
-    //    renderer.draw_cache(&self.cache, bounds, draw_fn)
-    //}
-
     fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut builder: ChartBuilder<DB>) {
         use plotters::prelude::*;
-
-        //let x_range = match self.time_unit {
-        //    TimeSeriesUnit::Samples => TimeSeriesRange::Samples(self.viewport.clone().into()),
-        //    TimeSeriesUnit::Time => {
-        //        TimeSeriesRange::Time(self.signal.sample_rate, self.viewport.clone().into())
-        //    }
-        //};
 
         let min = self.data.iter().fold(f32::INFINITY, |a, b| a.min(*b));
 
@@ -445,49 +428,6 @@ impl Chart<()> for FrequencyResponseChart {
             .draw()
             .unwrap();
     }
-
-    //fn update(
-    //    &self,
-    //    _state: &mut Self::State,
-    //    event: canvas::Event,
-    //    bounds: iced::Rectangle,
-    //    cursor: mouse::Cursor,
-    //) -> (event::Status, Option<Message>) {
-    //    if let mouse::Cursor::Available(point) = cursor {
-    //        match event {
-    //            canvas::Event::Mouse(evt) if bounds.contains(point) => {
-    //                let p_origin = bounds.position();
-    //                let p = point - p_origin;
-    //                return (
-    //                    event::Status::Captured,
-    //                    Some(Message::MouseEvent(evt, iced::Point::new(p.x, p.y))),
-    //                );
-    //            }
-    //            canvas::Event::Mouse(_) => {}
-    //            canvas::Event::Touch(_) => {}
-    //            canvas::Event::Keyboard(event) => match event {
-    //                iced::keyboard::Event::KeyPressed { key, .. } => match key {
-    //                    iced::keyboard::Key::Named(keyboard::key::Named::Shift) => {
-    //                        return (event::Status::Captured, Some(Message::ShiftKeyPressed))
-    //                    }
-    //                    iced::keyboard::Key::Named(_) => {}
-    //                    iced::keyboard::Key::Character(_) => {}
-    //                    iced::keyboard::Key::Unidentified => {}
-    //                },
-    //                iced::keyboard::Event::KeyReleased { key, .. } => match key {
-    //                    iced::keyboard::Key::Named(keyboard::key::Named::Shift) => {
-    //                        return (event::Status::Captured, Some(Message::ShiftKeyReleased))
-    //                    }
-    //                    iced::keyboard::Key::Named(_) => {}
-    //                    iced::keyboard::Key::Character(_) => {}
-    //                    iced::keyboard::Key::Unidentified => {}
-    //                },
-    //                iced::keyboard::Event::ModifiersChanged(_) => {}
-    //            },
-    //        }
-    //    }
-    //    (event::Status::Ignored, None)
-    //}
 }
 
 impl TimeSeriesRange {
