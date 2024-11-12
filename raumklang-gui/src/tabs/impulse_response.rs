@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use iced::{
     futures::FutureExt,
-    widget::{button, column, container, row, text},
+    widget::{container, text},
     Element, Length, Task,
 };
 use iced_aw::{TabLabel, Tabs};
@@ -12,7 +12,7 @@ use rustfft::{num_complex::Complex32, FftPlanner};
 use crate::{
     widgets::chart::{self, FrequencyResponseChart, TimeSeriesUnit, TimeseriesChart},
     window::{Window, WindowBuilder},
-    OfflineSignal, Signal, SignalState, Signals,
+    Signal, SignalState, Signals,
 };
 
 use super::Tab;
@@ -154,45 +154,7 @@ impl Tab for ImpulseResponse {
         TabLabel::Text(self.title())
     }
 
-    fn content<'a>(&'a self, signals: &'a crate::Signals) -> iced::Element<'a, Self::Message> {
-        let side_menu: Element<'_, Message> = {
-            let loopback_entry = {
-                let header = text("Loopback");
-                let entry: Element<_> = match &signals.loopback {
-                    Some(SignalState::Loaded(signal)) => signal_list_entry(signal),
-                    Some(SignalState::NotLoaded(signal)) => offline_signal_list_entry(signal),
-                    None => text("Please load a loopback signal, first!".to_string()).into(),
-                };
-
-                column!(header, entry).width(Length::Fill).spacing(5)
-            };
-
-            let measurement_entry = {
-                let header = text("Measurements");
-                let entries: Vec<Element<_>> = signals
-                    .measurements
-                    .iter()
-                    .enumerate()
-                    .map(|(i, state)| match state {
-                        SignalState::Loaded(signal) => button(signal_list_entry(signal))
-                            .on_press(Message::MeasurementSignalSelected(i))
-                            .style(button::secondary)
-                            .into(),
-                        SignalState::NotLoaded(signal) => offline_signal_list_entry(signal),
-                    })
-                    .collect();
-
-                column!(header, column(entries))
-                    .width(Length::Fill)
-                    .spacing(5)
-            };
-
-            container(column!(loopback_entry, measurement_entry).spacing(10))
-                .padding(5)
-                .width(Length::FillPortion(1))
-                .into()
-        };
-
+    fn content(&self) -> iced::Element<'_, Self::Message> {
         let content = {
             let impulse_response = {
                 if let Some(chart) = &self.chart {
@@ -225,7 +187,7 @@ impl Tab for ImpulseResponse {
                 .tab_bar_position(iced_aw::TabBarPosition::Top)
         };
 
-        row!(side_menu, content).into()
+        content.into()
     }
 }
 
@@ -234,25 +196,6 @@ pub enum TabId {
     #[default]
     ImpulseResponse,
     FrequencyResponse,
-}
-
-// FIXME duplicated code
-fn signal_list_entry(signal: &Signal) -> Element<'_, Message> {
-    let samples = signal.data.len();
-    let sample_rate = signal.sample_rate as f32;
-    column!(
-        text(&signal.name),
-        text(format!("Samples: {}", samples)),
-        text(format!("Duration: {} s", samples as f32 / sample_rate)),
-    )
-    .padding(2)
-    .into()
-}
-
-fn offline_signal_list_entry(signal: &OfflineSignal) -> Element<'_, Message> {
-    column!(text(&signal.name), button("Reload"))
-        .padding(2)
-        .into()
 }
 
 async fn compute_impulse_response(

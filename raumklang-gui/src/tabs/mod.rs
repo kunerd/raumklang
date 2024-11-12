@@ -14,12 +14,12 @@ pub trait Tab {
 
     fn label(&self) -> TabLabel;
 
-    fn view<'a>(&'a self, signals: &'a crate::Signals) -> Element<'a, Self::Message> {
-        Container::new(self.content(signals))
+    fn view(&self) -> Element<'_, Self::Message> {
+        Container::new(self.content())
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
     }
 
-    fn content<'a>(&'a self, signals: &'a crate::Signals) -> Element<'a, Self::Message>;
+    fn content(&self) -> Element<'_, Self::Message>;
 }
