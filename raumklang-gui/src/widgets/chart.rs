@@ -1,4 +1,4 @@
-use std::{cell::RefCell, ops::Range};
+use std::{cell::RefCell, fmt::Display, ops::Range};
 
 use iced::{
     alignment::{Horizontal, Vertical},
@@ -14,7 +14,7 @@ use plotters::{
     coord::{
         cartesian::Cartesian2d,
         ranged1d::{NoDefaultFormatting, ReversibleRanged, ValueFormatter},
-        types::{RangedCoordf32, RangedCoordi64},
+        types::{RangedCoordf32, RangedCoordi64, RangedCoordusize},
         ReverseCoordTranslate,
     },
     prelude::Ranged,
@@ -22,8 +22,10 @@ use plotters::{
 };
 use plotters_backend::DrawingBackend;
 use plotters_iced::{Chart, ChartBuilder, ChartWidget, Renderer};
+use raumklang_core::dbfs;
+use rustfft::num_complex::Complex;
 
-use crate::Signal;
+use crate::{tabs::impulse_response::FrequencyResponse, Signal};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -46,7 +48,13 @@ pub struct TimeseriesChart {
 }
 
 pub struct FrequencyResponseChart {
-    data: Vec<f32>,
+    unit: FrequencyResponseUnit,
+    frequency_response: FrequencyResponse,
+}
+
+#[derive(Debug, Clone)]
+pub enum FrequencyResponseChartMessage {
+    UnitChanged(FrequencyResponseUnit),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +67,42 @@ pub enum TimeSeriesUnit {
 pub enum TimeSeriesRange {
     Samples(RangedCoordi64),
     Time(u32, RangedCoordi64),
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum FrequencyResponseUnit {
+    #[default]
+    Frequency,
+    Bins,
+}
+
+enum FrequencyResponseRange {
+    Frequency {
+        sample_rate: u32,
+        fft_size: usize,
+        range: RangedCoordusize,
+    },
+    Bins(RangedCoordusize),
+}
+
+impl FrequencyResponseUnit {
+    const ALL: [Self; 2] = [
+        FrequencyResponseUnit::Bins,
+        FrequencyResponseUnit::Frequency,
+    ];
+}
+
+impl Display for FrequencyResponseUnit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                FrequencyResponseUnit::Frequency => "Hz",
+                FrequencyResponseUnit::Bins => "FFT Bins",
+            }
+        )
+    }
 }
 
 impl TimeSeriesUnit {
@@ -382,40 +426,84 @@ impl Chart<Message> for TimeseriesChart {
 }
 
 impl FrequencyResponseChart {
-    pub fn new(data: Vec<f32>) -> Self {
-        Self { data }
+    pub fn new(frequency_response: FrequencyResponse) -> Self {
+        Self {
+            frequency_response,
+            unit: FrequencyResponseUnit::default(),
+        }
     }
 
-    pub fn view(&self) -> Element<()> {
-        ChartWidget::new(self)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+    pub fn view(&self) -> Element<FrequencyResponseChartMessage> {
+        let header = widget::row!(widget::pick_list(
+            &FrequencyResponseUnit::ALL[..],
+            Some(self.unit.clone()),
+            FrequencyResponseChartMessage::UnitChanged
+        ));
+
+        Container::new(
+            Column::new()
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .spacing(5)
+                .push(header)
+                .push(
+                    ChartWidget::new(self)
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                ),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(Horizontal::Center)
+        .align_y(Vertical::Center)
+        .into()
+    }
+
+    pub fn update(&mut self, msg: FrequencyResponseChartMessage) {
+        match msg {
+            FrequencyResponseChartMessage::UnitChanged(unit) => self.unit = unit,
+        }
     }
 }
 
-impl Chart<()> for FrequencyResponseChart {
+impl Chart<FrequencyResponseChartMessage> for FrequencyResponseChart {
     type State = ();
 
     fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut builder: ChartBuilder<DB>) {
         use plotters::prelude::*;
+        let x_max = 200;
+        let x_range = match self.unit {
+            FrequencyResponseUnit::Frequency => FrequencyResponseRange::Frequency {
+                sample_rate: self.frequency_response.sample_rate,
+                fft_size: self.frequency_response.data.len(),
+                range: (0..x_max).into(),
+            },
+            FrequencyResponseUnit::Bins => {
+                FrequencyResponseRange::Bins((0..x_max).into())
+            }
+        };
 
-        let min = self.data.iter().fold(f32::INFINITY, |a, b| a.min(*b));
-
-        let max = self.data.iter().fold(f32::NEG_INFINITY, |a, b| a.max(*b));
+        //let min = self.data.iter().fold(f32::INFINITY, |a, b| a.min(*b));
+        //let max = self.data.iter().fold(f32::NEG_INFINITY, |a, b| a.max(*b));
+        let min = -70f32;
+        let max = 10f32;
+        let y_range = min..max;
 
         let mut chart = builder
             .margin(5)
             .x_label_area_size(30)
-            .y_label_area_size(30)
-            .build_cartesian_2d(0..self.data.len(), min..max)
+            .y_label_area_size(50)
+            .build_cartesian_2d(x_range, y_range)
             .unwrap();
 
         chart
             .draw_series(LineSeries::new(
-                self.data
+                self.frequency_response
+                    .data
                     .iter()
                     .cloned()
+                    .map(Complex::norm)
+                    .map(dbfs)
                     .enumerate(),
                 &style::RGBColor(2, 125, 66),
             ))
@@ -487,5 +575,61 @@ impl ReversibleRanged for TimeSeriesRange {
         };
 
         range.unmap(input, limit)
+    }
+}
+
+impl FrequencyResponseRange {
+    fn range(&self) -> &RangedCoordusize {
+        match self {
+            FrequencyResponseRange::Bins(range) => range,
+            FrequencyResponseRange::Frequency { range, .. } => range,
+        }
+    }
+}
+
+impl ValueFormatter<usize> for FrequencyResponseRange {
+    fn format_ext(&self, value: &usize) -> String {
+        match self {
+            FrequencyResponseRange::Bins(_) => format!("{}", value),
+            FrequencyResponseRange::Frequency {
+                sample_rate,
+                fft_size,
+                ..
+            } => {
+                format!(
+                    "{}",
+                    *value * *sample_rate as usize / *fft_size
+                )
+            }
+        }
+    }
+}
+
+impl Ranged for FrequencyResponseRange {
+    type FormatOption = NoDefaultFormatting;
+
+    type ValueType = usize;
+
+    fn map(&self, value: &Self::ValueType, limit: (i32, i32)) -> i32 {
+        self.range().map(value, limit)
+    }
+
+    fn key_points<Hint: plotters::coord::ranged1d::KeyPointHint>(
+        &self,
+        hint: Hint,
+    ) -> Vec<Self::ValueType> {
+        self.range().key_points(hint)
+    }
+
+    fn range(&self) -> Range<Self::ValueType> {
+        self.range().range()
+    }
+
+    fn axis_pixel_range(&self, limit: (i32, i32)) -> Range<i32> {
+        if limit.0 < limit.1 {
+            limit.0..limit.1
+        } else {
+            limit.1..limit.0
+        }
     }
 }

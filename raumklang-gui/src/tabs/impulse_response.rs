@@ -10,7 +10,10 @@ use raumklang_core::dbfs;
 use rustfft::{num_complex::Complex32, FftPlanner};
 
 use crate::{
-    widgets::chart::{self, FrequencyResponseChart, TimeSeriesUnit, TimeseriesChart},
+    widgets::chart::{
+        self, FrequencyResponseChart, FrequencyResponseChartMessage, TimeSeriesUnit,
+        TimeseriesChart,
+    },
     window::{Window, WindowBuilder},
     Signal, SignalState, Signals,
 };
@@ -24,7 +27,7 @@ pub enum Message {
     TimeSeriesChart(chart::Message),
     TabSelected(TabId),
     FrequencyResponseComputed(Arc<FrequencyResponse>),
-    FrequencyResponseChart(()),
+    FrequencyResponseChart(FrequencyResponseChartMessage),
 }
 
 #[derive(Default)]
@@ -43,9 +46,10 @@ pub enum TabId {
     FrequencyResponse,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FrequencyResponse {
-    data: Vec<Complex32>,
+    pub sample_rate: u32,
+    pub data: Vec<Complex32>,
 }
 
 impl FrequencyResponse {
@@ -63,15 +67,14 @@ impl FrequencyResponse {
 
         fft.process(&mut windowed_impulse_response);
 
-        let data_len = windowed_impulse_response.len() / 2;
+        let data_len = windowed_impulse_response.len() / 2 - 1;
         let data = windowed_impulse_response
             .into_iter()
             .take(data_len)
             .collect();
 
-        Self {
-            data,
-        }
+        // FIXME fix constant sample rate
+        Self { sample_rate: 44_100, data }
     }
 }
 
@@ -133,12 +136,21 @@ impl ImpulseResponse {
                 }
             }
             Message::FrequencyResponseComputed(fr) => {
-                self.frequency_response = Some(fr.clone());
-                let data = fr.data.iter().map(|s| dbfs(s.norm())).collect();
-                self.frequency_response_chart = Some(FrequencyResponseChart::new(data));
+                //let data = fr.data.iter().map(|s| dbfs(s.norm())).collect();
+                // FIXME stupid use of Arc
+                let fr = Arc::into_inner(fr).unwrap();
+                self.frequency_response = Some(Arc::new(fr.clone()));
+                self.frequency_response_chart =
+                    Some(FrequencyResponseChart::new(fr));
                 Task::none()
             }
-            Message::FrequencyResponseChart(_) => todo!(),
+            Message::FrequencyResponseChart(msg) => {
+                if let Some(chart) = self.frequency_response_chart.as_mut() {
+                    chart.update(msg);
+                }
+
+                Task::none()
+            }
         }
     }
 }
@@ -194,7 +206,11 @@ impl Tab for ImpulseResponse {
 async fn compute_frequency_response(
     impulse_response: raumklang_core::ImpulseResponse,
 ) -> Arc<FrequencyResponse> {
-    let window = WindowBuilder::new(Window::Tukey(0.25), Window::Tukey(0.25), 4000).build();
+    let window = WindowBuilder::new(Window::Tukey(0.25), Window::Tukey(0.25), 4000)
+        .set_left_side_width(125)
+        .set_right_side_width(500)
+        .build();
+
     Arc::new(FrequencyResponse::new(impulse_response, &window))
 }
 

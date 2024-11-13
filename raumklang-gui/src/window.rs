@@ -103,12 +103,16 @@ impl WindowBuilder {
         window
     }
 
-    pub fn set_left_side_width(&mut self, width: usize) {
+    pub fn set_left_side_width(&mut self, width: usize) -> &mut Self {
         self.left_side_width = width;
+
+        self
     }
 
-    pub fn set_right_side_width(&mut self, width: usize) {
+    pub fn set_right_side_width(&mut self, width: usize) -> &mut Self {
         self.right_side_width = width;
+
+        self
     }
 
     pub fn get_left_side_width(&self) -> usize {
