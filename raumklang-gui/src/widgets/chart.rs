@@ -6,10 +6,11 @@ use iced::{
     widget::{
         self,
         canvas::{self, Cache, Frame, Geometry},
-        Column, Container,
+        pick_list, Column, Container,
     },
     Element, Length, Size,
 };
+use interpolation::Lerp;
 use plotters::{
     coord::{
         cartesian::Cartesian2d,
@@ -47,14 +48,26 @@ pub struct TimeseriesChart {
     cache: Cache,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum SmoothingType {
+    ThirdOctave,
+    SixthOctave,
+    TwelfthOctave,
+    TwentyFourth,
+    FourtyEighth
+}
+
 pub struct FrequencyResponseChart {
-    unit: FrequencyResponseUnit,
     frequency_response: FrequencyResponse,
+    data: Vec<f32>,
+    unit: FrequencyResponseUnit,
+    smoothing: Option<SmoothingType>,
 }
 
 #[derive(Debug, Clone)]
 pub enum FrequencyResponseChartMessage {
     UnitChanged(FrequencyResponseUnit),
+    SmoothingChanged(SmoothingType),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,6 +130,44 @@ impl std::fmt::Display for TimeSeriesUnit {
             match self {
                 TimeSeriesUnit::Samples => "Samples",
                 TimeSeriesUnit::Time => "Time",
+            }
+        )
+    }
+}
+
+impl SmoothingType {
+    pub const ALL: [SmoothingType; 5] = [
+        SmoothingType::ThirdOctave,
+        SmoothingType::SixthOctave,
+        SmoothingType::TwelfthOctave,
+        SmoothingType::TwentyFourth,
+        SmoothingType::FourtyEighth,
+    ];
+}
+
+impl From<SmoothingType> for usize {
+    fn from(value: SmoothingType) -> Self {
+        match value {
+            SmoothingType::ThirdOctave => 3,
+            SmoothingType::SixthOctave => 6,
+            SmoothingType::TwelfthOctave => 12,
+            SmoothingType::TwentyFourth => 24,
+            SmoothingType::FourtyEighth => 48,
+        }
+    }
+}
+
+impl Display for SmoothingType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                SmoothingType::ThirdOctave => "1/3 Octave",
+                SmoothingType::SixthOctave => "1/6 Octave",
+                SmoothingType::TwelfthOctave => "1/12 Octave",
+                SmoothingType::TwentyFourth => "1/24 Octave",
+                SmoothingType::FourtyEighth => "1/48 Octave",
             }
         )
     }
@@ -427,18 +478,37 @@ impl Chart<Message> for TimeseriesChart {
 
 impl FrequencyResponseChart {
     pub fn new(frequency_response: FrequencyResponse) -> Self {
+        let data = frequency_response
+            .data
+            .iter()
+            .cloned()
+            .map(Complex::norm)
+            .collect();
+
         Self {
             frequency_response,
             unit: FrequencyResponseUnit::default(),
+            smoothing: None,
+            data,
         }
     }
 
     pub fn view(&self) -> Element<FrequencyResponseChartMessage> {
-        let header = widget::row!(widget::pick_list(
-            &FrequencyResponseUnit::ALL[..],
-            Some(self.unit.clone()),
-            FrequencyResponseChartMessage::UnitChanged
-        ));
+        let header = {
+            let unit_picker = pick_list(
+                &FrequencyResponseUnit::ALL[..],
+                Some(self.unit.clone()),
+                FrequencyResponseChartMessage::UnitChanged,
+            );
+
+            let smoothing_picker = pick_list(
+                &SmoothingType::ALL[..],
+                self.smoothing,
+                FrequencyResponseChartMessage::SmoothingChanged,
+            );
+
+            widget::row!(unit_picker, smoothing_picker)
+        };
 
         Container::new(
             Column::new()
@@ -462,6 +532,54 @@ impl FrequencyResponseChart {
     pub fn update(&mut self, msg: FrequencyResponseChartMessage) {
         match msg {
             FrequencyResponseChartMessage::UnitChanged(unit) => self.unit = unit,
+            FrequencyResponseChartMessage::SmoothingChanged(smoothing) => {
+                self.smoothing = Some(smoothing);
+                let data: Vec<f32> = self
+                    .frequency_response
+                    .data
+                    .iter()
+                    .cloned()
+                    .map(Complex::norm)
+                    .collect();
+
+                let mut new_data = vec![];
+                for i in 0..data.len() {
+                    let center_bin = |i: usize| -> f32 {
+                        2.0_f32
+                            .powf(i as f32 / usize::from(smoothing) as f32)
+                            .round()
+                    };
+
+                    let lower_bin =
+                        f32::sqrt(center_bin(i.saturating_sub(1)) * center_bin(i)).round() as usize;
+                    let mut upper_bin = f32::sqrt(
+                        center_bin(i) * center_bin(usize::min(data.len(), i + 1)),
+                    )
+                    .round() as usize;
+
+                    if lower_bin >= data.len() {
+                        break;
+                    }
+
+                    if upper_bin >= data.len() {
+                        upper_bin = data.len();
+                    }
+
+                    let entry = &data[lower_bin..upper_bin]
+                        .iter()
+                        .fold(0.0, |acc, s| acc + s * s);
+
+                    for _ in lower_bin..upper_bin {
+                        new_data.push(f32::sqrt(*entry));
+                    }
+                }
+
+                self.data = new_data
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| s.lerp(&data[i], &0.5))
+                    .collect();
+            }
         }
     }
 }
@@ -471,16 +589,15 @@ impl Chart<FrequencyResponseChartMessage> for FrequencyResponseChart {
 
     fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut builder: ChartBuilder<DB>) {
         use plotters::prelude::*;
+        let data = &self.data;
         let x_max = 200;
         let x_range = match self.unit {
             FrequencyResponseUnit::Frequency => FrequencyResponseRange::Frequency {
                 sample_rate: self.frequency_response.sample_rate,
-                fft_size: self.frequency_response.data.len(),
+                fft_size: data.len(),
                 range: (0..x_max).into(),
             },
-            FrequencyResponseUnit::Bins => {
-                FrequencyResponseRange::Bins((0..x_max).into())
-            }
+            FrequencyResponseUnit::Bins => FrequencyResponseRange::Bins((0..x_max).into()),
         };
 
         //let min = self.data.iter().fold(f32::INFINITY, |a, b| a.min(*b));
@@ -498,13 +615,7 @@ impl Chart<FrequencyResponseChartMessage> for FrequencyResponseChart {
 
         chart
             .draw_series(LineSeries::new(
-                self.frequency_response
-                    .data
-                    .iter()
-                    .cloned()
-                    .map(Complex::norm)
-                    .map(dbfs)
-                    .enumerate(),
+                self.data.iter().map(|s| dbfs(*s)).enumerate(),
                 &style::RGBColor(2, 125, 66),
             ))
             .unwrap();
@@ -596,10 +707,7 @@ impl ValueFormatter<usize> for FrequencyResponseRange {
                 fft_size,
                 ..
             } => {
-                format!(
-                    "{}",
-                    *value * *sample_rate as usize / *fft_size
-                )
+                format!("{}", *value * *sample_rate as usize / *fft_size)
             }
         }
     }
