@@ -1669,6 +1669,7 @@ dependencies = [
  "hound",
  "iced",
  "iced_aw",
+ "interpolation",
  "plotters",
  "plotters-backend",
  "plotters-iced",
@@ -2044,6 +2045,12 @@ checksum = "e0242819d153cba4b4b05a5a8f2a7e9bbf97b6055b2a002b395c96b5ff3c0222"
 dependencies = [
  "cfg-if",
 ]
+
+[[package]]
+name = "interpolation"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9c13ae9d91148fcb4aab6654c4c2a7d02a15395ea9e23f65170f175f8b269ce"
 
 [[package]]
 name = "is_terminal_polyfill"
