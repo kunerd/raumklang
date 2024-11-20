@@ -134,13 +134,10 @@ impl State {
                 self.active_tab = id;
                 Task::none()
             }
-            Message::SignalsTab(msg) => self
-                .signals_tab
-                .update(msg, &mut self.signals)
-                .map(Message::SignalsTab),
+            Message::SignalsTab(msg) => self.signals_tab.update(msg).map(Message::SignalsTab),
             Message::ImpulseResponse(msg) => self
                 .impulse_response_tab
-                .update(msg, &self.signals)
+                .update(msg)
                 .map(Message::ImpulseResponse),
             Message::LoadProject => Task::perform(pick_file_and_load(), Message::ProjectLoaded),
             Message::SaveProject => {
@@ -223,34 +220,31 @@ impl State {
             },
             Message::Debug => Task::none(),
             Message::SignalSelected(selected) => {
-                let task =
-                    match selected {
-                        SelectedSignal::Loopback => self
-                            .signals_tab
-                            .update(
-                                tabs::signals::SignalsMessage::LoopbackSignalSelected,
-                                &mut self.signals,
-                            )
-                            .map(Message::SignalsTab),
-                        SelectedSignal::Measurement(id) => {
-                            let tasks =
-                                vec![
-                            self.signals_tab.update(
-                                tabs::signals::SignalsMessage::MeasurementSignalSelected(id),
-                                &mut self.signals,
-                            ).map(Message::SignalsTab),
-                            self.impulse_response_tab.update(
-                                tabs::impulse_response::Message::MeasurementSignalSelected(id),
-                                &self.signals,
-                            ).map(Message::ImpulseResponse),
-                        ];
-
-                            Task::batch(tasks)
+                let task = match selected {
+                    SelectedSignal::Loopback => {
+                        if let Some(SignalState::Loaded(signal)) = &self.signals.loopback {
+                            self.signals_tab.selected_signal_changed(signal.clone());
+                            self.impulse_response_tab
+                                .loopback_signal_changed(signal.clone())
+                        } else {
+                            Task::none()
                         }
-                    };
+                    }
+                    SelectedSignal::Measurement(index) => {
+                        if let Some(SignalState::Loaded(signal)) =
+                            self.signals.measurements.get(index)
+                        {
+                            self.signals_tab.selected_signal_changed(signal.clone());
+                            self.impulse_response_tab
+                                .measurement_signal_changed(signal.clone())
+                        } else {
+                            Task::none()
+                        }
+                    }
+                };
 
                 self.selected_signal = Some(selected);
-                task
+                task.map(Message::ImpulseResponse)
             }
         }
     }

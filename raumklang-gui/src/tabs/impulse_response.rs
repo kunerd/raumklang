@@ -18,14 +18,13 @@ use crate::{
         TimeseriesChart,
     },
     window::{Window, WindowBuilder},
-    Signal, SignalState, Signals,
+    Signal,
 };
 
 use super::Tab;
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    MeasurementSignalSelected(usize),
     ImpulseResponseComputed(Arc<raumklang_core::ImpulseResponse>),
     TimeSeriesChart(chart::Message),
     TabSelected(TabId),
@@ -37,6 +36,8 @@ pub enum Message {
 pub struct ImpulseResponse {
     active_tab: TabId,
     chart: Option<TimeseriesChart>,
+    loopback_signal: Option<Signal>,
+    measurement_signal: Option<Signal>,
     impulse_response: Option<raumklang_core::ImpulseResponse>,
     frequency_response: Option<Arc<FrequencyResponse>>,
     frequency_response_chart: Option<FrequencyResponseChart>,
@@ -85,20 +86,8 @@ impl FrequencyResponse {
 }
 
 impl ImpulseResponse {
-    pub fn update(&mut self, msg: Message, signals: &Signals) -> Task<Message> {
+    pub fn update(&mut self, msg: Message) -> Task<Message> {
         match msg {
-            Message::MeasurementSignalSelected(id) => {
-                if let (Some(SignalState::Loaded(loopback)), Some(SignalState::Loaded(response))) =
-                    (&signals.loopback, &signals.measurements.get(id))
-                {
-                    Task::perform(
-                        compute_impulse_response(loopback.data.clone(), response.data.clone()),
-                        Message::ImpulseResponseComputed,
-                    )
-                } else {
-                    Task::none()
-                }
-            }
             Message::ImpulseResponseComputed(impulse_response) => {
                 let data: Vec<_> = impulse_response
                     .impulse_response
@@ -156,6 +145,30 @@ impl ImpulseResponse {
 
                 Task::none()
             }
+        }
+    }
+
+    pub fn loopback_signal_changed(&mut self, signal: Signal) -> Task<Message> {
+        self.loopback_signal = Some(signal);
+        self.compute_impulse_response()
+    }
+
+    pub fn measurement_signal_changed(&mut self, signal: Signal) -> Task<Message>{
+        self.measurement_signal = Some(signal);
+        self.compute_impulse_response()
+    }
+
+    pub fn compute_impulse_response(&self) -> Task<Message> {
+        if let (Some(loopback), Some(response)) = (
+            self.loopback_signal.clone(),
+            self.measurement_signal.clone(),
+        ) {
+            Task::perform(
+                compute_impulse_response(loopback.data, response.data),
+                Message::ImpulseResponseComputed,
+            )
+        } else {
+            Task::none()
         }
     }
 }
