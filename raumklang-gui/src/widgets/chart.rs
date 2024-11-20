@@ -14,7 +14,6 @@ use iced::{
     },
     Element, Length, Size,
 };
-use interpolation::Lerp;
 use plotters::{
     coord::{
         cartesian::Cartesian2d,
@@ -28,7 +27,10 @@ use plotters::{
 use plotters_backend::DrawingBackend;
 use plotters_iced::{Chart, ChartBuilder, ChartWidget, Renderer};
 use raumklang_core::dbfs;
-use rustfft::{num_complex::Complex, num_traits::SaturatingSub};
+use rustfft::{
+    num_complex::{Complex, ComplexFloat},
+    num_traits::SaturatingSub,
+};
 
 use crate::{tabs::impulse_response::FrequencyResponse, Signal};
 
@@ -213,7 +215,7 @@ where
 
                 // FIXME make configurable
                 const ZOOM_FACTOR: f32 = 0.8;
-                const LOWER_BOUND: i64 = 256;
+                const LOWER_BOUND: i64 = 50;
                 let mut new_len = (old_len as f32 * ZOOM_FACTOR) as i64;
                 if new_len < LOWER_BOUND {
                     new_len = LOWER_BOUND;
@@ -471,17 +473,31 @@ impl Chart<Message> for TimeseriesChart {
             TimeSeriesUnit::Time => TimeSeriesRange::Time(self.signal.sample_rate, range),
         };
 
+        //let min = self
+        //    .signal
+        //    .data
+        //    .iter()
+        //    .fold(f32::NEG_INFINITY, |a, b| a.max(*b));
         let min = self
             .signal
             .data
-            .iter()
-            .fold(f32::INFINITY, |a, b| a.min(*b));
+            .clone()
+            .into_iter()
+            .reduce(f32::min)
+            .unwrap();
 
         let max = self
             .signal
             .data
-            .iter()
-            .fold(f32::NEG_INFINITY, |a, b| a.max(*b));
+            .clone()
+            .into_iter()
+            .reduce(f32::max)
+            .unwrap();
+        //let max = self
+        //    .signal
+        //    .data
+        //    .iter()
+        //    .fold(f32::INFINITY, |a, b| a.min(*b));
 
         let mut chart = builder
             .margin(5)
@@ -539,7 +555,9 @@ impl FrequencyResponseChart {
             .data
             .iter()
             .cloned()
-            .map(Complex::norm)
+            .map(Complex::re)
+            .map(f32::abs)
+            .map(dbfs)
             .collect();
 
         let viewport = InteractiveViewport::new(0..data.len() as i64);
@@ -600,7 +618,9 @@ impl FrequencyResponseChart {
                     .data
                     .iter()
                     .cloned()
-                    .map(Complex::norm)
+                    .map(Complex::re)
+                    .map(f32::abs)
+                    .map(dbfs)
                     .collect();
 
                 let mut new_data = vec![];
@@ -608,15 +628,15 @@ impl FrequencyResponseChart {
                     let center_bin = |i: usize| -> f32 {
                         2.0_f32
                             .powf(i as f32 / usize::from(smoothing) as f32)
-                            .round()
+                            .floor()
                     };
 
                     let lower_bin =
-                        f32::sqrt(center_bin(i.saturating_sub(1)) * center_bin(i)).round() as usize;
+                        f32::sqrt(center_bin(i.saturating_sub(1)) * center_bin(i)).floor() as usize;
                     let mut upper_bin = f32::sqrt(
                         center_bin(i) * center_bin(usize::min(data.len(), i + 1)),
                     )
-                    .round() as usize;
+                    .floor() as usize;
 
                     if lower_bin >= data.len() {
                         break;
@@ -626,20 +646,42 @@ impl FrequencyResponseChart {
                         upper_bin = data.len();
                     }
 
-                    let entry = &data[lower_bin..upper_bin]
-                        .iter()
-                        .fold(0.0, |acc, s| acc + s * s);
+                    // TODO: include min values
+                    //let min = data[lower_bin..upper_bin]
+                    //    .iter()
+                    //    .cloned()
+                    //    .reduce(f32::min)
+                    //    .unwrap_or(f32::NEG_INFINITY);
 
-                    for _ in lower_bin..upper_bin {
-                        new_data.push(f32::sqrt(*entry));
+                    let max = data[lower_bin..upper_bin]
+                        .iter()
+                        .cloned()
+                        .reduce(f32::max);
+
+                    if let Some(max) = max {
+                        new_data.push(((lower_bin..upper_bin).len(), max));
                     }
                 }
 
-                self.data = new_data
-                    .iter()
-                    .enumerate()
-                    .map(|(i, s)| s.lerp(&data[i], &0.5))
-                    .collect();
+                self.data = vec![];
+                let mut prev = f32::NEG_INFINITY;
+                let mut iter = new_data.iter().peekable();
+                while let Some((n, cur)) = iter.next() {
+                    if let Some((_, next)) = iter.peek() {
+                        for i in 0..*n {
+                            let weight = i as f32 / *n as f32;
+                            let intermediate =
+                                interpolation::quad_bez(&prev, cur, next, &(weight / 2.0));
+                            self.data.push(interpolation::quad_bez(
+                                &prev,
+                                &intermediate,
+                                cur,
+                                &weight,
+                            ));
+                        }
+                        prev = *cur;
+                    }
+                }
             }
             FrequencyResponseChartMessage::InteractiveViewport(msg) => {
                 self.viewport.update(msg);
@@ -679,7 +721,7 @@ impl Chart<FrequencyResponseChartMessage> for FrequencyResponseChart {
         //let min = self.data.iter().fold(f32::INFINITY, |a, b| a.min(*b));
         //let max = self.data.iter().fold(f32::NEG_INFINITY, |a, b| a.max(*b));
         let min = -70f32;
-        let max = 10f32;
+        let max = 3f32;
         let y_range = min..max;
 
         let mut chart = builder
@@ -691,10 +733,7 @@ impl Chart<FrequencyResponseChartMessage> for FrequencyResponseChart {
 
         chart
             .draw_series(LineSeries::new(
-                self.data
-                    .iter()
-                    .enumerate()
-                    .map(|(i, s)| (i as i64, dbfs(*s))),
+                self.data.iter().enumerate().map(|(i, s)| (i as i64, *s)),
                 &style::RGBColor(2, 125, 66),
             ))
             .unwrap();
@@ -802,7 +841,8 @@ impl ValueFormatter<i64> for FrequencyResponseRange {
                 fft_size,
                 ..
             } => {
-                format!("{}", *value * *sample_rate as i64 / *fft_size as i64)
+                let frequency = *value as f32 * ((*sample_rate as f32 / 2.0) / *fft_size as f32);
+                format!("{frequency}")
             }
         }
     }

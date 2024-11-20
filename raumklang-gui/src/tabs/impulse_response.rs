@@ -7,7 +7,10 @@ use iced::{
 };
 use iced_aw::{TabLabel, Tabs};
 use raumklang_core::dbfs;
-use rustfft::{num_complex::Complex32, FftPlanner};
+use rustfft::{
+    num_complex::{Complex32, ComplexFloat},
+    FftPlanner,
+};
 
 use crate::{
     widgets::chart::{
@@ -74,7 +77,10 @@ impl FrequencyResponse {
             .collect();
 
         // FIXME fix constant sample rate
-        Self { sample_rate: 44_100, data }
+        Self {
+            sample_rate: 44_100,
+            data,
+        }
     }
 }
 
@@ -97,7 +103,7 @@ impl ImpulseResponse {
                 let data: Vec<_> = impulse_response
                     .impulse_response
                     .iter()
-                    .map(|c| dbfs(c.norm()))
+                    .map(|s| dbfs(s.re().abs()))
                     .collect();
 
                 let signal = Signal::new("Impulse response".to_string(), 44100, data.clone());
@@ -140,8 +146,7 @@ impl ImpulseResponse {
                 // FIXME stupid use of Arc
                 let fr = Arc::into_inner(fr).unwrap();
                 self.frequency_response = Some(Arc::new(fr.clone()));
-                self.frequency_response_chart =
-                    Some(FrequencyResponseChart::new(fr));
+                self.frequency_response_chart = Some(FrequencyResponseChart::new(fr));
                 Task::none()
             }
             Message::FrequencyResponseChart(msg) => {
@@ -206,7 +211,8 @@ impl Tab for ImpulseResponse {
 async fn compute_frequency_response(
     impulse_response: raumklang_core::ImpulseResponse,
 ) -> Arc<FrequencyResponse> {
-    let window = WindowBuilder::new(Window::Tukey(0.25), Window::Tukey(0.25), 4000)
+    let window_size = (44_100_f32 * 0.3) as usize;
+    let window = WindowBuilder::new(Window::Tukey(0.25), Window::Tukey(0.25), window_size)
         .set_left_side_width(125)
         .set_right_side_width(500)
         .build();
