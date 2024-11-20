@@ -192,8 +192,14 @@ impl State {
             ),
             Message::LoopbackSignalLoaded(result) => match result {
                 Ok(signal) => {
-                    self.signals.loopback = Arc::into_inner(signal).map(SignalState::Loaded);
-                    Task::none()
+                    if let Some(signal) = Arc::into_inner(signal) {
+                        self.signals.loopback = Some(SignalState::Loaded(signal.clone()));
+                        self.impulse_response_tab
+                            .loopback_signal_changed(signal)
+                            .map(Message::ImpulseResponse)
+                    } else {
+                        Task::none()
+                    }
                 }
                 Err(err) => {
                     match err {
@@ -220,17 +226,19 @@ impl State {
             },
             Message::Debug => Task::none(),
             Message::SignalSelected(selected) => {
-                let task = match selected {
-                    SelectedSignal::Loopback => {
+                let task = match (&self.active_tab, selected.clone()) {
+                    (TabId::Signals, SelectedSignal::Loopback) => {
+                        self.selected_signal = Some(selected);
                         if let Some(SignalState::Loaded(signal)) = &self.signals.loopback {
                             self.signals_tab.selected_signal_changed(signal.clone());
-                            self.impulse_response_tab
-                                .loopback_signal_changed(signal.clone())
+                            Task::none()
                         } else {
                             Task::none()
                         }
                     }
-                    SelectedSignal::Measurement(index) => {
+                    (TabId::ImpulseResponse, SelectedSignal::Loopback) => Task::none(),
+                    (_, SelectedSignal::Measurement(index)) => {
+                        self.selected_signal = Some(selected);
                         if let Some(SignalState::Loaded(signal)) =
                             self.signals.measurements.get(index)
                         {
@@ -242,8 +250,6 @@ impl State {
                         }
                     }
                 };
-
-                self.selected_signal = Some(selected);
                 task.map(Message::ImpulseResponse)
             }
         }
