@@ -33,12 +33,12 @@ pub enum Message {
 }
 
 #[derive(Default)]
-pub struct ImpulseResponse {
+pub struct ImpulseResponseTab {
     active_tab: TabId,
-    chart: Option<TimeseriesChart>,
     loopback_signal: Option<Signal>,
     measurement_signal: Option<Signal>,
     impulse_response: Option<raumklang_core::ImpulseResponse>,
+    impulse_response_chart: Option<TimeseriesChart>,
     frequency_response: Option<Arc<FrequencyResponse>>,
     frequency_response_chart: Option<FrequencyResponseChart>,
 }
@@ -85,7 +85,7 @@ impl FrequencyResponse {
     }
 }
 
-impl ImpulseResponse {
+impl ImpulseResponseTab {
     pub fn update(&mut self, msg: Message) -> Task<Message> {
         match msg {
             Message::ImpulseResponseComputed(impulse_response) => {
@@ -96,7 +96,7 @@ impl ImpulseResponse {
                     .collect();
 
                 let signal = Signal::new("Impulse response".to_string(), 44100, data.clone());
-                self.chart = Some(TimeseriesChart::new(signal, TimeSeriesUnit::Time));
+                self.impulse_response_chart = Some(TimeseriesChart::new(signal, TimeSeriesUnit::Time));
                 self.impulse_response = Some(Arc::into_inner(impulse_response).unwrap());
 
                 Task::perform(
@@ -111,7 +111,7 @@ impl ImpulseResponse {
                 )
             }
             Message::TimeSeriesChart(msg) => {
-                if let Some(chart) = &mut self.chart {
+                if let Some(chart) = &mut self.impulse_response_chart {
                     chart.update_msg(msg);
                 }
 
@@ -153,7 +153,7 @@ impl ImpulseResponse {
         self.compute_impulse_response()
     }
 
-    pub fn measurement_signal_changed(&mut self, signal: Signal) -> Task<Message>{
+    pub fn measurement_signal_changed(&mut self, signal: Signal) -> Task<Message> {
         self.measurement_signal = Some(signal);
         self.compute_impulse_response()
     }
@@ -173,7 +173,7 @@ impl ImpulseResponse {
     }
 }
 
-impl Tab for ImpulseResponse {
+impl Tab for ImpulseResponseTab {
     type Message = Message;
 
     fn title(&self) -> String {
@@ -187,7 +187,7 @@ impl Tab for ImpulseResponse {
     fn content(&self) -> iced::Element<'_, Self::Message> {
         let content = {
             let impulse_response = {
-                if let Some(chart) = &self.chart {
+                if let Some(chart) = &self.impulse_response_chart {
                     container(chart.view().map(Message::TimeSeriesChart))
                         .width(Length::FillPortion(5))
                 } else {

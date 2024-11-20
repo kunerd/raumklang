@@ -5,7 +5,7 @@ use iced::{widget::Container, Element, Length};
 use iced_aw::TabLabel;
 
 pub use signals::Signals;
-pub use impulse_response::ImpulseResponse;
+pub use impulse_response::ImpulseResponseTab;
 
 pub trait Tab {
     type Message;
