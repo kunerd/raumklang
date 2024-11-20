@@ -50,7 +50,7 @@ struct State {
     selected_signal: Option<SelectedSignal>,
     active_tab: TabId,
     signals_tab: tabs::Signals,
-    impulse_response_tab: tabs::ImpulseResponse,
+    impulse_response_tab: tabs::ImpulseResponseTab,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
