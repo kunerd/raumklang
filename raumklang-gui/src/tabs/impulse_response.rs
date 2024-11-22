@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use iced::{
     futures::FutureExt,
-    widget::{container, text},
+    widget::{column, container, pick_list, row, text, text_input},
     Element, Length, Task,
 };
-use iced_aw::{TabLabel, Tabs};
+use iced_aw::{number_input, TabLabel, Tabs};
 use raumklang_core::dbfs;
 use rustfft::{
     num_complex::{Complex32, ComplexFloat},
@@ -28,6 +28,11 @@ pub enum Message {
     ImpulseResponseComputed(Arc<raumklang_core::ImpulseResponse>),
     TimeSeriesChart(chart::Message),
     TabSelected(TabId),
+    LeftWindowChanged(Window),
+    LeftWindowWidthChanged(u16),
+    RightWindowChanged(Window),
+    RightWindowWidthChanged(u16),
+    WindowWidthChanged(u16),
     FrequencyResponseComputed(Arc<FrequencyResponse>),
     FrequencyResponseChart(FrequencyResponseChartMessage),
 }
@@ -37,6 +42,11 @@ pub struct ImpulseResponseTab {
     active_tab: TabId,
     loopback_signal: Option<Signal>,
     measurement_signal: Option<Signal>,
+    left_window: Option<Window>,
+    left_window_width: u16,
+    right_window: Option<Window>,
+    right_window_width: u16,
+    window_width: u16,
     impulse_response: Option<raumklang_core::ImpulseResponse>,
     impulse_response_chart: Option<TimeseriesChart>,
     frequency_response: Option<Arc<FrequencyResponse>>,
@@ -96,7 +106,8 @@ impl ImpulseResponseTab {
                     .collect();
 
                 let signal = Signal::new("Impulse response".to_string(), 44100, data.clone());
-                self.impulse_response_chart = Some(TimeseriesChart::new(signal, TimeSeriesUnit::Time));
+                self.impulse_response_chart =
+                    Some(TimeseriesChart::new(signal, TimeSeriesUnit::Time));
                 self.impulse_response = Some(Arc::into_inner(impulse_response).unwrap());
 
                 Task::perform(
@@ -145,6 +156,26 @@ impl ImpulseResponseTab {
 
                 Task::none()
             }
+            Message::LeftWindowChanged(selected) => {
+                self.left_window = Some(selected);
+                Task::none()
+            }
+            Message::RightWindowChanged(selected) => {
+                self.right_window = Some(selected);
+                Task::none()
+            }
+            Message::LeftWindowWidthChanged(width) => {
+                self.left_window_width = width;
+                Task::none()
+            }
+            Message::RightWindowWidthChanged(width) => {
+                self.right_window_width = width;
+                Task::none()
+            }
+            Message::WindowWidthChanged(width) => {
+                self.window_width = width;
+                Task::none()
+            }
         }
     }
 
@@ -173,6 +204,8 @@ impl ImpulseResponseTab {
     }
 }
 
+const ALL_WINDOW_TYPE: [Window; 2] = [Window::Hann, Window::Tukey(0.25)];
+
 impl Tab for ImpulseResponseTab {
     type Message = Message;
 
@@ -185,11 +218,69 @@ impl Tab for ImpulseResponseTab {
     }
 
     fn content(&self) -> iced::Element<'_, Self::Message> {
+        let max_window_width = self
+            .impulse_response
+            .as_ref()
+            .map_or_else(|| 44_100, |ir| ir.impulse_response.len() as u16);
+
         let content = {
             let impulse_response = {
                 if let Some(chart) = &self.impulse_response_chart {
-                    container(chart.view().map(Message::TimeSeriesChart))
-                        .width(Length::FillPortion(5))
+                    let window_settings = {
+                        let left_window_settings = self
+                            .left_window
+                            .as_ref()
+                            .and_then(maybe_window_settings_view);
+
+                        let right_window_settings = self
+                            .right_window
+                            .as_ref()
+                            .and_then(maybe_window_settings_view);
+
+                        column![
+                            row![
+                                text("Left hand window: "),
+                                pick_list(
+                                    ALL_WINDOW_TYPE,
+                                    self.left_window.as_ref(),
+                                    Message::LeftWindowChanged
+                                ),
+                                text("width:"),
+                                number_input(
+                                    self.left_window_width,
+                                    0..255,
+                                    Message::LeftWindowWidthChanged
+                                )
+                            ]
+                            .push_maybe(left_window_settings),
+                            row![
+                                text("Right hand window: "),
+                                pick_list(
+                                    ALL_WINDOW_TYPE,
+                                    self.right_window.as_ref(),
+                                    Message::RightWindowChanged,
+                                ),
+                                text("width:"),
+                                number_input(
+                                    self.right_window_width,
+                                    0..255,
+                                    Message::RightWindowWidthChanged
+                                )
+                            ]
+                            .push_maybe(right_window_settings),
+                            row![
+                                text("Window width"),
+                                number_input(
+                                    self.window_width,
+                                    0..max_window_width,
+                                    Message::WindowWidthChanged
+                                )
+                            ]
+                        ]
+                    };
+
+                    let col = column!(window_settings, chart.view().map(Message::TimeSeriesChart));
+                    container(col).width(Length::FillPortion(5))
                 } else {
                     container(text("Not implemented.".to_string()))
                 }
@@ -219,6 +310,14 @@ impl Tab for ImpulseResponseTab {
 
         content.into()
     }
+}
+
+fn maybe_window_settings_view(window: &Window) -> Option<Element<'static, Message>> {
+    match window {
+        Window::Hann => None,
+        Window::Tukey(alpha) => Some(text_input("alpha", format!("{alpha}").as_str())),
+    }
+    .map(|v| v.into())
 }
 
 async fn compute_frequency_response(

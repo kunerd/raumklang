@@ -42,6 +42,7 @@ impl TukeyWindow {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub enum Window {
     Hann,
     Tukey(f32),
