@@ -43,6 +43,7 @@ pub enum Message {
 
 pub struct TimeseriesChart {
     signal: Signal,
+    window: Option<Vec<f32>>,
     noise_floor: Option<f32>,
     noise_floor_crossing: Option<usize>,
     time_unit: TimeSeriesUnit,
@@ -399,6 +400,7 @@ impl TimeseriesChart {
         let viewport = InteractiveViewport::new(0..signal.data.len() as i64);
         Self {
             signal,
+            window: None,
             noise_floor: None,
             noise_floor_crossing: None,
             time_unit,
@@ -449,6 +451,12 @@ impl TimeseriesChart {
             }
         }
     }
+
+    pub fn update_window(&mut self, window: Vec<f32>) {
+        let dbfs_window = window.into_iter().map(dbfs).collect();
+        self.window = Some(dbfs_window);
+        self.cache.clear();
+    }
 }
 
 impl Chart<Message> for TimeseriesChart {
@@ -473,31 +481,23 @@ impl Chart<Message> for TimeseriesChart {
             TimeSeriesUnit::Time => TimeSeriesRange::Time(self.signal.sample_rate, range),
         };
 
+        let min = -80f32; 
+        let max = 5f32;
         //let min = self
         //    .signal
         //    .data
-        //    .iter()
-        //    .fold(f32::NEG_INFINITY, |a, b| a.max(*b));
-        let min = self
-            .signal
-            .data
-            .clone()
-            .into_iter()
-            .reduce(f32::min)
-            .unwrap();
+        //    .clone()
+        //    .into_iter()
+        //    .reduce(f32::min)
+        //    .unwrap();
 
-        let max = self
-            .signal
-            .data
-            .clone()
-            .into_iter()
-            .reduce(f32::max)
-            .unwrap();
         //let max = self
         //    .signal
         //    .data
-        //    .iter()
-        //    .fold(f32::INFINITY, |a, b| a.min(*b));
+        //    .clone()
+        //    .into_iter()
+        //    .reduce(f32::max)
+        //    .unwrap();
 
         let mut chart = builder
             .margin(5)
@@ -523,6 +523,19 @@ impl Chart<Message> for TimeseriesChart {
                 .draw_series(LineSeries::new(
                     (0..self.signal.data.len()).map(|i| (i as i64, nf)),
                     &style::RGBColor(0, 0, 128),
+                ))
+                .unwrap();
+        }
+
+        if let Some(window) = &self.window {
+            chart
+                .draw_series(LineSeries::new(
+                    window
+                        .iter()
+                        .cloned()
+                        .enumerate()
+                        .map(|(i, s)| (i as i64, s)),
+                    &style::RGBColor(200, 0, 0),
                 ))
                 .unwrap();
         }
@@ -653,10 +666,7 @@ impl FrequencyResponseChart {
                     //    .reduce(f32::min)
                     //    .unwrap_or(f32::NEG_INFINITY);
 
-                    let max = data[lower_bin..upper_bin]
-                        .iter()
-                        .cloned()
-                        .reduce(f32::max);
+                    let max = data[lower_bin..upper_bin].iter().cloned().reduce(f32::max);
 
                     if let Some(max) = max {
                         new_data.push(((lower_bin..upper_bin).len(), max));
@@ -777,7 +787,7 @@ impl ValueFormatter<i64> for TimeSeriesRange {
         match self {
             TimeSeriesRange::Samples(_) => format!("{}", value),
             TimeSeriesRange::Time(sample_rate, _) => {
-                format!("{} s", *value as f32 / *sample_rate as f32)
+                format!("{}", (*value as f32 / *sample_rate as f32 * 1000f32).round())
             }
         }
     }

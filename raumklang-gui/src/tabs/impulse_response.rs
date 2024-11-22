@@ -29,10 +29,10 @@ pub enum Message {
     TimeSeriesChart(chart::Message),
     TabSelected(TabId),
     LeftWindowChanged(Window),
-    LeftWindowWidthChanged(u16),
+    LeftWindowWidthChanged(usize),
     RightWindowChanged(Window),
-    RightWindowWidthChanged(u16),
-    WindowWidthChanged(u16),
+    RightWindowWidthChanged(usize),
+    WindowWidthChanged(usize),
     FrequencyResponseComputed(Arc<FrequencyResponse>),
     FrequencyResponseChart(FrequencyResponseChartMessage),
 }
@@ -42,11 +42,7 @@ pub struct ImpulseResponseTab {
     active_tab: TabId,
     loopback_signal: Option<Signal>,
     measurement_signal: Option<Signal>,
-    left_window: Option<Window>,
-    left_window_width: u16,
-    right_window: Option<Window>,
-    right_window_width: u16,
-    window_width: u16,
+    window_builder: WindowBuilder,
     impulse_response: Option<raumklang_core::ImpulseResponse>,
     impulse_response_chart: Option<TimeseriesChart>,
     frequency_response: Option<Arc<FrequencyResponse>>,
@@ -134,7 +130,7 @@ impl ImpulseResponseTab {
                 if let (TabId::FrequencyResponse, Some(ir)) = (id, &self.impulse_response) {
                     let ir = ir.clone();
                     Task::perform(
-                        compute_frequency_response(ir),
+                        compute_frequency_response(ir, self.window_builder.build()),
                         Message::FrequencyResponseComputed,
                     )
                 } else {
@@ -157,23 +153,28 @@ impl ImpulseResponseTab {
                 Task::none()
             }
             Message::LeftWindowChanged(selected) => {
-                self.left_window = Some(selected);
+                self.window_builder.set_left_side(selected);
+                self.recompute_window();
                 Task::none()
             }
             Message::RightWindowChanged(selected) => {
-                self.right_window = Some(selected);
+                self.window_builder.set_right_side(selected);
+                self.recompute_window();
                 Task::none()
             }
             Message::LeftWindowWidthChanged(width) => {
-                self.left_window_width = width;
+                self.window_builder.set_left_side_width(width);
+                self.recompute_window();
                 Task::none()
             }
             Message::RightWindowWidthChanged(width) => {
-                self.right_window_width = width;
+                self.window_builder.set_right_side_width(width);
+                self.recompute_window();
                 Task::none()
             }
             Message::WindowWidthChanged(width) => {
-                self.window_width = width;
+                self.window_builder.set_width(width);
+                self.recompute_window();
                 Task::none()
             }
         }
@@ -189,7 +190,7 @@ impl ImpulseResponseTab {
         self.compute_impulse_response()
     }
 
-    pub fn compute_impulse_response(&self) -> Task<Message> {
+    fn compute_impulse_response(&self) -> Task<Message> {
         if let (Some(loopback), Some(response)) = (
             self.loopback_signal.clone(),
             self.measurement_signal.clone(),
@@ -200,6 +201,14 @@ impl ImpulseResponseTab {
             )
         } else {
             Task::none()
+        }
+    }
+
+    fn recompute_window(&mut self) {
+        let window = self.window_builder.build();
+
+        if let Some(chart) = &mut self.impulse_response_chart {
+            chart.update_window(window);
         }
     }
 }
@@ -221,34 +230,29 @@ impl Tab for ImpulseResponseTab {
         let max_window_width = self
             .impulse_response
             .as_ref()
-            .map_or_else(|| 44_100, |ir| ir.impulse_response.len() as u16);
+            .map_or_else(|| 44_100, |ir| ir.impulse_response.len());
 
         let content = {
             let impulse_response = {
                 if let Some(chart) = &self.impulse_response_chart {
                     let window_settings = {
-                        let left_window_settings = self
-                            .left_window
-                            .as_ref()
-                            .and_then(maybe_window_settings_view);
-
-                        let right_window_settings = self
-                            .right_window
-                            .as_ref()
-                            .and_then(maybe_window_settings_view);
+                        let left_window_settings =
+                            maybe_window_settings_view(&self.window_builder.left_side());
+                        let right_window_settings =
+                            maybe_window_settings_view(&self.window_builder.right_side());
 
                         column![
                             row![
                                 text("Left hand window: "),
                                 pick_list(
                                     ALL_WINDOW_TYPE,
-                                    self.left_window.as_ref(),
+                                    Some(self.window_builder.left_side()),
                                     Message::LeftWindowChanged
                                 ),
                                 text("width:"),
                                 number_input(
-                                    self.left_window_width,
-                                    0..255,
+                                    self.window_builder.left_side_width(),
+                                    0..self.window_builder.max_left_side_width(),
                                     Message::LeftWindowWidthChanged
                                 )
                             ]
@@ -257,13 +261,13 @@ impl Tab for ImpulseResponseTab {
                                 text("Right hand window: "),
                                 pick_list(
                                     ALL_WINDOW_TYPE,
-                                    self.right_window.as_ref(),
+                                    Some(self.window_builder.right_side()),
                                     Message::RightWindowChanged,
                                 ),
                                 text("width:"),
                                 number_input(
-                                    self.right_window_width,
-                                    0..255,
+                                    self.window_builder.right_side_width(),
+                                    0..self.window_builder.max_right_side_width(),
                                     Message::RightWindowWidthChanged
                                 )
                             ]
@@ -271,7 +275,7 @@ impl Tab for ImpulseResponseTab {
                             row![
                                 text("Window width"),
                                 number_input(
-                                    self.window_width,
+                                    self.window_builder.width(),
                                     0..max_window_width,
                                     Message::WindowWidthChanged
                                 )
@@ -322,13 +326,8 @@ fn maybe_window_settings_view(window: &Window) -> Option<Element<'static, Messag
 
 async fn compute_frequency_response(
     impulse_response: raumklang_core::ImpulseResponse,
+    window: Vec<f32>,
 ) -> Arc<FrequencyResponse> {
-    let window_size = (44_100_f32 * 0.3) as usize;
-    let window = WindowBuilder::new(Window::Tukey(0.25), Window::Tukey(0.25), window_size)
-        .set_left_side_width(125)
-        .set_right_side_width(500)
-        .build();
-
     Arc::new(FrequencyResponse::new(impulse_response, &window))
 }
 

@@ -42,7 +42,7 @@ impl TukeyWindow {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Window {
     Hann,
     Tukey(f32),
@@ -104,9 +104,45 @@ impl WindowBuilder {
         window
     }
 
+    pub fn left_side(&self) -> Window {
+        self.left_side
+    }
+
+    pub fn left_side_width(&self) -> usize {
+        self.left_side_width
+    }
+
+    pub fn max_left_side_width(&self) -> usize {
+        self.width - self.right_side_width
+    }
+
+    pub fn set_left_side(&mut self, window: Window) -> &mut Self {
+        self.left_side = window;
+
+        self
+    }
+
     pub fn set_left_side_width(&mut self, width: usize) -> &mut Self {
         self.left_side_width = width;
 
+        self
+    }
+
+    pub fn right_side(&self) -> Window {
+        self.right_side
+    }
+
+    pub fn right_side_width(&self) -> usize {
+        self.right_side_width
+    }
+
+    pub fn max_right_side_width(&self) -> usize {
+        self.width - self.left_side_width
+    }
+
+    pub fn set_right_side(&mut self, window: Window) -> &mut Self {
+        self.right_side = window;
+        
         self
     }
 
@@ -116,12 +152,27 @@ impl WindowBuilder {
         self
     }
 
-    pub fn get_left_side_width(&self) -> usize {
-        self.left_side_width
+    pub fn width(&self) -> usize {
+        self.width
     }
 
-    pub fn get_right_side_width(&self) -> usize {
-        self.right_side_width
+    pub fn set_width(&mut self, width: usize) -> &mut Self {
+        self.width = width;
+
+        self
+    }
+}
+
+impl Default for WindowBuilder {
+    fn default() -> Self {
+        Self {
+            left_side: Window::Tukey(0.25),
+            left_side_width: 125,
+            right_side: Window::Tukey(0.25),
+            right_side_width: 500,
+            // FIXME: depends on sample rate of impulse response
+            width: 22050,
+        }
     }
 }
 
@@ -131,4 +182,3 @@ fn create_window(window_type: &Window, width: usize) -> Vec<f32> {
         Window::Tukey(a) => TukeyWindow::new(width, *a).data,
     }
 }
-
