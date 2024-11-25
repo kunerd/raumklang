@@ -15,7 +15,7 @@ use rustfft::{
 use crate::{
     widgets::chart::{
         self, FrequencyResponseChart, FrequencyResponseChartMessage, TimeSeriesUnit,
-        TimeseriesChart,
+        ImpulseResponseChart,
     },
     window::{Window, WindowBuilder},
     Signal,
@@ -33,8 +33,8 @@ pub enum Message {
     RightWindowChanged(Window),
     RightWindowWidthChanged(usize),
     WindowWidthChanged(usize),
-    FrequencyResponseComputed(Arc<FrequencyResponse>),
     FrequencyResponseChart(FrequencyResponseChartMessage),
+    FrequencyResponseComputed(Arc<FrequencyResponse>),
 }
 
 #[derive(Default)]
@@ -44,7 +44,7 @@ pub struct ImpulseResponseTab {
     measurement_signal: Option<Signal>,
     window_builder: WindowBuilder,
     impulse_response: Option<raumklang_core::ImpulseResponse>,
-    impulse_response_chart: Option<TimeseriesChart>,
+    impulse_response_chart: Option<ImpulseResponseChart>,
     frequency_response: Option<Arc<FrequencyResponse>>,
     frequency_response_chart: Option<FrequencyResponseChart>,
 }
@@ -103,7 +103,7 @@ impl ImpulseResponseTab {
 
                 let signal = Signal::new("Impulse response".to_string(), 44100, data.clone());
                 self.impulse_response_chart =
-                    Some(TimeseriesChart::new(signal, TimeSeriesUnit::Time));
+                    Some(ImpulseResponseChart::new(signal, TimeSeriesUnit::Time));
                 self.impulse_response = Some(Arc::into_inner(impulse_response).unwrap());
 
                 Task::perform(
