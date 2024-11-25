@@ -8,19 +8,19 @@ use iced_aw::TabLabel;
 use thiserror::Error;
 
 use crate::{
-    widgets::chart::{self, TimeSeriesUnit, TimeseriesChart}, Signal
+    widgets::chart::{self, SignalChart, TimeSeriesUnit}, Signal
 };
 
 use super::Tab;
 
 #[derive(Default)]
 pub struct Signals {
-    chart: Option<TimeseriesChart>,
+    chart: Option<SignalChart>,
 }
 
 #[derive(Debug, Clone)]
 pub enum SignalsMessage {
-    TimeSeriesChart(chart::Message),
+    TimeSeriesChart(chart::SignalChartMessage),
 }
 
 #[derive(Debug, Clone)]
@@ -39,7 +39,7 @@ pub enum WavLoadError {
 
 impl Signals {
     pub fn selected_signal_changed(&mut self, signal: Signal) {
-        self.chart = Some(TimeseriesChart::new(signal, TimeSeriesUnit::Time));
+        self.chart = Some(SignalChart::new(signal, TimeSeriesUnit::Time));
     }
 
     pub fn update(
