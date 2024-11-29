@@ -8,7 +8,8 @@ use iced_aw::TabLabel;
 use thiserror::Error;
 
 use crate::{
-    widgets::chart::{self, SignalChart, TimeSeriesUnit}, Signal
+    widgets::chart::{self, SignalChart, TimeSeriesUnit},
+    Signal,
 };
 
 use super::Tab;
@@ -42,10 +43,7 @@ impl Signals {
         self.chart = Some(SignalChart::new(signal, TimeSeriesUnit::Time));
     }
 
-    pub fn update(
-        &mut self,
-        msg: SignalsMessage,
-    ) -> Task<SignalsMessage> {
+    pub fn update(&mut self, msg: SignalsMessage) -> Task<SignalsMessage> {
         match msg {
             SignalsMessage::TimeSeriesChart(msg) => {
                 if let Some(chart) = &mut self.chart {

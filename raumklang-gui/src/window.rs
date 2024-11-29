@@ -95,8 +95,7 @@ impl WindowBuilder {
         window.append(&mut left);
         window.append(&mut vec![
             1.0;
-            self.width
-                - self.left_side_width
+            (self.width - self.left_side_width)
                 - self.right_side_width
         ]);
         window.append(&mut right);
@@ -142,7 +141,7 @@ impl WindowBuilder {
 
     pub fn set_right_side(&mut self, window: Window) -> &mut Self {
         self.right_side = window;
-        
+
         self
     }
 
@@ -165,13 +164,16 @@ impl WindowBuilder {
 
 impl Default for WindowBuilder {
     fn default() -> Self {
+
+        // FIXME: depends on sample rate of impulse response
+        let left_side_width = 5512;
+        let right_side_width = 22050;
         Self {
             left_side: Window::Tukey(0.25),
-            left_side_width: 125,
+            left_side_width,
             right_side: Window::Tukey(0.25),
-            right_side_width: 500,
-            // FIXME: depends on sample rate of impulse response
-            width: 22050,
+            right_side_width,
+            width: left_side_width + right_side_width,
         }
     }
 }

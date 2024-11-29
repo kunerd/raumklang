@@ -6,7 +6,6 @@ use iced::{
     Element, Length, Task,
 };
 use iced_aw::{number_input, TabLabel, Tabs};
-use raumklang_core::dbfs;
 use rustfft::{
     num_complex::{Complex32, ComplexFloat},
     FftPlanner,
@@ -14,8 +13,8 @@ use rustfft::{
 
 use crate::{
     widgets::chart::{
-        self, FrequencyResponseChart, FrequencyResponseChartMessage, TimeSeriesUnit,
-        ImpulseResponseChart,
+        self, FrequencyResponseChart, FrequencyResponseChartMessage, ImpulseResponseChart,
+        TimeSeriesUnit,
     },
     window::{Window, WindowBuilder},
     Signal,
@@ -98,7 +97,7 @@ impl ImpulseResponseTab {
                 let data: Vec<_> = impulse_response
                     .impulse_response
                     .iter()
-                    .map(|s| dbfs(s.re().abs()))
+                    .map(|s| s.re().abs())
                     .collect();
 
                 let signal = Signal::new("Impulse response".to_string(), 44100, data.clone());
@@ -243,7 +242,7 @@ impl Tab for ImpulseResponseTab {
 
                         column![
                             row![
-                                text("Left hand window: "),
+                                text("Left hand window:"),
                                 pick_list(
                                     ALL_WINDOW_TYPE,
                                     Some(self.window_builder.left_side()),
@@ -258,7 +257,7 @@ impl Tab for ImpulseResponseTab {
                             ]
                             .push_maybe(left_window_settings),
                             row![
-                                text("Right hand window: "),
+                                text("Right hand window:"),
                                 pick_list(
                                     ALL_WINDOW_TYPE,
                                     Some(self.window_builder.right_side()),
