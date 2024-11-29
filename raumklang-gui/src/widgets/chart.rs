@@ -10,7 +10,7 @@ use iced::{
     widget::{
         self,
         canvas::{self, Cache, Frame, Geometry},
-        pick_list, Column, Container,
+        pick_list, text, Column, Container,
     },
     Element, Length, Size,
 };
@@ -37,6 +37,7 @@ use crate::{tabs::impulse_response::FrequencyResponse, Signal};
 #[derive(Debug, Clone)]
 pub enum Message {
     TimeUnitChanged(TimeSeriesUnit),
+    AmplitudeUnitChanged(AmplitudeUnit),
     NoiseFloorUpdated((f32, usize)),
     InteractiveViewport(InteractiveViewportMessage),
 }
@@ -59,6 +60,7 @@ pub struct ImpulseResponseChart {
     window: Option<Vec<f32>>,
     noise_floor: Option<f32>,
     noise_floor_crossing: Option<usize>,
+    amplitude_unit: AmplitudeUnit,
     time_unit: TimeSeriesUnit,
     viewport: InteractiveViewport<TimeSeriesRange>,
     cache: Cache,
@@ -113,6 +115,33 @@ pub enum InteractiveViewportMessage {
     MouseEvent(mouse::Event, iced::Point),
     ShiftKeyReleased,
     ShiftKeyPressed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AmplitudeUnit {
+    #[default]
+    PercentFullScale,
+    DezibelFullScale,
+}
+
+impl AmplitudeUnit {
+    const ALL: [AmplitudeUnit; 2] = [
+        AmplitudeUnit::PercentFullScale,
+        AmplitudeUnit::DezibelFullScale,
+    ];
+}
+
+impl std::fmt::Display for AmplitudeUnit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                AmplitudeUnit::PercentFullScale => "%FS",
+                AmplitudeUnit::DezibelFullScale => "dbFS",
+            }
+        )
+    }
 }
 
 impl SignalChart {
@@ -545,6 +574,7 @@ impl ImpulseResponseChart {
             window: None,
             noise_floor: None,
             noise_floor_crossing: None,
+            amplitude_unit: AmplitudeUnit::DezibelFullScale,
             time_unit,
             viewport,
             cache: Cache::new(),
@@ -552,11 +582,20 @@ impl ImpulseResponseChart {
     }
 
     pub fn view(&self) -> Element<Message> {
-        let header = widget::row!(widget::pick_list(
-            &TimeSeriesUnit::ALL[..],
-            Some(self.time_unit.clone()),
-            Message::TimeUnitChanged
-        ));
+        let header = widget::row!(
+            text("Amplitude unit:"),
+            widget::pick_list(
+                &AmplitudeUnit::ALL[..],
+                Some(&self.amplitude_unit),
+                Message::AmplitudeUnitChanged
+            ),
+            text("Time unit:"),
+            widget::pick_list(
+                &TimeSeriesUnit::ALL[..],
+                Some(&self.time_unit),
+                Message::TimeUnitChanged
+            )
+        );
         Container::new(
             Column::new()
                 .width(Length::Fill)
@@ -580,6 +619,10 @@ impl ImpulseResponseChart {
         match msg {
             Message::TimeUnitChanged(u) => {
                 self.time_unit = u;
+                self.cache.clear();
+            }
+            Message::AmplitudeUnitChanged(u) => {
+                self.amplitude_unit = u;
                 self.cache.clear();
             }
             Message::NoiseFloorUpdated((nf, nfc)) => {
@@ -623,16 +666,6 @@ impl Chart<Message> for ImpulseResponseChart {
             TimeSeriesUnit::Time => TimeSeriesRange::Time(self.signal.sample_rate, range),
         };
 
-        let min = -80f32; 
-        let max = 5f32;
-        //let min = self
-        //    .signal
-        //    .data
-        //    .clone()
-        //    .into_iter()
-        //    .reduce(f32::min)
-        //    .unwrap();
-
         //let max = self
         //    .signal
         //    .data
@@ -640,6 +673,28 @@ impl Chart<Message> for ImpulseResponseChart {
         //    .into_iter()
         //    .reduce(f32::max)
         //    .unwrap();
+        let max = self
+            .signal
+            .data
+            .iter()
+            .map(|s| s.powi(2).sqrt())
+            .fold(f32::NEG_INFINITY, |a, b| a.max(b));
+        // FIXME: precompute on amplitude change
+        let processed_data: Vec<_> = match &self.amplitude_unit {
+            AmplitudeUnit::PercentFullScale => {
+                self.signal.data.iter().map(|s| *s / max * 100f32).collect()
+            }
+            AmplitudeUnit::DezibelFullScale => self
+                .signal
+                .data
+                .iter()
+                .map(|s| 20f32 * f32::log10(s.abs() / max))
+                .collect(),
+        };
+
+        let min = processed_data.iter().cloned().reduce(f32::min).unwrap();
+
+        let max = processed_data.iter().cloned().reduce(f32::max).unwrap();
 
         let mut chart = builder
             .margin(5)
@@ -650,10 +705,8 @@ impl Chart<Message> for ImpulseResponseChart {
 
         chart
             .draw_series(LineSeries::new(
-                self.signal
-                    .data
-                    .iter()
-                    .cloned()
+                processed_data
+                    .into_iter()
                     .enumerate()
                     .map(|(i, s)| (i as i64, s)),
                 &style::RGBColor(2, 125, 66),
@@ -929,7 +982,10 @@ impl ValueFormatter<i64> for TimeSeriesRange {
         match self {
             TimeSeriesRange::Samples(_) => format!("{}", value),
             TimeSeriesRange::Time(sample_rate, _) => {
-                format!("{}", (*value as f32 / *sample_rate as f32 * 1000f32).round())
+                format!(
+                    "{}",
+                    (*value as f32 / *sample_rate as f32 * 1000f32).round()
+                )
             }
         }
     }
