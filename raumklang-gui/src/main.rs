@@ -42,6 +42,7 @@ enum Message {
     SignalsTab(tabs::signals::SignalsMessage),
     ImpulseResponse(tabs::impulse_response::Message),
     Debug,
+    NewProject,
 }
 
 #[derive(Default)]
@@ -139,6 +140,10 @@ impl State {
                 .impulse_response_tab
                 .update(msg)
                 .map(Message::ImpulseResponse),
+            Message::NewProject => {
+                *self = State::default();
+                Task::none()
+            }
             Message::LoadProject => Task::perform(pick_file_and_load(), Message::ProjectLoaded),
             Message::SaveProject => {
                 let content = serde_json::to_string_pretty(&self.signals).unwrap();
@@ -257,20 +262,26 @@ impl State {
 
     fn view(&self) -> Element<'_, Message> {
         let project_menu = Item::with_menu(
-            button(text("Projekt").align_y(Vertical::Center))
+            button(text("Project").align_y(Vertical::Center))
                 .width(Length::Shrink)
-                .style(button::primary)
+                .style(button::secondary)
                 .on_press(Message::Debug),
             Menu::new(
                 [
                     Item::new(
-                        button("laden...")
+                        button("New")
+                            .width(Length::Fill)
+                            .style(button::secondary)
+                            .on_press(Message::NewProject),
+                    ),
+                    Item::new(
+                        button("Load ...")
                             .width(Length::Fill)
                             .style(button::secondary)
                             .on_press(Message::LoadProject),
                     ),
                     Item::new(
-                        button("speichern...")
+                        button("Save ...")
                             .width(Length::Fill)
                             .style(button::secondary)
                             .on_press(Message::SaveProject),
