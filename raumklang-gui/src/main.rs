@@ -43,11 +43,13 @@ enum Message {
     ImpulseResponse(tabs::impulse_response::Message),
     Debug,
     NewProject,
+    LoadRecentProject(usize),
 }
 
 #[derive(Default)]
 struct State {
     signals: Signals,
+    recent_projects: Vec<PathBuf>,
     selected_signal: Option<SelectedSignal>,
     active_tab: TabId,
     signals_tab: tabs::Signals,
@@ -145,12 +147,23 @@ impl State {
                 Task::none()
             }
             Message::LoadProject => Task::perform(pick_file_and_load(), Message::ProjectLoaded),
+            Message::LoadRecentProject(id) => {
+                let Some(recent) = self.recent_projects.get(id) else {
+                    return Task::none();
+                };
+
+                Task::perform(
+                    load_project_from_file(recent.clone()),
+                    Message::ProjectLoaded,
+                )
+            }
             Message::SaveProject => {
                 let content = serde_json::to_string_pretty(&self.signals).unwrap();
                 Task::perform(pick_file_and_save(content), Message::ProjectSaved)
             }
             Message::ProjectLoaded(res) => match &res {
                 Ok((signals, _)) => {
+                    self.signals = Signals::default();
                     let mut tasks = vec![];
                     if let Some(SignalState::NotLoaded(signal)) = &signals.loopback {
                         let path = signal.path.clone();
@@ -188,7 +201,10 @@ impl State {
                 }
             },
             Message::ProjectSaved(res) => {
-                println!("{res:?}");
+                match res {
+                    Ok(path) => self.recent_projects.push(path),
+                    Err(err) => println!("{err}"),
+                }
                 Task::none()
             }
             Message::LoadLoopbackSignal => Task::perform(
@@ -261,6 +277,37 @@ impl State {
     }
 
     fn view(&self) -> Element<'_, Message> {
+        let recent_menu = {
+            let recent_entries: Vec<_> = self
+                .recent_projects
+                .iter()
+                .enumerate()
+                .map(|(i, r)| {
+                    Item::new(
+                        button(r.file_name().unwrap().to_str().unwrap())
+                            .width(Length::Fill)
+                            .style(button::secondary)
+                            .on_press(Message::LoadRecentProject(i)),
+                    )
+                })
+                .collect();
+
+            if recent_entries.is_empty() {
+                Item::new(
+                    button("Load recent ...")
+                        .width(Length::Fill)
+                        .style(button::secondary),
+                )
+            } else {
+                Item::with_menu(
+                    button("Load recent ...")
+                        .width(Length::Fill)
+                        .style(button::secondary)
+                        .on_press(Message::Debug),
+                    Menu::new(recent_entries),
+                )
+            }
+        };
         let project_menu = Item::with_menu(
             button(text("Project").align_y(Vertical::Center))
                 .width(Length::Shrink)
@@ -280,6 +327,7 @@ impl State {
                             .style(button::secondary)
                             .on_press(Message::LoadProject),
                     ),
+                    recent_menu,
                     Item::new(
                         button("Save ...")
                             .width(Length::Fill)
@@ -547,15 +595,22 @@ async fn pick_file_and_load() -> Result<(Signals, PathBuf), PickAndLoadError> {
         .await
         .ok_or(PickAndLoadError::DialogClosed)?;
 
+    load_project_from_file(handle.path()).await
+}
+
+async fn load_project_from_file<P: AsRef<Path>>(
+    path: P,
+) -> Result<(Signals, PathBuf), PickAndLoadError> {
     //let store = load_from_file(handle.path()).await?;
-    let content = tokio::fs::read(handle.path())
+    let path = path.as_ref();
+    let content = tokio::fs::read(path)
         .await
         .map_err(|err| FileError::Io(err.kind()))?;
 
     let signals =
         serde_json::from_slice(&content).map_err(|err| FileError::Json(err.to_string()))?;
 
-    Ok((signals, handle.path().to_path_buf()))
+    Ok((signals, path.to_path_buf()))
 }
 
 async fn save_to_file(path: PathBuf, content: String) -> Result<(), FileError> {
