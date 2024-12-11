@@ -39,7 +39,7 @@ pub enum WavLoadError {
 }
 
 impl Measurements {
-    pub fn selected_signal_changed(&mut self, signal: Measurement) {
+    pub fn set_measurement(&mut self, signal: Measurement) {
         self.chart = Some(SignalChart::new(signal, TimeSeriesUnit::Time));
     }
 

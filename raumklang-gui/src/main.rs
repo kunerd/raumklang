@@ -187,7 +187,10 @@ impl State {
                 self.active_tab = id;
                 Task::none()
             }
-            Message::MeasurementsTab(msg) => self.measurements_tab.update(msg).map(Message::MeasurementsTab),
+            Message::MeasurementsTab(msg) => self
+                .measurements_tab
+                .update(msg)
+                .map(Message::MeasurementsTab),
             Message::ImpulseResponseTab(msg) => self
                 .impulse_response_tab
                 .update(msg)
@@ -295,7 +298,9 @@ impl State {
             ),
             Message::MeasurementLoaded(result) => match result {
                 Ok(signal) => {
-                    let signal = Arc::into_inner(signal).map(MeasurementState::Loaded).unwrap();
+                    let signal = Arc::into_inner(signal)
+                        .map(MeasurementState::Loaded)
+                        .unwrap();
                     self.measurements.measurements.push(signal);
                     Task::none()
                 }
@@ -304,27 +309,27 @@ impl State {
                     Task::none()
                 }
             },
-            Message::Debug => Task::none(),
             Message::MeasurementSelected(selected) => {
                 let task = match (&self.active_tab, selected.clone()) {
                     (TabId::Measurements, SelectedMeasurement::Loopback) => {
                         self.selected_measurement = Some(selected);
-                        if let Some(MeasurementState::Loaded(signal)) = &self.measurements.loopback {
-                            self.measurements_tab.selected_signal_changed(signal.clone());
-                            Task::none()
-                        } else {
-                            Task::none()
+                        if let Some(MeasurementState::Loaded(m)) = &self.measurements.loopback
+                        {
+                            self.measurements_tab
+                                .set_measurement(m.clone());
                         }
+                        Task::none()
                     }
                     (TabId::ImpulseResponse, SelectedMeasurement::Loopback) => Task::none(),
                     (_, SelectedMeasurement::Measurement(index)) => {
                         self.selected_measurement = Some(selected);
-                        if let Some(MeasurementState::Loaded(signal)) =
+                        if let Some(MeasurementState::Loaded(measurement)) =
                             self.measurements.measurements.get(index)
                         {
-                            self.measurements_tab.selected_signal_changed(signal.clone());
+                            self.measurements_tab
+                                .set_measurement(measurement.clone());
                             self.impulse_response_tab
-                                .measurement_signal_changed(signal.clone())
+                                .set_selected_measurement(measurement.clone())
                         } else {
                             Task::none()
                         }
@@ -332,6 +337,7 @@ impl State {
                 };
                 task.map(Message::ImpulseResponseTab)
             }
+            Message::Debug => Task::none(),
         }
     }
 
@@ -413,7 +419,9 @@ impl State {
             let loopback_entry = {
                 let content: Element<_> = match &self.measurements.loopback {
                     Some(MeasurementState::Loaded(signal)) => {
-                        let style = if let Some(SelectedMeasurement::Loopback) = self.selected_measurement {
+                        let style = if let Some(SelectedMeasurement::Loopback) =
+                            self.selected_measurement
+                        {
                             button::primary
                         } else {
                             button::secondary
@@ -465,7 +473,9 @@ impl State {
                                         .style(style)
                                         .into()
                                 }
-                                MeasurementState::NotLoaded(signal) => offline_signal_list_entry(signal),
+                                MeasurementState::NotLoaded(signal) => {
+                                    offline_signal_list_entry(signal)
+                                }
                             })
                             .collect();
 
@@ -473,11 +483,7 @@ impl State {
                     }
                 };
 
-                signal_list_category(
-                    "Measurements",
-                    Some(Message::LoadMeasurement),
-                    content,
-                )
+                signal_list_category("Measurements", Some(Message::LoadMeasurement), content)
             };
 
             container(column!(loopback_entry, measurement_entry).spacing(10))
