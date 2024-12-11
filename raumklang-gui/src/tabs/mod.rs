@@ -1,10 +1,10 @@
-pub mod signals;
+pub mod measurements;
 pub mod impulse_response;
 
 use iced::{widget::Container, Element, Length};
 use iced_aw::TabLabel;
 
-pub use signals::Signals;
+pub use measurements::Measurements;
 pub use impulse_response::ImpulseResponseTab;
 
 pub trait Tab {

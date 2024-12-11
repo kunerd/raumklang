@@ -9,18 +9,18 @@ use thiserror::Error;
 
 use crate::{
     widgets::chart::{self, SignalChart, TimeSeriesUnit},
-    Signal,
+    Measurement,
 };
 
 use super::Tab;
 
 #[derive(Default)]
-pub struct Signals {
+pub struct Measurements {
     chart: Option<SignalChart>,
 }
 
 #[derive(Debug, Clone)]
-pub enum SignalsMessage {
+pub enum Message {
     TimeSeriesChart(chart::SignalChartMessage),
 }
 
@@ -38,14 +38,14 @@ pub enum WavLoadError {
     Other,
 }
 
-impl Signals {
-    pub fn selected_signal_changed(&mut self, signal: Signal) {
+impl Measurements {
+    pub fn selected_signal_changed(&mut self, signal: Measurement) {
         self.chart = Some(SignalChart::new(signal, TimeSeriesUnit::Time));
     }
 
-    pub fn update(&mut self, msg: SignalsMessage) -> Task<SignalsMessage> {
+    pub fn update(&mut self, msg: Message) -> Task<Message> {
         match msg {
-            SignalsMessage::TimeSeriesChart(msg) => {
+            Message::TimeSeriesChart(msg) => {
                 if let Some(chart) = &mut self.chart {
                     chart.update_msg(msg);
                 }
@@ -55,8 +55,8 @@ impl Signals {
     }
 }
 
-impl Tab for Signals {
-    type Message = SignalsMessage;
+impl Tab for Measurements {
+    type Message = Message;
 
     fn title(&self) -> String {
         "Signals".to_string()
@@ -69,7 +69,7 @@ impl Tab for Signals {
     fn content(&self) -> iced::Element<'_, Self::Message> {
         let content = {
             if let Some(chart) = &self.chart {
-                container(chart.view().map(SignalsMessage::TimeSeriesChart))
+                container(chart.view().map(Message::TimeSeriesChart))
                     .width(Length::FillPortion(5))
             } else {
                 container(text("Not implemented.".to_string()))
