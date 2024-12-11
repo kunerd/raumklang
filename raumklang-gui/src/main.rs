@@ -30,6 +30,7 @@ use tabs::{
 
 #[derive(Debug, Clone)]
 enum Message {
+    NewProject,
     LoadProject,
     ProjectLoaded(Result<(Measurements, PathBuf), PickAndLoadError>),
     SaveProject,
@@ -43,7 +44,6 @@ enum Message {
     MeasurementsTab(tabs::measurements::Message),
     ImpulseResponseTab(tabs::impulse_response::Message),
     Debug,
-    NewProject,
     LoadRecentProject(usize),
     RecentProjectsLoaded(Result<VecDeque<PathBuf>, ()>),
 }
@@ -196,7 +196,10 @@ impl State {
                 .update(msg)
                 .map(Message::ImpulseResponseTab),
             Message::NewProject => {
-                *self = State::default();
+                *self = Self {
+                    recent_projects: self.recent_projects.clone(),
+                    ..Self::default()
+                };
                 Task::none()
             }
             Message::LoadProject => Task::perform(pick_file_and_load(), Message::ProjectLoaded),
