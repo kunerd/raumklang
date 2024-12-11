@@ -3,6 +3,7 @@ mod widgets;
 mod window;
 
 use std::{
+    collections::VecDeque,
     io,
     path::{Path, PathBuf},
     sync::Arc,
@@ -44,12 +45,18 @@ enum Message {
     Debug,
     NewProject,
     LoadRecentProject(usize),
+    Loaded(Result<VecDeque<PathBuf>, ()>),
+}
+
+enum Raumklang {
+    Loading,
+    Loaded(State),
 }
 
 #[derive(Default)]
 struct State {
     signals: Signals,
-    recent_projects: Vec<PathBuf>,
+    recent_projects: VecDeque<PathBuf>,
     selected_signal: Option<SelectedSignal>,
     active_tab: TabId,
     signals_tab: tabs::Signals,
@@ -120,19 +127,62 @@ pub enum PickAndSaveError {
 }
 
 fn main() -> iced::Result {
-    iced::application(State::title, State::update, State::view)
+    iced::application(Raumklang::title, Raumklang::update, Raumklang::view)
         .default_font(Font::with_name("Noto Sans"))
         .antialiasing(true)
-        .run()
+        .run_with(Raumklang::new)
 }
 
-impl State {
+impl Raumklang {
+    fn new() -> (Self, Task<Message>) {
+        (
+            Self::Loading,
+            Task::perform(load_recent_projects(), Message::Loaded),
+        )
+    }
+
     fn title(&self) -> String {
-        "Raumklang".to_owned()
+        const APPLICATION_NAME: &str = "Raumklang";
+        let additional_name = match self {
+            Raumklang::Loading => "- loading ...",
+            Raumklang::Loaded(_) => "",
+        };
+
+        format!("{APPLICATION_NAME} {additional_name}").to_string()
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        match self {
+            Raumklang::Loading => {
+                match message {
+                    Message::Loaded(Ok(recent_projects)) => {
+                        *self = Self::Loaded(State {
+                            recent_projects,
+                            ..State::default()
+                        })
+                    }
+                    Message::Loaded(Err(_)) => *self = Self::Loaded(State::default()),
+                    _ => {}
+                }
+
+                Task::none()
+            }
+            Raumklang::Loaded(state) => state.update(message),
+        }
+    }
+
+    fn view(&self) -> Element<'_, Message> {
+        match self {
+            Raumklang::Loading => text("Application is loading").into(),
+            Raumklang::Loaded(state) => state.view(),
+        }
+    }
+}
+
+impl State {
+    fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::Loaded(_) => Task::none(),
             Message::TabSelected(id) => {
                 self.active_tab = id;
                 Task::none()
@@ -200,13 +250,22 @@ impl State {
                     Task::none()
                 }
             },
-            Message::ProjectSaved(res) => {
-                match res {
-                    Ok(path) => self.recent_projects.push(path),
-                    Err(err) => println!("{err}"),
+            Message::ProjectSaved(res) => match res {
+                Ok(path) => {
+                    if self.recent_projects.contains(&path) {
+                        return Task::none();
+                    }
+
+                    self.recent_projects.push_front(path);
+                    let recent = self.recent_projects.clone();
+                    Task::perform(async move { save_recent_projects(&recent).await }, |_| {})
+                        .discard()
                 }
-                Task::none()
-            }
+                Err(err) => {
+                    println!("{err}");
+                    Task::none()
+                }
+            },
             Message::LoadLoopbackSignal => Task::perform(
                 pick_file_and_load_signal("loopback"),
                 Message::LoopbackSignalLoaded,
@@ -645,4 +704,29 @@ where
     tokio::task::spawn_blocking(move || Signal::from_file(path))
         .await
         .unwrap()
+}
+
+async fn save_recent_projects(recent_projects: &VecDeque<PathBuf>) {
+    const RECENT_PROJECTS_FILE_NAME: &str = "recent_projects.json";
+    let app_dirs = directories::ProjectDirs::from("de", "HenKu", "raumklang").unwrap();
+    let app_data_dir = app_dirs.data_local_dir();
+
+    tokio::fs::create_dir_all(app_data_dir).await.unwrap();
+
+    let mut file_path = app_data_dir.to_path_buf();
+    file_path.push(RECENT_PROJECTS_FILE_NAME);
+
+    let contents = serde_json::to_string_pretty(recent_projects).unwrap();
+    tokio::fs::write(file_path, contents).await.unwrap();
+}
+
+async fn load_recent_projects() -> Result<VecDeque<PathBuf>, ()> {
+    const RECENT_PROJECTS_FILE_NAME: &str = "recent_projects.json";
+    let app_dirs = directories::ProjectDirs::from("de", "HenKu", "raumklang").unwrap();
+    let app_data_dir = app_dirs.data_local_dir();
+    let mut file_path = app_data_dir.to_path_buf();
+    file_path.push(RECENT_PROJECTS_FILE_NAME);
+
+    let content = tokio::fs::read(file_path).await.map_err(|_| ())?;
+    serde_json::from_slice(&content).map_err(|_| ())
 }
