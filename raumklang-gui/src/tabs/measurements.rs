@@ -72,7 +72,7 @@ impl Tab for Measurements {
                 container(chart.view().map(Message::TimeSeriesChart))
                     .width(Length::FillPortion(5))
             } else {
-                container(text("Not implemented.".to_string()))
+                container(text("No measurement selected."))
             }
         };
 

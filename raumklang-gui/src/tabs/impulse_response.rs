@@ -24,7 +24,7 @@ use super::Tab;
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    ImpulseResponseComputed(Arc<raumklang_core::ImpulseResponse>),
+    ImpulseResponseComputed((Arc<raumklang_core::ImpulseResponse>, u32)),
     TimeSeriesChart(chart::Message),
     TabSelected(TabId),
     LeftWindowChanged(Window),
@@ -62,7 +62,11 @@ pub struct FrequencyResponse {
 }
 
 impl FrequencyResponse {
-    pub fn new(impulse_response: raumklang_core::ImpulseResponse, window: &[f32]) -> Self {
+    pub fn new(
+        impulse_response: raumklang_core::ImpulseResponse,
+        sample_rate: u32,
+        window: &[f32],
+    ) -> Self {
         let mut windowed_impulse_response: Vec<_> = impulse_response
             .impulse_response
             .iter()
@@ -83,24 +87,22 @@ impl FrequencyResponse {
             .collect();
 
         // FIXME fix constant sample rate
-        Self {
-            sample_rate: 44_100,
-            data,
-        }
+        Self { sample_rate, data }
     }
 }
 
 impl ImpulseResponseTab {
     pub fn update(&mut self, msg: Message) -> Task<Message> {
         match msg {
-            Message::ImpulseResponseComputed(impulse_response) => {
+            Message::ImpulseResponseComputed((impulse_response, sample_rate)) => {
                 let data: Vec<_> = impulse_response
                     .impulse_response
                     .iter()
                     .map(|s| s.re().abs())
                     .collect();
 
-                let signal = Measurement::new("Impulse response".to_string(), 44100, data.clone());
+                let signal =
+                    Measurement::new("Impulse response".to_string(), sample_rate, data.clone());
                 self.impulse_response_chart =
                     Some(ImpulseResponseChart::new(signal, TimeSeriesUnit::Time));
                 self.impulse_response = Some(Arc::into_inner(impulse_response).unwrap());
@@ -124,17 +126,23 @@ impl ImpulseResponseTab {
                 Task::none()
             }
             Message::TabSelected(id) => {
-                self.active_tab = id.clone();
+                let Some(loopback) = &self.loopback_signal else {
+                    return Task::none();
+                };
 
-                if let (TabId::FrequencyResponse, Some(ir)) = (id, &self.impulse_response) {
-                    let ir = ir.clone();
-                    Task::perform(
-                        compute_frequency_response(ir, self.window_builder.build()),
-                        Message::FrequencyResponseComputed,
-                    )
-                } else {
-                    Task::none()
-                }
+                let (TabId::FrequencyResponse, Some(ir)) = (&id, &self.impulse_response) else {
+                    return Task::none();
+                };
+                self.active_tab = id;
+                let ir = ir.clone();
+                Task::perform(
+                    compute_frequency_response(
+                        ir,
+                        loopback.sample_rate,
+                        self.window_builder.build(),
+                    ),
+                    Message::FrequencyResponseComputed,
+                )
             }
             Message::FrequencyResponseComputed(fr) => {
                 //let data = fr.data.iter().map(|s| dbfs(s.norm())).collect();
@@ -195,7 +203,7 @@ impl ImpulseResponseTab {
             self.measurement_signal.clone(),
         ) {
             Task::perform(
-                compute_impulse_response(loopback.data, response.data),
+                compute_impulse_response(loopback, response),
                 Message::ImpulseResponseComputed,
             )
         } else {
@@ -285,7 +293,7 @@ impl Tab for ImpulseResponseTab {
                     let col = column!(window_settings, chart.view().map(Message::TimeSeriesChart));
                     container(col).width(Length::FillPortion(5))
                 } else {
-                    container(text("Not implemented.".to_string()))
+                    container(text("No measurement selected."))
                 }
             };
 
@@ -293,7 +301,7 @@ impl Tab for ImpulseResponseTab {
                 if let Some(chart) = &self.frequency_response_chart {
                     chart.view().map(Message::FrequencyResponseChart)
                 } else {
-                    text("Not computed, yet!").into()
+                    text("You need to select a measurement and setup a window, first.").into()
                 };
 
             Tabs::new(Message::TabSelected)
@@ -325,16 +333,26 @@ fn maybe_window_settings_view(window: &Window) -> Option<Element<'static, Messag
 
 async fn compute_frequency_response(
     impulse_response: raumklang_core::ImpulseResponse,
+    sample_rate: u32,
     window: Vec<f32>,
 ) -> Arc<FrequencyResponse> {
-    Arc::new(FrequencyResponse::new(impulse_response, &window))
+    Arc::new(FrequencyResponse::new(
+        impulse_response,
+        sample_rate,
+        &window,
+    ))
 }
 
 async fn compute_impulse_response(
-    loopback: Vec<f32>,
-    response: Vec<f32>,
-) -> Arc<raumklang_core::ImpulseResponse> {
-    Arc::new(raumklang_core::ImpulseResponse::from_signals(loopback, response).unwrap())
+    loopback: Measurement,
+    response: Measurement,
+) -> (Arc<raumklang_core::ImpulseResponse>, u32) {
+    (
+        Arc::new(
+            raumklang_core::ImpulseResponse::from_signals(loopback.data, response.data).unwrap(),
+        ),
+        loopback.sample_rate,
+    )
 }
 
 async fn windowed_median(data: &mut [f32]) -> f32 {
