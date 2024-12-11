@@ -32,7 +32,7 @@ use rustfft::{
     num_traits::SaturatingSub,
 };
 
-use crate::{tabs::impulse_response::FrequencyResponse, Signal};
+use crate::{tabs::impulse_response::FrequencyResponse, Measurement};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -49,14 +49,14 @@ pub enum SignalChartMessage {
 }
 
 pub struct SignalChart {
-    signal: Signal,
+    signal: Measurement,
     time_unit: TimeSeriesUnit,
     viewport: InteractiveViewport<TimeSeriesRange>,
     cache: Cache,
 }
 
 pub struct ImpulseResponseChart {
-    signal: Signal,
+    signal: Measurement,
     window: Option<Vec<f32>>,
     noise_floor: Option<f32>,
     noise_floor_crossing: Option<usize>,
@@ -145,7 +145,7 @@ impl std::fmt::Display for AmplitudeUnit {
 }
 
 impl SignalChart {
-    pub fn new(signal: Signal, time_unit: TimeSeriesUnit) -> Self {
+    pub fn new(signal: Measurement, time_unit: TimeSeriesUnit) -> Self {
         let viewport = InteractiveViewport::new(0..signal.data.len() as i64);
         Self {
             signal,
@@ -567,7 +567,7 @@ impl Display for SmoothingType {
 }
 
 impl ImpulseResponseChart {
-    pub fn new(signal: Signal, time_unit: TimeSeriesUnit) -> Self {
+    pub fn new(signal: Measurement, time_unit: TimeSeriesUnit) -> Self {
         let viewport = InteractiveViewport::new(0..signal.data.len() as i64);
         Self {
             signal,

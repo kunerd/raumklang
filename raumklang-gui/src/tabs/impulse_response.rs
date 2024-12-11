@@ -17,7 +17,7 @@ use crate::{
         TimeSeriesUnit,
     },
     window::{Window, WindowBuilder},
-    Signal,
+    Measurement,
 };
 
 use super::Tab;
@@ -39,8 +39,8 @@ pub enum Message {
 #[derive(Default)]
 pub struct ImpulseResponseTab {
     active_tab: TabId,
-    loopback_signal: Option<Signal>,
-    measurement_signal: Option<Signal>,
+    loopback_signal: Option<Measurement>,
+    measurement_signal: Option<Measurement>,
     window_builder: WindowBuilder,
     impulse_response: Option<raumklang_core::ImpulseResponse>,
     impulse_response_chart: Option<ImpulseResponseChart>,
@@ -100,7 +100,7 @@ impl ImpulseResponseTab {
                     .map(|s| s.re().abs())
                     .collect();
 
-                let signal = Signal::new("Impulse response".to_string(), 44100, data.clone());
+                let signal = Measurement::new("Impulse response".to_string(), 44100, data.clone());
                 self.impulse_response_chart =
                     Some(ImpulseResponseChart::new(signal, TimeSeriesUnit::Time));
                 self.impulse_response = Some(Arc::into_inner(impulse_response).unwrap());
@@ -179,12 +179,12 @@ impl ImpulseResponseTab {
         }
     }
 
-    pub fn loopback_signal_changed(&mut self, signal: Signal) -> Task<Message> {
+    pub fn loopback_signal_changed(&mut self, signal: Measurement) -> Task<Message> {
         self.loopback_signal = Some(signal);
         self.compute_impulse_response()
     }
 
-    pub fn measurement_signal_changed(&mut self, signal: Signal) -> Task<Message> {
+    pub fn measurement_signal_changed(&mut self, signal: Measurement) -> Task<Message> {
         self.measurement_signal = Some(signal);
         self.compute_impulse_response()
     }

@@ -24,7 +24,7 @@ use iced_aw::{
 use rfd::FileHandle;
 use serde::Deserialize;
 use tabs::{
-    signals::{Error, WavLoadError},
+    measurements::{Error, WavLoadError},
     Tab,
 };
 
@@ -32,15 +32,15 @@ use tabs::{
 enum Message {
     LoadProject,
     SaveProject,
-    ProjectLoaded(Result<(Signals, PathBuf), PickAndLoadError>),
+    ProjectLoaded(Result<(Measurements, PathBuf), PickAndLoadError>),
     ProjectSaved(Result<PathBuf, PickAndSaveError>),
     LoadLoopbackSignal,
     LoadMeasurementSignal,
-    LoopbackSignalLoaded(Result<Arc<Signal>, Error>),
-    MeasurementSignalLoaded(Result<Arc<Signal>, Error>),
+    LoopbackSignalLoaded(Result<Arc<Measurement>, Error>),
+    MeasurementSignalLoaded(Result<Arc<Measurement>, Error>),
     TabSelected(TabId),
-    SignalSelected(SelectedSignal),
-    SignalsTab(tabs::signals::SignalsMessage),
+    SignalSelected(SelectedMeasurement),
+    SignalsTab(tabs::measurements::Message),
     ImpulseResponse(tabs::impulse_response::Message),
     Debug,
     NewProject,
@@ -55,22 +55,22 @@ enum Raumklang {
 
 #[derive(Default)]
 struct State {
-    signals: Signals,
+    measurements: Measurements,
     recent_projects: VecDeque<PathBuf>,
-    selected_signal: Option<SelectedSignal>,
+    selected_measurement: Option<SelectedMeasurement>,
     active_tab: TabId,
-    signals_tab: tabs::Signals,
+    measurements_tab: tabs::Measurements,
     impulse_response_tab: tabs::ImpulseResponseTab,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-struct Signals {
-    loopback: Option<SignalState>,
-    measurements: Vec<SignalState>,
+struct Measurements {
+    loopback: Option<MeasurementState>,
+    measurements: Vec<MeasurementState>,
 }
 
 #[derive(Debug, Clone)]
-enum SelectedSignal {
+enum SelectedMeasurement {
     Loopback,
     Measurement(usize),
 }
@@ -78,24 +78,24 @@ enum SelectedSignal {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 enum TabId {
     #[default]
-    Signals,
+    Measurements,
     ImpulseResponse,
 }
 
 #[derive(Debug, Clone)]
-enum SignalState {
-    NotLoaded(OfflineSignal),
-    Loaded(Signal),
+enum MeasurementState {
+    NotLoaded(OfflineMeasurement),
+    Loaded(Measurement),
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct OfflineSignal {
+struct OfflineMeasurement {
     name: String,
     path: PathBuf,
 }
 
 #[derive(Debug, Clone)]
-struct Signal {
+struct Measurement {
     name: String,
     path: PathBuf,
     sample_rate: u32,
@@ -187,7 +187,7 @@ impl State {
                 self.active_tab = id;
                 Task::none()
             }
-            Message::SignalsTab(msg) => self.signals_tab.update(msg).map(Message::SignalsTab),
+            Message::SignalsTab(msg) => self.measurements_tab.update(msg).map(Message::SignalsTab),
             Message::ImpulseResponse(msg) => self
                 .impulse_response_tab
                 .update(msg)
@@ -208,14 +208,14 @@ impl State {
                 )
             }
             Message::SaveProject => {
-                let content = serde_json::to_string_pretty(&self.signals).unwrap();
+                let content = serde_json::to_string_pretty(&self.measurements).unwrap();
                 Task::perform(pick_file_and_save(content), Message::ProjectSaved)
             }
             Message::ProjectLoaded(res) => match &res {
                 Ok((signals, _)) => {
-                    self.signals = Signals::default();
+                    self.measurements = Measurements::default();
                     let mut tasks = vec![];
-                    if let Some(SignalState::NotLoaded(signal)) = &signals.loopback {
+                    if let Some(MeasurementState::NotLoaded(signal)) = &signals.loopback {
                         let path = signal.path.clone();
                         tasks.push(Task::perform(
                             async {
@@ -229,7 +229,7 @@ impl State {
                     }
 
                     for m in &signals.measurements {
-                        if let SignalState::NotLoaded(signal) = m {
+                        if let MeasurementState::NotLoaded(signal) = m {
                             let path = signal.path.clone();
                             tasks.push(Task::perform(
                                 async {
@@ -273,7 +273,7 @@ impl State {
             Message::LoopbackSignalLoaded(result) => match result {
                 Ok(signal) => {
                     if let Some(signal) = Arc::into_inner(signal) {
-                        self.signals.loopback = Some(SignalState::Loaded(signal.clone()));
+                        self.measurements.loopback = Some(MeasurementState::Loaded(signal.clone()));
                         self.impulse_response_tab
                             .loopback_signal_changed(signal)
                             .map(Message::ImpulseResponse)
@@ -295,8 +295,8 @@ impl State {
             ),
             Message::MeasurementSignalLoaded(result) => match result {
                 Ok(signal) => {
-                    let signal = Arc::into_inner(signal).map(SignalState::Loaded).unwrap();
-                    self.signals.measurements.push(signal);
+                    let signal = Arc::into_inner(signal).map(MeasurementState::Loaded).unwrap();
+                    self.measurements.measurements.push(signal);
                     Task::none()
                 }
                 Err(err) => {
@@ -307,22 +307,22 @@ impl State {
             Message::Debug => Task::none(),
             Message::SignalSelected(selected) => {
                 let task = match (&self.active_tab, selected.clone()) {
-                    (TabId::Signals, SelectedSignal::Loopback) => {
-                        self.selected_signal = Some(selected);
-                        if let Some(SignalState::Loaded(signal)) = &self.signals.loopback {
-                            self.signals_tab.selected_signal_changed(signal.clone());
+                    (TabId::Measurements, SelectedMeasurement::Loopback) => {
+                        self.selected_measurement = Some(selected);
+                        if let Some(MeasurementState::Loaded(signal)) = &self.measurements.loopback {
+                            self.measurements_tab.selected_signal_changed(signal.clone());
                             Task::none()
                         } else {
                             Task::none()
                         }
                     }
-                    (TabId::ImpulseResponse, SelectedSignal::Loopback) => Task::none(),
-                    (_, SelectedSignal::Measurement(index)) => {
-                        self.selected_signal = Some(selected);
-                        if let Some(SignalState::Loaded(signal)) =
-                            self.signals.measurements.get(index)
+                    (TabId::ImpulseResponse, SelectedMeasurement::Loopback) => Task::none(),
+                    (_, SelectedMeasurement::Measurement(index)) => {
+                        self.selected_measurement = Some(selected);
+                        if let Some(MeasurementState::Loaded(signal)) =
+                            self.measurements.measurements.get(index)
                         {
-                            self.signals_tab.selected_signal_changed(signal.clone());
+                            self.measurements_tab.selected_signal_changed(signal.clone());
                             self.impulse_response_tab
                                 .measurement_signal_changed(signal.clone())
                         } else {
@@ -411,26 +411,26 @@ impl State {
 
         let side_menu: Element<_> = {
             let loopback_entry = {
-                let content: Element<_> = match &self.signals.loopback {
-                    Some(SignalState::Loaded(signal)) => {
-                        let style = if let Some(SelectedSignal::Loopback) = self.selected_signal {
+                let content: Element<_> = match &self.measurements.loopback {
+                    Some(MeasurementState::Loaded(signal)) => {
+                        let style = if let Some(SelectedMeasurement::Loopback) = self.selected_measurement {
                             button::primary
                         } else {
                             button::secondary
                         };
 
                         button(signal_list_entry(signal))
-                            .on_press(Message::SignalSelected(SelectedSignal::Loopback))
+                            .on_press(Message::SignalSelected(SelectedMeasurement::Loopback))
                             .style(style)
                             .width(Length::Fill)
                             .into()
                     }
-                    Some(SignalState::NotLoaded(signal)) => offline_signal_list_entry(signal),
+                    Some(MeasurementState::NotLoaded(signal)) => offline_signal_list_entry(signal),
                     None => text("Please load a loopback signal.").into(),
                 };
 
                 let add_msg = self
-                    .signals
+                    .measurements
                     .loopback
                     .as_ref()
                     .map_or(Some(Message::LoadLoopbackSignal), |_| None);
@@ -440,18 +440,18 @@ impl State {
 
             let measurement_entry = {
                 let content: Element<_> = {
-                    if self.signals.measurements.is_empty() {
+                    if self.measurements.measurements.is_empty() {
                         text("Please load a measurement.").into()
                     } else {
                         let entries: Vec<Element<_>> = self
-                            .signals
+                            .measurements
                             .measurements
                             .iter()
                             .enumerate()
                             .map(|(index, state)| match state {
-                                SignalState::Loaded(signal) => {
-                                    let style = match self.selected_signal {
-                                        Some(SelectedSignal::Measurement(i)) if i == index => {
+                                MeasurementState::Loaded(signal) => {
+                                    let style = match self.selected_measurement {
+                                        Some(SelectedMeasurement::Measurement(i)) if i == index => {
                                             button::primary
                                         }
                                         Some(_) => button::secondary,
@@ -459,13 +459,13 @@ impl State {
                                     };
                                     button(signal_list_entry(signal))
                                         .on_press(Message::SignalSelected(
-                                            SelectedSignal::Measurement(index),
+                                            SelectedMeasurement::Measurement(index),
                                         ))
                                         .width(Length::Fill)
                                         .style(style)
                                         .into()
                                 }
-                                SignalState::NotLoaded(signal) => offline_signal_list_entry(signal),
+                                MeasurementState::NotLoaded(signal) => offline_signal_list_entry(signal),
                             })
                             .collect();
 
@@ -488,9 +488,9 @@ impl State {
 
         let tabs = Tabs::new(Message::TabSelected)
             .push(
-                TabId::Signals,
-                self.signals_tab.label(),
-                self.signals_tab.view().map(Message::SignalsTab),
+                TabId::Measurements,
+                self.measurements_tab.label(),
+                self.measurements_tab.view().map(Message::SignalsTab),
             )
             .push(
                 TabId::ImpulseResponse,
@@ -532,7 +532,7 @@ fn signal_list_category<'a>(
         .into()
 }
 
-impl Signal {
+impl Measurement {
     pub fn new(name: String, sample_rate: u32, data: Vec<f32>) -> Self {
         Self {
             name,
@@ -567,14 +567,14 @@ impl Signal {
     }
 }
 
-impl serde::Serialize for SignalState {
+impl serde::Serialize for MeasurementState {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
         let offline_signal = match self {
-            SignalState::NotLoaded(signal) => signal,
-            SignalState::Loaded(signal) => &OfflineSignal {
+            MeasurementState::NotLoaded(signal) => signal,
+            MeasurementState::Loaded(signal) => &OfflineMeasurement {
                 name: signal.name.clone(),
                 path: signal.path.clone(),
             },
@@ -584,23 +584,23 @@ impl serde::Serialize for SignalState {
     }
 }
 
-impl<'de> serde::Deserialize<'de> for SignalState {
+impl<'de> serde::Deserialize<'de> for MeasurementState {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         let offline_signal = Deserialize::deserialize(deserializer)?;
 
-        Ok(SignalState::NotLoaded(offline_signal))
+        Ok(MeasurementState::NotLoaded(offline_signal))
     }
 }
 
-impl serde::Serialize for Signal {
+impl serde::Serialize for Measurement {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        let unloaded_signal = OfflineSignal {
+        let unloaded_signal = OfflineMeasurement {
             name: self.name.clone(),
             path: self.path.clone(),
         };
@@ -616,7 +616,7 @@ fn map_hound_error(err: hound::Error) -> WavLoadError {
     }
 }
 
-fn signal_list_entry(signal: &Signal) -> Element<'_, Message> {
+fn signal_list_entry(signal: &Measurement) -> Element<'_, Message> {
     let samples = signal.data.len();
     let sample_rate = signal.sample_rate as f32;
     column!(
@@ -628,7 +628,7 @@ fn signal_list_entry(signal: &Signal) -> Element<'_, Message> {
     .into()
 }
 
-fn offline_signal_list_entry(signal: &OfflineSignal) -> Element<'_, Message> {
+fn offline_signal_list_entry(signal: &OfflineMeasurement) -> Element<'_, Message> {
     column!(text(&signal.name), button("Reload"))
         .padding(2)
         .into()
@@ -647,7 +647,7 @@ async fn pick_file_and_save(content: String) -> Result<PathBuf, PickAndSaveError
     Ok(path)
 }
 
-async fn pick_file_and_load() -> Result<(Signals, PathBuf), PickAndLoadError> {
+async fn pick_file_and_load() -> Result<(Measurements, PathBuf), PickAndLoadError> {
     let handle = rfd::AsyncFileDialog::new()
         .set_title("Datei mit Kundendaten auswählen...")
         .pick_file()
@@ -659,7 +659,7 @@ async fn pick_file_and_load() -> Result<(Signals, PathBuf), PickAndLoadError> {
 
 async fn load_project_from_file<P: AsRef<Path>>(
     path: P,
-) -> Result<(Signals, PathBuf), PickAndLoadError> {
+) -> Result<(Measurements, PathBuf), PickAndLoadError> {
     //let store = load_from_file(handle.path()).await?;
     let path = path.as_ref();
     let content = tokio::fs::read(path)
@@ -678,7 +678,7 @@ async fn save_to_file(path: PathBuf, content: String) -> Result<(), FileError> {
         .map_err(|err| FileError::Io(err.kind()))
 }
 
-async fn pick_file_and_load_signal(file_type: impl AsRef<str>) -> Result<Arc<Signal>, Error> {
+async fn pick_file_and_load_signal(file_type: impl AsRef<str>) -> Result<Arc<Measurement>, Error> {
     let handle = pick_file(file_type).await?;
     load_signal_from_file(handle.path())
         .await
@@ -696,12 +696,12 @@ async fn pick_file(file_type: impl AsRef<str>) -> Result<FileHandle, Error> {
         .ok_or(Error::DialogClosed)
 }
 
-async fn load_signal_from_file<P>(path: P) -> Result<Signal, WavLoadError>
+async fn load_signal_from_file<P>(path: P) -> Result<Measurement, WavLoadError>
 where
     P: AsRef<Path> + Send + Sync,
 {
     let path = path.as_ref().to_owned();
-    tokio::task::spawn_blocking(move || Signal::from_file(path))
+    tokio::task::spawn_blocking(move || Measurement::from_file(path))
         .await
         .unwrap()
 }
