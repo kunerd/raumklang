@@ -184,7 +184,7 @@ impl ImpulseResponseTab {
         self.compute_impulse_response()
     }
 
-    pub fn measurement_signal_changed(&mut self, signal: Measurement) -> Task<Message> {
+    pub fn set_selected_measurement(&mut self, signal: Measurement) -> Task<Message> {
         self.measurement_signal = Some(signal);
         self.compute_impulse_response()
     }
