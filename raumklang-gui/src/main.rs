@@ -706,26 +706,31 @@ where
         .unwrap()
 }
 
-async fn save_recent_projects(recent_projects: &VecDeque<PathBuf>) {
-    const RECENT_PROJECTS_FILE_NAME: &str = "recent_projects.json";
+fn get_app_data_dir() -> PathBuf {
     let app_dirs = directories::ProjectDirs::from("de", "HenKu", "raumklang").unwrap();
-    let app_data_dir = app_dirs.data_local_dir();
+    app_dirs.data_local_dir().to_path_buf()
+}
 
-    tokio::fs::create_dir_all(app_data_dir).await.unwrap();
+fn get_recent_project_file_path<P: AsRef<Path>>(path: P) -> PathBuf {
+    const RECENT_PROJECTS_FILE_NAME: &str = "recent_projects.json";
 
-    let mut file_path = app_data_dir.to_path_buf();
+    let mut file_path = path.as_ref().to_path_buf();
     file_path.push(RECENT_PROJECTS_FILE_NAME);
+    file_path
+}
 
+async fn save_recent_projects(recent_projects: &VecDeque<PathBuf>) {
+    let app_data_dir = get_app_data_dir();
+    tokio::fs::create_dir_all(&app_data_dir).await.unwrap();
+
+    let file_path = get_recent_project_file_path(app_data_dir);
     let contents = serde_json::to_string_pretty(recent_projects).unwrap();
     tokio::fs::write(file_path, contents).await.unwrap();
 }
 
 async fn load_recent_projects() -> Result<VecDeque<PathBuf>, ()> {
-    const RECENT_PROJECTS_FILE_NAME: &str = "recent_projects.json";
-    let app_dirs = directories::ProjectDirs::from("de", "HenKu", "raumklang").unwrap();
-    let app_data_dir = app_dirs.data_local_dir();
-    let mut file_path = app_data_dir.to_path_buf();
-    file_path.push(RECENT_PROJECTS_FILE_NAME);
+    let app_data_dir = get_app_data_dir();
+    let file_path = get_recent_project_file_path(app_data_dir);
 
     let content = tokio::fs::read(file_path).await.map_err(|_| ())?;
     serde_json::from_slice(&content).map_err(|_| ())
