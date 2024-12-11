@@ -31,21 +31,21 @@ use tabs::{
 #[derive(Debug, Clone)]
 enum Message {
     LoadProject,
-    SaveProject,
     ProjectLoaded(Result<(Measurements, PathBuf), PickAndLoadError>),
+    SaveProject,
     ProjectSaved(Result<PathBuf, PickAndSaveError>),
-    LoadLoopbackSignal,
-    LoadMeasurementSignal,
-    LoopbackSignalLoaded(Result<Arc<Measurement>, Error>),
-    MeasurementSignalLoaded(Result<Arc<Measurement>, Error>),
+    LoadLoopbackMeasurement,
+    LoopbackMeasurementLoaded(Result<Arc<Measurement>, Error>),
+    LoadMeasurement,
+    MeasurementLoaded(Result<Arc<Measurement>, Error>),
     TabSelected(TabId),
-    SignalSelected(SelectedMeasurement),
-    SignalsTab(tabs::measurements::Message),
-    ImpulseResponse(tabs::impulse_response::Message),
+    MeasurementSelected(SelectedMeasurement),
+    MeasurementsTab(tabs::measurements::Message),
+    ImpulseResponseTab(tabs::impulse_response::Message),
     Debug,
     NewProject,
     LoadRecentProject(usize),
-    Loaded(Result<VecDeque<PathBuf>, ()>),
+    RecentProjectsLoaded(Result<VecDeque<PathBuf>, ()>),
 }
 
 enum Raumklang {
@@ -137,7 +137,7 @@ impl Raumklang {
     fn new() -> (Self, Task<Message>) {
         (
             Self::Loading,
-            Task::perform(load_recent_projects(), Message::Loaded),
+            Task::perform(load_recent_projects(), Message::RecentProjectsLoaded),
         )
     }
 
@@ -155,13 +155,13 @@ impl Raumklang {
         match self {
             Raumklang::Loading => {
                 match message {
-                    Message::Loaded(Ok(recent_projects)) => {
+                    Message::RecentProjectsLoaded(Ok(recent_projects)) => {
                         *self = Self::Loaded(State {
                             recent_projects,
                             ..State::default()
                         })
                     }
-                    Message::Loaded(Err(_)) => *self = Self::Loaded(State::default()),
+                    Message::RecentProjectsLoaded(Err(_)) => *self = Self::Loaded(State::default()),
                     _ => {}
                 }
 
@@ -182,16 +182,16 @@ impl Raumklang {
 impl State {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Loaded(_) => Task::none(),
+            Message::RecentProjectsLoaded(_) => Task::none(),
             Message::TabSelected(id) => {
                 self.active_tab = id;
                 Task::none()
             }
-            Message::SignalsTab(msg) => self.measurements_tab.update(msg).map(Message::SignalsTab),
-            Message::ImpulseResponse(msg) => self
+            Message::MeasurementsTab(msg) => self.measurements_tab.update(msg).map(Message::MeasurementsTab),
+            Message::ImpulseResponseTab(msg) => self
                 .impulse_response_tab
                 .update(msg)
-                .map(Message::ImpulseResponse),
+                .map(Message::ImpulseResponseTab),
             Message::NewProject => {
                 *self = State::default();
                 Task::none()
@@ -224,7 +224,7 @@ impl State {
                                     .map(Arc::new)
                                     .map_err(Error::File)
                             },
-                            Message::LoopbackSignalLoaded,
+                            Message::LoopbackMeasurementLoaded,
                         ));
                     }
 
@@ -238,7 +238,7 @@ impl State {
                                         .map(Arc::new)
                                         .map_err(Error::File)
                                 },
-                                Message::MeasurementSignalLoaded,
+                                Message::MeasurementLoaded,
                             ));
                         }
                     }
@@ -266,17 +266,17 @@ impl State {
                     Task::none()
                 }
             },
-            Message::LoadLoopbackSignal => Task::perform(
+            Message::LoadLoopbackMeasurement => Task::perform(
                 pick_file_and_load_signal("loopback"),
-                Message::LoopbackSignalLoaded,
+                Message::LoopbackMeasurementLoaded,
             ),
-            Message::LoopbackSignalLoaded(result) => match result {
+            Message::LoopbackMeasurementLoaded(result) => match result {
                 Ok(signal) => {
                     if let Some(signal) = Arc::into_inner(signal) {
                         self.measurements.loopback = Some(MeasurementState::Loaded(signal.clone()));
                         self.impulse_response_tab
                             .loopback_signal_changed(signal)
-                            .map(Message::ImpulseResponse)
+                            .map(Message::ImpulseResponseTab)
                     } else {
                         Task::none()
                     }
@@ -289,11 +289,11 @@ impl State {
                     Task::none()
                 }
             },
-            Message::LoadMeasurementSignal => Task::perform(
+            Message::LoadMeasurement => Task::perform(
                 pick_file_and_load_signal("measurement"),
-                Message::MeasurementSignalLoaded,
+                Message::MeasurementLoaded,
             ),
-            Message::MeasurementSignalLoaded(result) => match result {
+            Message::MeasurementLoaded(result) => match result {
                 Ok(signal) => {
                     let signal = Arc::into_inner(signal).map(MeasurementState::Loaded).unwrap();
                     self.measurements.measurements.push(signal);
@@ -305,7 +305,7 @@ impl State {
                 }
             },
             Message::Debug => Task::none(),
-            Message::SignalSelected(selected) => {
+            Message::MeasurementSelected(selected) => {
                 let task = match (&self.active_tab, selected.clone()) {
                     (TabId::Measurements, SelectedMeasurement::Loopback) => {
                         self.selected_measurement = Some(selected);
@@ -330,7 +330,7 @@ impl State {
                         }
                     }
                 };
-                task.map(Message::ImpulseResponse)
+                task.map(Message::ImpulseResponseTab)
             }
         }
     }
@@ -420,7 +420,7 @@ impl State {
                         };
 
                         button(signal_list_entry(signal))
-                            .on_press(Message::SignalSelected(SelectedMeasurement::Loopback))
+                            .on_press(Message::MeasurementSelected(SelectedMeasurement::Loopback))
                             .style(style)
                             .width(Length::Fill)
                             .into()
@@ -433,7 +433,7 @@ impl State {
                     .measurements
                     .loopback
                     .as_ref()
-                    .map_or(Some(Message::LoadLoopbackSignal), |_| None);
+                    .map_or(Some(Message::LoadLoopbackMeasurement), |_| None);
 
                 signal_list_category("Loopback", add_msg, content)
             };
@@ -458,7 +458,7 @@ impl State {
                                         None => button::secondary,
                                     };
                                     button(signal_list_entry(signal))
-                                        .on_press(Message::SignalSelected(
+                                        .on_press(Message::MeasurementSelected(
                                             SelectedMeasurement::Measurement(index),
                                         ))
                                         .width(Length::Fill)
@@ -475,7 +475,7 @@ impl State {
 
                 signal_list_category(
                     "Measurements",
-                    Some(Message::LoadMeasurementSignal),
+                    Some(Message::LoadMeasurement),
                     content,
                 )
             };
@@ -490,14 +490,14 @@ impl State {
             .push(
                 TabId::Measurements,
                 self.measurements_tab.label(),
-                self.measurements_tab.view().map(Message::SignalsTab),
+                self.measurements_tab.view().map(Message::MeasurementsTab),
             )
             .push(
                 TabId::ImpulseResponse,
                 self.impulse_response_tab.label(),
                 self.impulse_response_tab
                     .view()
-                    .map(Message::ImpulseResponse),
+                    .map(Message::ImpulseResponseTab),
             )
             .set_active_tab(&self.active_tab)
             .tab_bar_position(iced_aw::TabBarPosition::Top);
