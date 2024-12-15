@@ -1,3 +1,4 @@
+mod components;
 mod tabs;
 mod widgets;
 mod window;
@@ -12,10 +13,7 @@ use std::{
 use iced::{
     alignment::Vertical,
     border::Radius,
-    widget::{
-        button, column, container, horizontal_rule, horizontal_space, row, scrollable,
-        text,
-    },
+    widget::{button, column, container, horizontal_rule, horizontal_space, row, scrollable, text},
     Alignment, Border, Element, Font, Length, Task,
 };
 use iced_aw::{

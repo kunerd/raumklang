@@ -2,22 +2,20 @@ use std::sync::Arc;
 
 use iced::{
     futures::FutureExt,
-    widget::{column, container, pick_list, row, text, text_input},
+    widget::{column, container, text},
     Element, Length, Task,
 };
-use iced_aw::{number_input, TabLabel, Tabs};
+use iced_aw::{TabLabel, Tabs};
 use rustfft::{
     num_complex::{Complex32, ComplexFloat},
     FftPlanner,
 };
 
 use crate::{
-    widgets::chart::{
+    components::window_settings::{self, WindowSettings}, widgets::chart::{
         self, FrequencyResponseChart, FrequencyResponseChartMessage, ImpulseResponseChart,
         TimeSeriesUnit,
-    },
-    window::{Window, WindowBuilder},
-    Measurement,
+    }, window::WindowBuilder, Measurement
 };
 
 use super::Tab;
@@ -27,11 +25,7 @@ pub enum Message {
     ImpulseResponseComputed((Arc<raumklang_core::ImpulseResponse>, u32)),
     TimeSeriesChart(chart::Message),
     TabSelected(TabId),
-    LeftWindowChanged(Window),
-    LeftWindowWidthChanged(usize),
-    RightWindowChanged(Window),
-    RightWindowWidthChanged(usize),
-    WindowWidthChanged(usize),
+    WindowSettings(window_settings::Message),
     FrequencyResponseChart(FrequencyResponseChartMessage),
     FrequencyResponseComputed(Arc<FrequencyResponse>),
 }
@@ -41,7 +35,7 @@ pub struct ImpulseResponseTab {
     active_tab: TabId,
     loopback_signal: Option<Measurement>,
     measurement_signal: Option<Measurement>,
-    window_builder: WindowBuilder,
+    window_settings: Option<WindowSettings>,
     impulse_response: Option<raumklang_core::ImpulseResponse>,
     impulse_response_chart: Option<ImpulseResponseChart>,
     frequency_response: Option<Arc<FrequencyResponse>>,
@@ -107,6 +101,8 @@ impl ImpulseResponseTab {
                     Some(ImpulseResponseChart::new(signal, TimeSeriesUnit::Time));
                 self.impulse_response = Some(Arc::into_inner(impulse_response).unwrap());
 
+                self.recompute_window();
+
                 Task::perform(
                     async move {
                         let mut data = data.clone();
@@ -132,7 +128,13 @@ impl ImpulseResponseTab {
                     return Task::none();
                 };
 
-                let (TabId::FrequencyResponse, Some(ir)) = (&self.active_tab, &self.impulse_response) else {
+                let Some(settings) = &self.window_settings else {
+                    return Task::none();
+                };
+
+                let (TabId::FrequencyResponse, Some(ir)) =
+                    (&self.active_tab, &self.impulse_response)
+                else {
                     return Task::none();
                 };
                 let ir = ir.clone();
@@ -140,7 +142,7 @@ impl ImpulseResponseTab {
                     compute_frequency_response(
                         ir,
                         loopback.sample_rate,
-                        self.window_builder.build(),
+                        settings.window_builder.build(),
                     ),
                     Message::FrequencyResponseComputed,
                 )
@@ -160,41 +162,31 @@ impl ImpulseResponseTab {
 
                 Task::none()
             }
-            Message::LeftWindowChanged(selected) => {
-                self.window_builder.set_left_side(selected);
+            Message::WindowSettings(msg) => {
+                let Some(settings) = &mut self.window_settings else {
+                    return Task::none();
+                };
+
+                settings.update(msg);
+
                 self.recompute_window();
-                Task::none()
-            }
-            Message::RightWindowChanged(selected) => {
-                self.window_builder.set_right_side(selected);
-                self.recompute_window();
-                Task::none()
-            }
-            Message::LeftWindowWidthChanged(width) => {
-                self.window_builder.set_left_side_width(width);
-                self.recompute_window();
-                Task::none()
-            }
-            Message::RightWindowWidthChanged(width) => {
-                self.window_builder.set_right_side_width(width);
-                self.recompute_window();
-                Task::none()
-            }
-            Message::WindowWidthChanged(width) => {
-                self.window_builder.set_width(width);
-                self.recompute_window();
+
                 Task::none()
             }
         }
     }
 
     pub fn loopback_signal_changed(&mut self, signal: Measurement) -> Task<Message> {
+        let max_width = signal.data.len();
         self.loopback_signal = Some(signal);
+        self.window_settings = Some(WindowSettings::new(WindowBuilder::default(), max_width));
         self.compute_impulse_response()
     }
 
     pub fn set_selected_measurement(&mut self, signal: Measurement) -> Task<Message> {
+        let max_width = signal.data.len();
         self.measurement_signal = Some(signal);
+        self.window_settings = Some(WindowSettings::new(WindowBuilder::default(), max_width));
         self.compute_impulse_response()
     }
 
@@ -213,15 +205,16 @@ impl ImpulseResponseTab {
     }
 
     fn recompute_window(&mut self) {
-        let window = self.window_builder.build();
+        let window = self
+            .window_settings
+            .as_ref()
+            .map_or(vec![], |s| s.window_builder.build());
 
         if let Some(chart) = &mut self.impulse_response_chart {
             chart.update_window(window);
         }
     }
 }
-
-const ALL_WINDOW_TYPE: [Window; 2] = [Window::Hann, Window::Tukey(0.25)];
 
 impl Tab for ImpulseResponseTab {
     type Message = Message;
@@ -235,63 +228,19 @@ impl Tab for ImpulseResponseTab {
     }
 
     fn content(&self) -> iced::Element<'_, Self::Message> {
-        let max_window_width = self
-            .impulse_response
-            .as_ref()
-            .map_or_else(|| 44_100, |ir| ir.impulse_response.len());
-
         let content = {
             let impulse_response = {
                 if let Some(chart) = &self.impulse_response_chart {
-                    let window_settings = {
-                        let left_window_settings =
-                            maybe_window_settings_view(&self.window_builder.left_side());
-                        let right_window_settings =
-                            maybe_window_settings_view(&self.window_builder.right_side());
+                    let col = column![];
 
-                        column![
-                            row![
-                                text("Left hand window:"),
-                                pick_list(
-                                    ALL_WINDOW_TYPE,
-                                    Some(self.window_builder.left_side()),
-                                    Message::LeftWindowChanged
-                                ),
-                                text("width:"),
-                                number_input(
-                                    self.window_builder.left_side_width(),
-                                    0..self.window_builder.max_left_side_width(),
-                                    Message::LeftWindowWidthChanged
-                                )
-                            ]
-                            .push_maybe(left_window_settings),
-                            row![
-                                text("Right hand window:"),
-                                pick_list(
-                                    ALL_WINDOW_TYPE,
-                                    Some(self.window_builder.right_side()),
-                                    Message::RightWindowChanged,
-                                ),
-                                text("width:"),
-                                number_input(
-                                    self.window_builder.right_side_width(),
-                                    0..self.window_builder.max_right_side_width(),
-                                    Message::RightWindowWidthChanged
-                                )
-                            ]
-                            .push_maybe(right_window_settings),
-                            row![
-                                text("Window width"),
-                                number_input(
-                                    self.window_builder.width(),
-                                    0..max_window_width,
-                                    Message::WindowWidthChanged
-                                )
-                            ]
-                        ]
-                    };
+                    let col = col
+                        .push_maybe(
+                            self.window_settings
+                                .as_ref()
+                                .map(|s| s.view().map(Message::WindowSettings)),
+                        )
+                        .push(chart.view().map(Message::TimeSeriesChart));
 
-                    let col = column!(window_settings, chart.view().map(Message::TimeSeriesChart));
                     container(col).width(Length::FillPortion(5))
                 } else {
                     container(text("No measurement selected."))
@@ -322,14 +271,6 @@ impl Tab for ImpulseResponseTab {
 
         content.into()
     }
-}
-
-fn maybe_window_settings_view(window: &Window) -> Option<Element<'static, Message>> {
-    match window {
-        Window::Hann => None,
-        Window::Tukey(alpha) => Some(text_input("alpha", format!("{alpha}").as_str())),
-    }
-    .map(|v| v.into())
 }
 
 async fn compute_frequency_response(

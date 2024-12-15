@@ -49,7 +49,7 @@ pub enum Window {
 }
 
 impl Window {
-    const ALL: [Window; 2] = [Window::Hann, Window::Tukey(0.0)];
+    pub const ALL: [Window; 2] = [Window::Hann, Window::Tukey(0.25)];
 }
 
 impl std::fmt::Display for Window {
@@ -65,6 +65,7 @@ impl std::fmt::Display for Window {
     }
 }
 
+#[derive(Debug)]
 pub struct WindowBuilder {
     left_side: Window,
     left_side_width: usize,
