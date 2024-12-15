@@ -12,7 +12,10 @@ use std::{
 use iced::{
     alignment::Vertical,
     border::Radius,
-    widget::{button, column, container, horizontal_rule, horizontal_space, row, scrollable, text},
+    widget::{
+        button, column, container, horizontal_rule, horizontal_space, row, scrollable,
+        text,
+    },
     Alignment, Border, Element, Font, Length, Task,
 };
 use iced_aw::{
@@ -316,10 +319,8 @@ impl State {
                 let task = match (&self.active_tab, selected.clone()) {
                     (TabId::Measurements, SelectedMeasurement::Loopback) => {
                         self.selected_measurement = Some(selected);
-                        if let Some(MeasurementState::Loaded(m)) = &self.measurements.loopback
-                        {
-                            self.measurements_tab
-                                .set_measurement(m.clone());
+                        if let Some(MeasurementState::Loaded(m)) = &self.measurements.loopback {
+                            self.measurements_tab.set_measurement(m.clone());
                         }
                         Task::none()
                     }
@@ -329,8 +330,7 @@ impl State {
                         if let Some(MeasurementState::Loaded(measurement)) =
                             self.measurements.measurements.get(index)
                         {
-                            self.measurements_tab
-                                .set_measurement(measurement.clone());
+                            self.measurements_tab.set_measurement(measurement.clone());
                             self.impulse_response_tab
                                 .set_selected_measurement(measurement.clone())
                         } else {
@@ -353,7 +353,7 @@ impl State {
                 .map(|(i, r)| {
                     Item::new(
                         button(r.file_name().unwrap().to_str().unwrap())
-                            .width(Length::Fill)
+                            .width(Length::Shrink)
                             .style(button::secondary)
                             .on_press(Message::LoadRecentProject(i)),
                     )
@@ -372,7 +372,7 @@ impl State {
                         .width(Length::Fill)
                         .style(button::secondary)
                         .on_press(Message::Debug),
-                    Menu::new(recent_entries),
+                    Menu::new(recent_entries).width(Length::Shrink),
                 )
             }
         };

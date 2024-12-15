@@ -126,14 +126,15 @@ impl ImpulseResponseTab {
                 Task::none()
             }
             Message::TabSelected(id) => {
+                self.active_tab = id;
+
                 let Some(loopback) = &self.loopback_signal else {
                     return Task::none();
                 };
 
-                let (TabId::FrequencyResponse, Some(ir)) = (&id, &self.impulse_response) else {
+                let (TabId::FrequencyResponse, Some(ir)) = (&self.active_tab, &self.impulse_response) else {
                     return Task::none();
                 };
-                self.active_tab = id;
                 let ir = ir.clone();
                 Task::perform(
                     compute_frequency_response(
