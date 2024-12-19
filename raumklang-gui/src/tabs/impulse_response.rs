@@ -12,13 +12,14 @@ use rustfft::{
 };
 
 use crate::{
-    components::window_settings::{self, WindowSettings}, widgets::chart::{
+    components::window_settings::{self, WindowSettings},
+    widgets::chart::{
         self, FrequencyResponseChart, FrequencyResponseChartMessage, ImpulseResponseChart,
         TimeSeriesUnit,
-    }, window::WindowBuilder, Measurement
+    },
+    window::WindowBuilder,
+    Measurement,
 };
-
-use super::Tab;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -102,17 +103,7 @@ impl ImpulseResponseTab {
                 self.impulse_response = Some(Arc::into_inner(impulse_response).unwrap());
 
                 self.recompute_window();
-
-                Task::perform(
-                    async move {
-                        let mut data = data.clone();
-                        let nf = windowed_median(&mut data).await;
-                        let nfb = estimate_noise_floor_border(nf, &data).await;
-                        (nf, nfb)
-                    }
-                    .map(chart::Message::NoiseFloorUpdated),
-                    Message::TimeSeriesChart,
-                )
+                self.recompute_frequency_response()
             }
             Message::TimeSeriesChart(msg) => {
                 if let Some(chart) = &mut self.impulse_response_chart {
@@ -124,28 +115,7 @@ impl ImpulseResponseTab {
             Message::TabSelected(id) => {
                 self.active_tab = id;
 
-                let Some(loopback) = &self.loopback_signal else {
-                    return Task::none();
-                };
-
-                let Some(settings) = &self.window_settings else {
-                    return Task::none();
-                };
-
-                let (TabId::FrequencyResponse, Some(ir)) =
-                    (&self.active_tab, &self.impulse_response)
-                else {
-                    return Task::none();
-                };
-                let ir = ir.clone();
-                Task::perform(
-                    compute_frequency_response(
-                        ir,
-                        loopback.sample_rate,
-                        settings.window_builder.build(),
-                    ),
-                    Message::FrequencyResponseComputed,
-                )
+                self.recompute_frequency_response()
             }
             Message::FrequencyResponseComputed(fr) => {
                 //let data = fr.data.iter().map(|s| dbfs(s.norm())).collect();
@@ -184,9 +154,7 @@ impl ImpulseResponseTab {
     }
 
     pub fn set_selected_measurement(&mut self, signal: Measurement) -> Task<Message> {
-        let max_width = signal.data.len();
         self.measurement_signal = Some(signal);
-        self.window_settings = Some(WindowSettings::new(WindowBuilder::default(), max_width));
         self.compute_impulse_response()
     }
 
@@ -214,64 +182,84 @@ impl ImpulseResponseTab {
             chart.update_window(window);
         }
     }
-}
 
-impl Tab for ImpulseResponseTab {
-    type Message = Message;
-
-    fn title(&self) -> String {
-        "Impulse Response".to_string()
-    }
-
-    fn label(&self) -> iced_aw::TabLabel {
-        TabLabel::Text(self.title())
-    }
-
-    fn content(&self) -> iced::Element<'_, Self::Message> {
-        let content = {
-            let impulse_response = {
-                if let Some(chart) = &self.impulse_response_chart {
-                    let col = column![];
-
-                    let col = col
-                        .push_maybe(
-                            self.window_settings
-                                .as_ref()
-                                .map(|s| s.view().map(Message::WindowSettings)),
-                        )
-                        .push(chart.view().map(Message::TimeSeriesChart));
-
-                    container(col).width(Length::FillPortion(5))
-                } else {
-                    container(text("No measurement selected."))
-                }
-            };
-
-            let frequency_response: Element<'_, Message> =
-                if let Some(chart) = &self.frequency_response_chart {
-                    chart.view().map(Message::FrequencyResponseChart)
-                } else {
-                    text("You need to select a measurement and setup a window, first.").into()
-                };
-
-            Tabs::new(Message::TabSelected)
-                .push(
-                    TabId::ImpulseResponse,
-                    TabLabel::Text("Impulse Response".to_string()),
-                    impulse_response,
-                )
-                .push(
-                    TabId::FrequencyResponse,
-                    TabLabel::Text("Frequency Response".to_string()),
-                    frequency_response,
-                )
-                .set_active_tab(&self.active_tab)
-                .tab_bar_position(iced_aw::TabBarPosition::Top)
+    fn recompute_frequency_response(&self) -> Task<Message> {
+        let Some(loopback) = &self.loopback_signal else {
+            return Task::none();
         };
 
-        content.into()
+        let Some(settings) = &self.window_settings else {
+            return Task::none();
+        };
+
+        let (TabId::FrequencyResponse, Some(ir)) = (&self.active_tab, &self.impulse_response)
+        else {
+            return Task::none();
+        };
+        let ir = ir.clone();
+        Task::perform(
+            compute_frequency_response(ir, loopback.sample_rate, settings.window_builder.build()),
+            Message::FrequencyResponseComputed,
+        )
     }
 }
+
+//impl Tab for ImpulseResponseTab {
+//    type Message = Message;
+//
+//    fn title(&self) -> String {
+//        "Impulse Response".to_string()
+//    }
+//
+//    fn label(&self) -> iced_aw::TabLabel {
+//        TabLabel::Text(self.title())
+//    }
+//
+//    fn content(&self) -> iced::Element<'_, Self::Message> {
+//        let content = {
+//            let impulse_response = {
+//                if let Some(chart) = &self.impulse_response_chart {
+//                    let col = column![];
+//
+//                    let col = col
+//                        .push_maybe(
+//                            self.window_settings
+//                                .as_ref()
+//                                .map(|s| s.view().map(Message::WindowSettings)),
+//                        )
+//                        .push(chart.view().map(Message::TimeSeriesChart));
+//
+//                    container(col).width(Length::FillPortion(5))
+//                } else {
+//                    container(text("No measurement selected."))
+//                }
+//            };
+//
+//            let frequency_response: Element<'_, Message> =
+//                if let Some(chart) = &self.frequency_response_chart {
+//                    chart.view().map(Message::FrequencyResponseChart)
+//                } else {
+//                    text("You need to select a measurement and setup a window, first.").into()
+//                };
+//
+//            Tabs::new(Message::TabSelected)
+//                .push(
+//                    TabId::ImpulseResponse,
+//                    TabLabel::Text("Impulse Response".to_string()),
+//                    impulse_response,
+//                )
+//                .push(
+//                    TabId::FrequencyResponse,
+//                    TabLabel::Text("Frequency Response".to_string()),
+//                    frequency_response,
+//                )
+//                .set_active_tab(&self.active_tab)
+//                .tab_bar_position(iced_aw::TabBarPosition::Top)
+//        };
+//
+//        content.into()
+//    }
+//}
 
 async fn compute_frequency_response(
     impulse_response: raumklang_core::ImpulseResponse,

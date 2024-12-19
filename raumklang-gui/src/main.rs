@@ -19,15 +19,12 @@ use iced::{
 use iced_aw::{
     menu::{self, primary, Item},
     style::Status,
-    Menu, MenuBar, Tabs,
+    Menu, MenuBar,
 };
 
 use rfd::FileHandle;
 use serde::Deserialize;
-use tabs::{
-    measurements::{Error, WavLoadError},
-    Tab,
-};
+use tabs::measurements::{Error, WavLoadError};
 
 #[derive(Debug, Clone)]
 enum Message {
@@ -41,12 +38,22 @@ enum Message {
     LoadMeasurement,
     MeasurementLoaded(Result<Arc<Measurement>, Error>),
     TabSelected(TabId),
-    MeasurementSelected(SelectedMeasurement),
     MeasurementsTab(tabs::measurements::Message),
     ImpulseResponseTab(tabs::impulse_response::Message),
     Debug,
     LoadRecentProject(usize),
     RecentProjectsLoaded(Result<VecDeque<PathBuf>, ()>),
+}
+
+enum Tab {
+    Measurements(tabs::Measurements),
+    Analysis,
+}
+
+impl Default for Tab {
+    fn default() -> Self {
+        Self::Measurements(tabs::Measurements::default())
+    }
 }
 
 enum Raumklang {
@@ -56,24 +63,15 @@ enum Raumklang {
 
 #[derive(Default)]
 struct State {
+    active_tab: Tab,
     measurements: Measurements,
     recent_projects: VecDeque<PathBuf>,
-    selected_measurement: Option<SelectedMeasurement>,
-    active_tab: TabId,
-    measurements_tab: tabs::Measurements,
-    impulse_response_tab: tabs::ImpulseResponseTab,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 struct Measurements {
     loopback: Option<MeasurementState>,
     measurements: Vec<MeasurementState>,
-}
-
-#[derive(Debug, Clone)]
-enum SelectedMeasurement {
-    Loopback,
-    Measurement(usize),
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -185,17 +183,30 @@ impl State {
         match message {
             Message::RecentProjectsLoaded(_) => Task::none(),
             Message::TabSelected(id) => {
-                self.active_tab = id;
+                match id {
+                    TabId::Measurements => {
+                        self.active_tab = Tab::Measurements(tabs::Measurements::default())
+                    }
+                    TabId::ImpulseResponse => todo!(),
+                }
                 Task::none()
             }
-            Message::MeasurementsTab(msg) => self
-                .measurements_tab
-                .update(msg)
-                .map(Message::MeasurementsTab),
-            Message::ImpulseResponseTab(msg) => self
-                .impulse_response_tab
-                .update(msg)
-                .map(Message::ImpulseResponseTab),
+            Message::MeasurementsTab(msg) => {
+                if let Tab::Measurements(tab) = &mut self.active_tab {
+                    return tab
+                        .update(msg, &self.measurements)
+                        .map(Message::MeasurementsTab);
+                }
+
+                Task::none()
+            }
+            Message::ImpulseResponseTab(msg) => {
+                //self
+                //.impulse_response_tab
+                //.update(msg)
+                //.map(Message::ImpulseResponseTab),
+                Task::none()
+            }
             Message::NewProject => {
                 *self = Self {
                     recent_projects: self.recent_projects.clone(),
@@ -281,12 +292,11 @@ impl State {
                 Ok(signal) => {
                     if let Some(signal) = Arc::into_inner(signal) {
                         self.measurements.loopback = Some(MeasurementState::Loaded(signal.clone()));
-                        self.impulse_response_tab
-                            .loopback_signal_changed(signal)
-                            .map(Message::ImpulseResponseTab)
-                    } else {
-                        Task::none()
-                    }
+                        //self.impulse_response_tab
+                        //    .loopback_signal_changed(signal)
+                        //    .map(Message::ImpulseResponseTab)
+                    } 
+                    Task::none()
                 }
                 Err(err) => {
                     match err {
@@ -313,31 +323,6 @@ impl State {
                     Task::none()
                 }
             },
-            Message::MeasurementSelected(selected) => {
-                let task = match (&self.active_tab, selected.clone()) {
-                    (TabId::Measurements, SelectedMeasurement::Loopback) => {
-                        self.selected_measurement = Some(selected);
-                        if let Some(MeasurementState::Loaded(m)) = &self.measurements.loopback {
-                            self.measurements_tab.set_measurement(m.clone());
-                        }
-                        Task::none()
-                    }
-                    (TabId::ImpulseResponse, SelectedMeasurement::Loopback) => Task::none(),
-                    (_, SelectedMeasurement::Measurement(index)) => {
-                        self.selected_measurement = Some(selected);
-                        if let Some(MeasurementState::Loaded(measurement)) =
-                            self.measurements.measurements.get(index)
-                        {
-                            self.measurements_tab.set_measurement(measurement.clone());
-                            self.impulse_response_tab
-                                .set_selected_measurement(measurement.clone())
-                        } else {
-                            Task::none()
-                        }
-                    }
-                };
-                task.map(Message::ImpulseResponseTab)
-            }
             Message::Debug => Task::none(),
         }
     }
@@ -374,6 +359,7 @@ impl State {
                 )
             }
         };
+
         let project_menu = Item::with_menu(
             button(text("Project").align_y(Vertical::Center))
                 .width(Length::Shrink)
@@ -416,127 +402,16 @@ impl State {
                 ..primary(theme, status)
             });
 
-        let side_menu: Element<_> = {
-            let loopback_entry = {
-                let content: Element<_> = match &self.measurements.loopback {
-                    Some(MeasurementState::Loaded(signal)) => {
-                        let style = if let Some(SelectedMeasurement::Loopback) =
-                            self.selected_measurement
-                        {
-                            button::primary
-                        } else {
-                            button::secondary
-                        };
-
-                        button(signal_list_entry(signal))
-                            .on_press(Message::MeasurementSelected(SelectedMeasurement::Loopback))
-                            .style(style)
-                            .width(Length::Fill)
-                            .into()
-                    }
-                    Some(MeasurementState::NotLoaded(signal)) => offline_signal_list_entry(signal),
-                    None => text("Please load a loopback signal.").into(),
-                };
-
-                let add_msg = self
-                    .measurements
-                    .loopback
-                    .as_ref()
-                    .map_or(Some(Message::LoadLoopbackMeasurement), |_| None);
-
-                signal_list_category("Loopback", add_msg, content)
-            };
-
-            let measurement_entry = {
-                let content: Element<_> = {
-                    if self.measurements.measurements.is_empty() {
-                        text("Please load a measurement.").into()
-                    } else {
-                        let entries: Vec<Element<_>> = self
-                            .measurements
-                            .measurements
-                            .iter()
-                            .enumerate()
-                            .map(|(index, state)| match state {
-                                MeasurementState::Loaded(signal) => {
-                                    let style = match self.selected_measurement {
-                                        Some(SelectedMeasurement::Measurement(i)) if i == index => {
-                                            button::primary
-                                        }
-                                        Some(_) => button::secondary,
-                                        None => button::secondary,
-                                    };
-                                    button(signal_list_entry(signal))
-                                        .on_press(Message::MeasurementSelected(
-                                            SelectedMeasurement::Measurement(index),
-                                        ))
-                                        .width(Length::Fill)
-                                        .style(style)
-                                        .into()
-                                }
-                                MeasurementState::NotLoaded(signal) => {
-                                    offline_signal_list_entry(signal)
-                                }
-                            })
-                            .collect();
-
-                        column(entries).padding(5).spacing(5).into()
-                    }
-                };
-
-                signal_list_category("Measurements", Some(Message::LoadMeasurement), content)
-            };
-
-            container(column!(loopback_entry, measurement_entry).spacing(10))
-                .padding(5)
-                .width(Length::FillPortion(1))
-                .into()
+        let content = match &self.active_tab {
+            Tab::Measurements(tab) => tab.view(&self.measurements).map(Message::MeasurementsTab),
+            Tab::Analysis => todo!(),
         };
-
-        let tabs = Tabs::new(Message::TabSelected)
-            .push(
-                TabId::Measurements,
-                self.measurements_tab.label(),
-                self.measurements_tab.view().map(Message::MeasurementsTab),
-            )
-            .push(
-                TabId::ImpulseResponse,
-                self.impulse_response_tab.label(),
-                self.impulse_response_tab
-                    .view()
-                    .map(Message::ImpulseResponseTab),
-            )
-            .set_active_tab(&self.active_tab)
-            .tab_bar_position(iced_aw::TabBarPosition::Top);
-
-        let side_menu = scrollable(side_menu).width(Length::FillPortion(1));
-        let r = row!(side_menu, tabs.width(Length::FillPortion(3)));
-        let c = column!(menu, r);
+        let c = column!(menu, content);
         //let sc = scrollable(c);
         let back = container(c).width(Length::Fill).height(Length::Fill);
 
         back.into()
     }
-}
-
-fn signal_list_category<'a>(
-    name: &'a str,
-    add_msg: Option<Message>,
-    content: Element<'a, Message>,
-) -> Element<'a, Message> {
-    let header = row!(text(name), horizontal_space()).align_y(Alignment::Center);
-
-    let header = if let Some(msg) = add_msg {
-        header.push(button("+").on_press(msg))
-    } else {
-        header
-    };
-
-    column!(header, horizontal_rule(1), content)
-        .width(Length::Fill)
-        .spacing(5)
-        .padding(10)
-        .into()
 }
 
 impl Measurement {
@@ -621,24 +496,6 @@ fn map_hound_error(err: hound::Error) -> WavLoadError {
         hound::Error::IoError(err) => WavLoadError::IoError(err.kind()),
         _ => WavLoadError::Other,
     }
-}
-
-fn signal_list_entry(signal: &Measurement) -> Element<'_, Message> {
-    let samples = signal.data.len();
-    let sample_rate = signal.sample_rate as f32;
-    column!(
-        text(&signal.name),
-        text(format!("Samples: {}", samples)),
-        text(format!("Duration: {} s", samples as f32 / sample_rate)),
-    )
-    .padding(2)
-    .into()
-}
-
-fn offline_signal_list_entry(signal: &OfflineMeasurement) -> Element<'_, Message> {
-    column!(text(&signal.name), button("Reload"))
-        .padding(2)
-        .into()
 }
 
 async fn pick_file_and_save(content: String) -> Result<PathBuf, PickAndSaveError> {
