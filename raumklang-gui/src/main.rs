@@ -30,7 +30,7 @@ use tabs::measurements::{Error, WavLoadError};
 enum Message {
     NewProject,
     LoadProject,
-    ProjectLoaded(Result<(Measurements, PathBuf), PickAndLoadError>),
+    ProjectLoaded(Result<(Data, PathBuf), PickAndLoadError>),
     SaveProject,
     ProjectSaved(Result<PathBuf, PickAndSaveError>),
     LoadLoopbackMeasurement,
@@ -64,12 +64,12 @@ enum Raumklang {
 #[derive(Default)]
 struct State {
     active_tab: Tab,
-    measurements: Measurements,
+    measurements: Data,
     recent_projects: VecDeque<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-struct Measurements {
+struct Data {
     loopback: Option<MeasurementState>,
     measurements: Vec<MeasurementState>,
 }
@@ -231,7 +231,7 @@ impl State {
             }
             Message::ProjectLoaded(res) => match &res {
                 Ok((signals, _)) => {
-                    self.measurements = Measurements::default();
+                    self.measurements = Data::default();
                     let mut tasks = vec![];
                     if let Some(MeasurementState::NotLoaded(signal)) = &signals.loopback {
                         let path = signal.path.clone();
@@ -511,7 +511,7 @@ async fn pick_file_and_save(content: String) -> Result<PathBuf, PickAndSaveError
     Ok(path)
 }
 
-async fn pick_file_and_load() -> Result<(Measurements, PathBuf), PickAndLoadError> {
+async fn pick_file_and_load() -> Result<(Data, PathBuf), PickAndLoadError> {
     let handle = rfd::AsyncFileDialog::new()
         .set_title("Datei mit Kundendaten auswählen...")
         .pick_file()
@@ -523,7 +523,7 @@ async fn pick_file_and_load() -> Result<(Measurements, PathBuf), PickAndLoadErro
 
 async fn load_project_from_file<P: AsRef<Path>>(
     path: P,
-) -> Result<(Measurements, PathBuf), PickAndLoadError> {
+) -> Result<(Data, PathBuf), PickAndLoadError> {
     //let store = load_from_file(handle.path()).await?;
     let path = path.as_ref();
     let content = tokio::fs::read(path)
