@@ -98,16 +98,15 @@ impl DataState {
                     DataStateChange::MeasurementAdded(m) => measurements.push(m),
                 }
 
-                if loopback.is_some() && !measurements.is_empty() {
-                    Self::Measurements(Data {
-                        loopback: loopback.unwrap(),
+                match loopback {
+                    Some(loopback) if !measurements.is_empty() => Self::Measurements(Data {
+                       loopback,
                         measurements: measurements.to_vec(),
-                    })
-                } else {
-                    Self::NotEnoughMeasurements {
+                    }),
+                    _ => Self::NotEnoughMeasurements {
                         loopback,
                         measurements: measurements.to_vec(),
-                    }
+                    },
                 }
             }
             (DataState::Measurements(mut data), DataStateChange::LoopbackAdded(loopback)) => {
