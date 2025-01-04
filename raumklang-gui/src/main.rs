@@ -24,7 +24,7 @@ use iced_aw::{
 
 use rfd::FileHandle;
 use serde::Deserialize;
-use tabs::measurements::{Error, WavLoadError};
+use tabs::measurements::{self, Error, WavLoadError};
 
 #[derive(Debug, Clone)]
 enum Message {
@@ -33,9 +33,7 @@ enum Message {
     ProjectLoaded(Result<(Data, PathBuf), PickAndLoadError>),
     SaveProject,
     ProjectSaved(Result<PathBuf, PickAndSaveError>),
-    LoadLoopbackMeasurement,
     LoopbackMeasurementLoaded(Result<Arc<Measurement>, Error>),
-    LoadMeasurement,
     MeasurementLoaded(Result<Arc<Measurement>, Error>),
     TabSelected(TabId),
     MeasurementsTab(tabs::measurements::Message),
@@ -83,6 +81,20 @@ enum DataStateChange {
 }
 
 impl DataState {
+    pub fn loopback(&self) -> Option<&MeasurementState> {
+        match self {
+            DataState::NotEnoughMeasurements { loopback, .. } => loopback.as_ref(),
+            DataState::Measurements(data) => Some(&data.loopback),
+        }
+    }
+
+    pub fn measurements(&self) -> &Vec<MeasurementState> {
+        match self {
+            DataState::NotEnoughMeasurements { measurements, .. } => measurements,
+            DataState::Measurements(data) => &data.measurements,
+        }
+    }
+
     fn transition(&mut self, action: DataStateChange) {
         let cur_state = mem::take(self);
         let next_state = match (cur_state, action) {
@@ -100,7 +112,7 @@ impl DataState {
 
                 match loopback {
                     Some(loopback) if !measurements.is_empty() => Self::Measurements(Data {
-                       loopback,
+                        loopback,
                         measurements: measurements.to_vec(),
                     }),
                     _ => Self::NotEnoughMeasurements {
@@ -255,15 +267,25 @@ impl State {
                 Task::none()
             }
             Message::MeasurementsTab(msg) => {
-                let DataState::Measurements(data) = &self.data else {
+                let Tab::Measurements(tab) = &mut self.active_tab else {
                     return Task::none();
                 };
 
-                if let Tab::Measurements(tab) = &mut self.active_tab {
-                    return tab.update(msg, &data).map(Message::MeasurementsTab);
-                }
+                let (task, event) = tab.update(msg, &self.data);
 
-                Task::none()
+                let event_task = match event {
+                    Some(measurements::Event::LoadLoopbackMeasurement) => Task::perform(
+                        pick_file_and_load_signal("loopback"),
+                        Message::LoopbackMeasurementLoaded,
+                    ),
+                    Some(measurements::Event::LoadMeasurement) => Task::perform(
+                        pick_file_and_load_signal("measurement"),
+                        Message::MeasurementLoaded,
+                    ),
+                    None => Task::none(),
+                };
+
+                Task::batch(vec![event_task, task.map(Message::MeasurementsTab)])
             }
             Message::ImpulseResponseTab(msg) => {
                 //self
@@ -349,10 +371,6 @@ impl State {
                     Task::none()
                 }
             },
-            Message::LoadLoopbackMeasurement => Task::perform(
-                pick_file_and_load_signal("loopback"),
-                Message::LoopbackMeasurementLoaded,
-            ),
             Message::LoopbackMeasurementLoaded(result) => match result {
                 Ok(signal) => {
                     if let Some(signal) = Arc::into_inner(signal) {
@@ -373,10 +391,6 @@ impl State {
                     Task::none()
                 }
             },
-            Message::LoadMeasurement => Task::perform(
-                pick_file_and_load_signal("measurement"),
-                Message::MeasurementLoaded,
-            ),
             Message::MeasurementLoaded(result) => match result {
                 Ok(signal) => {
                     let signal = Arc::into_inner(signal)

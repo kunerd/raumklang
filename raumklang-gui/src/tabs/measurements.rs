@@ -6,10 +6,8 @@ use iced::{
 };
 use thiserror::Error;
 
-use crate::{
-    widgets::chart::{self, SignalChart},
-    MeasurementState,
-};
+use crate::widgets::chart::{self, SignalChart};
+use crate::MeasurementState;
 
 #[derive(Default)]
 pub struct Measurements {
@@ -29,6 +27,12 @@ pub enum Message {
     LoadLoopbackMeasurement,
     MeasurementSelected(SelectedMeasurement),
     TimeSeriesChart(chart::SignalChartMessage),
+}
+
+#[derive(Debug, Clone)]
+pub enum Event {
+    LoadLoopbackMeasurement,
+    LoadMeasurement,
 }
 
 #[derive(Debug, Clone)]
@@ -138,24 +142,26 @@ impl Measurements {
         .into()
     }
 
-    pub fn update(&mut self, msg: Message, data: &crate::Data) -> Task<Message> {
+    pub fn update(
+        &mut self,
+        msg: Message,
+        data: &crate::DataState,
+    ) -> (Task<Message>, Option<Event>) {
         match msg {
-            Message::LoadMeasurement => todo!(),
-            Message::LoadLoopbackMeasurement => todo!(),
+            Message::LoadLoopbackMeasurement => {
+                (Task::none(), Some(Event::LoadLoopbackMeasurement))
+            }
+            Message::LoadMeasurement => (Task::none(), Some(Event::LoadMeasurement)),
             Message::MeasurementSelected(selected) => {
                 let signal = match selected {
-                    SelectedMeasurement::Loopback => Some(&data.loopback),
-                    SelectedMeasurement::Measurement(id) => data.measurements.get(id),
+                    SelectedMeasurement::Loopback => data.loopback(),
+                    SelectedMeasurement::Measurement(id) => {
+                        let measurements = data.measurements();
+                        measurements.get(id)
+                    }
                 };
                 self.selected = Some(selected);
 
-                //self.chart = signal
-                //    .and_then(|state| match state {
-                //        MeasurementState::NotLoaded(_) => None,
-                //        MeasurementState::Loaded(measurement) => Some(measurement),
-                //    })
-                //    .map(|m| chart::SignalChart::new(m.clone(), chart::TimeSeriesUnit::Time));
-                //
                 self.chart = match signal {
                     Some(MeasurementState::Loaded(m)) => Some(chart::SignalChart::new(
                         m.clone(),
@@ -164,13 +170,13 @@ impl Measurements {
                     _ => None,
                 };
 
-                Task::none()
+                (Task::none(), None)
             }
             Message::TimeSeriesChart(msg) => {
                 if let Some(chart) = &mut self.chart {
                     chart.update_msg(msg);
                 }
-                Task::none()
+                (Task::none(), None)
             }
         }
     }
