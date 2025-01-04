@@ -5,7 +5,7 @@ mod window;
 
 use std::{
     collections::VecDeque,
-    io,
+    io, mem,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -13,8 +13,8 @@ use std::{
 use iced::{
     alignment::Vertical,
     border::Radius,
-    widget::{button, column, container, horizontal_rule, horizontal_space, row, scrollable, text},
-    Alignment, Border, Element, Font, Length, Task,
+    widget::{button, column, container, text},
+    Border, Element, Font, Length, Task,
 };
 use iced_aw::{
     menu::{self, primary, Item},
@@ -64,13 +64,77 @@ enum Raumklang {
 #[derive(Default)]
 struct State {
     active_tab: Tab,
-    measurements: Data,
+    data: DataState,
     recent_projects: VecDeque<PathBuf>,
 }
 
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+enum DataState {
+    NotEnoughMeasurements {
+        loopback: Option<MeasurementState>,
+        measurements: Vec<MeasurementState>,
+    },
+    Measurements(Data),
+}
+
+enum DataStateChange {
+    LoopbackAdded(MeasurementState),
+    MeasurementAdded(MeasurementState),
+}
+
+impl DataState {
+    fn transition(&mut self, action: DataStateChange) {
+        let cur_state = mem::take(self);
+        let next_state = match (cur_state, action) {
+            (
+                DataState::NotEnoughMeasurements {
+                    mut loopback,
+                    mut measurements,
+                },
+                action,
+            ) => {
+                match action {
+                    DataStateChange::LoopbackAdded(m) => loopback = Some(m),
+                    DataStateChange::MeasurementAdded(m) => measurements.push(m),
+                }
+
+                if loopback.is_some() && !measurements.is_empty() {
+                    Self::Measurements(Data {
+                        loopback: loopback.unwrap(),
+                        measurements: measurements.to_vec(),
+                    })
+                } else {
+                    Self::NotEnoughMeasurements {
+                        loopback,
+                        measurements: measurements.to_vec(),
+                    }
+                }
+            }
+            (DataState::Measurements(mut data), DataStateChange::LoopbackAdded(loopback)) => {
+                data.loopback = loopback;
+                Self::Measurements(data)
+            }
+            (DataState::Measurements(mut data), DataStateChange::MeasurementAdded(m)) => {
+                data.measurements.push(m);
+                Self::Measurements(data)
+            }
+        };
+
+        *self = next_state;
+    }
+}
+
+impl Default for DataState {
+    fn default() -> Self {
+        Self::NotEnoughMeasurements {
+            loopback: None,
+            measurements: vec![],
+        }
+    }
+}
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct Data {
-    loopback: Option<MeasurementState>,
+    loopback: MeasurementState,
     measurements: Vec<MeasurementState>,
 }
 
@@ -192,10 +256,12 @@ impl State {
                 Task::none()
             }
             Message::MeasurementsTab(msg) => {
+                let DataState::Measurements(data) = &self.data else {
+                    return Task::none();
+                };
+
                 if let Tab::Measurements(tab) = &mut self.active_tab {
-                    return tab
-                        .update(msg, &self.measurements)
-                        .map(Message::MeasurementsTab);
+                    return tab.update(msg, &data).map(Message::MeasurementsTab);
                 }
 
                 Task::none()
@@ -226,14 +292,14 @@ impl State {
                 )
             }
             Message::SaveProject => {
-                let content = serde_json::to_string_pretty(&self.measurements).unwrap();
+                let content = serde_json::to_string_pretty(&self.data).unwrap();
                 Task::perform(pick_file_and_save(content), Message::ProjectSaved)
             }
             Message::ProjectLoaded(res) => match &res {
                 Ok((signals, _)) => {
-                    self.measurements = Data::default();
+                    self.data = DataState::default();
                     let mut tasks = vec![];
-                    if let Some(MeasurementState::NotLoaded(signal)) = &signals.loopback {
+                    if let MeasurementState::NotLoaded(signal) = &signals.loopback {
                         let path = signal.path.clone();
                         tasks.push(Task::perform(
                             async {
@@ -291,11 +357,13 @@ impl State {
             Message::LoopbackMeasurementLoaded(result) => match result {
                 Ok(signal) => {
                     if let Some(signal) = Arc::into_inner(signal) {
-                        self.measurements.loopback = Some(MeasurementState::Loaded(signal.clone()));
+                        self.data.transition(DataStateChange::LoopbackAdded(
+                            MeasurementState::Loaded(signal.clone()),
+                        ));
                         //self.impulse_response_tab
                         //    .loopback_signal_changed(signal)
                         //    .map(Message::ImpulseResponseTab)
-                    } 
+                    }
                     Task::none()
                 }
                 Err(err) => {
@@ -315,7 +383,8 @@ impl State {
                     let signal = Arc::into_inner(signal)
                         .map(MeasurementState::Loaded)
                         .unwrap();
-                    self.measurements.measurements.push(signal);
+                    self.data
+                        .transition(DataStateChange::MeasurementAdded(signal.clone()));
                     Task::none()
                 }
                 Err(err) => {
@@ -403,7 +472,7 @@ impl State {
             });
 
         let content = match &self.active_tab {
-            Tab::Measurements(tab) => tab.view(&self.measurements).map(Message::MeasurementsTab),
+            Tab::Measurements(tab) => tab.view(&self.data).map(Message::MeasurementsTab),
             Tab::Analysis => todo!(),
         };
         let c = column!(menu, content);

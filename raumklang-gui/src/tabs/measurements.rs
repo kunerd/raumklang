@@ -46,10 +46,18 @@ pub enum WavLoadError {
 }
 
 impl Measurements {
-    pub fn view<'a>(&'a self, measurements: &'a crate::Data) -> Element<'a, Message> {
+    pub fn view<'a>(&'a self, data: &'a crate::DataState) -> Element<'a, Message> {
+        let (loopback, measurements) = match data {
+            crate::DataState::NotEnoughMeasurements {
+                loopback,
+                measurements,
+            } => (loopback.as_ref(), measurements),
+            crate::DataState::Measurements(data) => (Some(&data.loopback), &data.measurements),
+        };
+
         let side_menu: Element<_> = {
             let loopback_entry = {
-                let content: Element<_> = match &measurements.loopback {
+                let content: Element<_> = match loopback {
                     Some(MeasurementState::Loaded(signal)) => {
                         let style = if let Some(SelectedMeasurement::Loopback) = self.selected {
                             button::primary
@@ -67,8 +75,7 @@ impl Measurements {
                     None => text("Please load a loopback signal.").into(),
                 };
 
-                let add_msg = measurements
-                    .loopback
+                let add_msg = loopback
                     .as_ref()
                     .map_or(Some(Message::LoadLoopbackMeasurement), |_| None);
 
@@ -77,11 +84,10 @@ impl Measurements {
 
             let measurement_entries = {
                 let content: Element<_> = {
-                    if measurements.measurements.is_empty() {
+                    if measurements.is_empty() {
                         text("Please load a measurement.").into()
                     } else {
                         let entries: Vec<Element<_>> = measurements
-                            .measurements
                             .iter()
                             .enumerate()
                             .map(|(index, state)| match state {
@@ -132,14 +138,14 @@ impl Measurements {
         .into()
     }
 
-    pub fn update(&mut self, msg: Message, measurements: &crate::Data) -> Task<Message> {
+    pub fn update(&mut self, msg: Message, data: &crate::Data) -> Task<Message> {
         match msg {
             Message::LoadMeasurement => todo!(),
             Message::LoadLoopbackMeasurement => todo!(),
             Message::MeasurementSelected(selected) => {
                 let signal = match selected {
-                    SelectedMeasurement::Loopback => measurements.loopback.as_ref(),
-                    SelectedMeasurement::Measurement(id) => measurements.measurements.get(id),
+                    SelectedMeasurement::Loopback => Some(&data.loopback),
+                    SelectedMeasurement::Measurement(id) => data.measurements.get(id),
                 };
                 self.selected = Some(selected);
 
