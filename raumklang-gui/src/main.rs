@@ -13,7 +13,7 @@ use std::{
 use iced::{
     alignment::Vertical,
     border::Radius,
-    widget::{button, column, container, text},
+    widget::{button, column, container, row, text},
     Border, Element, Font, Length, Task,
 };
 use iced_aw::{
@@ -45,7 +45,7 @@ enum Message {
 
 enum Tab {
     Measurements(tabs::Measurements),
-    Analysis,
+    Analysis(tabs::Measurements, tabs::ImpulseResponseTab),
 }
 
 impl Default for Tab {
@@ -159,7 +159,7 @@ enum TabId {
 #[derive(Debug, Clone)]
 enum MeasurementState {
     NotLoaded(OfflineMeasurement),
-    Loaded(Measurement),
+    Loaded(Arc<Measurement>),
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -258,12 +258,14 @@ impl State {
         match message {
             Message::RecentProjectsLoaded(_) => Task::none(),
             Message::TabSelected(id) => {
-                match id {
-                    TabId::Measurements => {
-                        self.active_tab = Tab::Measurements(tabs::Measurements::default())
+                let cur_tab = mem::take(&mut self.active_tab);
+                self.active_tab = match (id, cur_tab) {
+                    (TabId::Measurements, _) => Tab::Measurements(tabs::Measurements::default()),
+                    (TabId::ImpulseResponse, Tab::Measurements(m_tab)) => {
+                        Tab::Analysis(m_tab, tabs::ImpulseResponseTab::default())
                     }
-                    TabId::ImpulseResponse => todo!(),
-                }
+                    (TabId::ImpulseResponse, tab) => tab,
+                };
                 Task::none()
             }
             Message::MeasurementsTab(msg) => {
@@ -373,14 +375,10 @@ impl State {
             },
             Message::LoopbackMeasurementLoaded(result) => match result {
                 Ok(signal) => {
-                    if let Some(signal) = Arc::into_inner(signal) {
-                        self.data.transition(DataStateChange::LoopbackAdded(
-                            MeasurementState::Loaded(signal.clone()),
-                        ));
-                        //self.impulse_response_tab
-                        //    .loopback_signal_changed(signal)
-                        //    .map(Message::ImpulseResponseTab)
-                    }
+                    self.data
+                        .transition(DataStateChange::LoopbackAdded(MeasurementState::Loaded(
+                            signal,
+                        )));
                     Task::none()
                 }
                 Err(err) => {
@@ -393,11 +391,8 @@ impl State {
             },
             Message::MeasurementLoaded(result) => match result {
                 Ok(signal) => {
-                    let signal = Arc::into_inner(signal)
-                        .map(MeasurementState::Loaded)
-                        .unwrap();
                     self.data
-                        .transition(DataStateChange::MeasurementAdded(signal.clone()));
+                        .transition(DataStateChange::MeasurementAdded(MeasurementState::Loaded(signal)));
                     Task::none()
                 }
                 Err(err) => {
@@ -410,83 +405,118 @@ impl State {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let recent_menu = {
-            let recent_entries: Vec<_> = self
-                .recent_projects
-                .iter()
-                .enumerate()
-                .map(|(i, r)| {
-                    Item::new(
-                        button(r.file_name().unwrap().to_str().unwrap())
-                            .width(Length::Shrink)
-                            .style(button::secondary)
-                            .on_press(Message::LoadRecentProject(i)),
-                    )
-                })
-                .collect();
+        let menu = {
+            let project_menu = {
+                let recent_menu = {
+                    let recent_entries: Vec<_> = self
+                        .recent_projects
+                        .iter()
+                        .enumerate()
+                        .map(|(i, r)| {
+                            Item::new(
+                                button(r.file_name().unwrap().to_str().unwrap())
+                                    .width(Length::Shrink)
+                                    .style(button::secondary)
+                                    .on_press(Message::LoadRecentProject(i)),
+                            )
+                        })
+                        .collect();
 
-            if recent_entries.is_empty() {
-                Item::new(
-                    button("Load recent ...")
-                        .width(Length::Fill)
-                        .style(button::secondary),
-                )
-            } else {
+                    if recent_entries.is_empty() {
+                        Item::new(
+                            button("Load recent ...")
+                                .width(Length::Fill)
+                                .style(button::secondary),
+                        )
+                    } else {
+                        Item::with_menu(
+                            button("Load recent ...")
+                                .width(Length::Fill)
+                                .style(button::secondary)
+                                .on_press(Message::Debug),
+                            Menu::new(recent_entries).width(Length::Shrink),
+                        )
+                    }
+                };
+
                 Item::with_menu(
-                    button("Load recent ...")
-                        .width(Length::Fill)
+                    button(text("Project").align_y(Vertical::Center))
+                        .width(Length::Shrink)
                         .style(button::secondary)
                         .on_press(Message::Debug),
-                    Menu::new(recent_entries).width(Length::Shrink),
+                    Menu::new(
+                        [
+                            Item::new(
+                                button("New")
+                                    .width(Length::Fill)
+                                    .style(button::secondary)
+                                    .on_press(Message::NewProject),
+                            ),
+                            Item::new(
+                                button("Load ...")
+                                    .width(Length::Fill)
+                                    .style(button::secondary)
+                                    .on_press(Message::LoadProject),
+                            ),
+                            recent_menu,
+                            Item::new(
+                                button("Save ...")
+                                    .width(Length::Fill)
+                                    .style(button::secondary)
+                                    .on_press(Message::SaveProject),
+                            ),
+                        ]
+                        .into(),
+                    )
+                    .width(180),
                 )
-            }
+            };
+
+            MenuBar::new(vec![project_menu])
+                .draw_path(menu::DrawPath::Backdrop)
+                .style(|theme: &iced::Theme, status: Status| menu::Style {
+                    path_border: Border {
+                        radius: Radius::new(3.0),
+                        ..Default::default()
+                    },
+                    ..primary(theme, status)
+                })
         };
 
-        let project_menu = Item::with_menu(
-            button(text("Project").align_y(Vertical::Center))
-                .width(Length::Shrink)
-                .style(button::secondary)
-                .on_press(Message::Debug),
-            Menu::new(
-                [
-                    Item::new(
-                        button("New")
-                            .width(Length::Fill)
-                            .style(button::secondary)
-                            .on_press(Message::NewProject),
-                    ),
-                    Item::new(
-                        button("Load ...")
-                            .width(Length::Fill)
-                            .style(button::secondary)
-                            .on_press(Message::LoadProject),
-                    ),
-                    recent_menu,
-                    Item::new(
-                        button("Save ...")
-                            .width(Length::Fill)
-                            .style(button::secondary)
-                            .on_press(Message::SaveProject),
-                    ),
-                ]
-                .into(),
-            )
-            .width(180),
-        );
+        let content = {
+            let ir_button_msg = match self.data {
+                DataState::NotEnoughMeasurements { .. } => None,
+                DataState::Measurements(_) => Some(Message::TabSelected(TabId::ImpulseResponse)),
+            };
 
-        let menu = MenuBar::new(vec![project_menu])
-            .draw_path(menu::DrawPath::Backdrop)
-            .style(|theme: &iced::Theme, status: Status| menu::Style {
-                path_border: Border {
-                    radius: Radius::new(3.0),
-                    ..Default::default()
-                },
-                ..primary(theme, status)
-            });
+            fn tab_button(title: &str, active: bool, msg: Option<Message>) -> Element<'_, Message> {
+                let btn = button(title).on_press_maybe(msg);
+                match active {
+                    true => btn.style(button::primary),
+                    false => btn.style(button::secondary),
+                }
+                .into()
+            }
 
-        let content = match &self.active_tab {
-            Tab::Measurements(tab) => tab.view(&self.data).map(Message::MeasurementsTab),
-            Tab::Analysis => todo!(),
+            let tab_bar = row![
+                tab_button(
+                    "Measurements",
+                    matches!(self.active_tab, Tab::Measurements(_)),
+                    Some(Message::TabSelected(TabId::Measurements))
+                ),
+                tab_button(
+                    "Impulse Response",
+                    matches!(self.active_tab, Tab::Analysis(..)),
+                    ir_button_msg
+                )
+            ];
+
+            let tab_content = match &self.active_tab {
+                Tab::Measurements(tab) => tab.view(&self.data).map(Message::MeasurementsTab),
+                Tab::Analysis(_, ir) => ir.view().map(Message::ImpulseResponseTab),
+            };
+
+            column!(tab_bar, tab_content)
         };
         let c = column!(menu, content);
         //let sc = scrollable(c);

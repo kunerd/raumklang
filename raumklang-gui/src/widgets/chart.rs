@@ -1,7 +1,7 @@
 use std::{
     cell::RefCell,
     fmt::Display,
-    ops::{Range, Sub},
+    ops::{Range, Sub}, sync::Arc,
 };
 
 use iced::{
@@ -26,13 +26,13 @@ use plotters::{
 };
 use plotters_backend::DrawingBackend;
 use plotters_iced::{Chart, ChartBuilder, ChartWidget, Renderer};
-use raumklang_core::dbfs;
+use raumklang_core::{dbfs, FrequencyResponse};
 use rustfft::{
     num_complex::{Complex, ComplexFloat},
     num_traits::SaturatingSub,
 };
 
-use crate::{tabs::impulse_response::FrequencyResponse, Measurement};
+use crate::Measurement;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -49,7 +49,7 @@ pub enum SignalChartMessage {
 }
 
 pub struct SignalChart {
-    signal: Measurement,
+    signal: Arc<Measurement>,
     time_unit: TimeSeriesUnit,
     viewport: InteractiveViewport<TimeSeriesRange>,
     cache: Cache,
@@ -145,7 +145,7 @@ impl std::fmt::Display for AmplitudeUnit {
 }
 
 impl SignalChart {
-    pub fn new(signal: Measurement, time_unit: TimeSeriesUnit) -> Self {
+    pub fn new(signal: Arc<Measurement>, time_unit: TimeSeriesUnit) -> Self {
         let viewport = InteractiveViewport::new(0..signal.data.len() as i64);
         Self {
             signal,
