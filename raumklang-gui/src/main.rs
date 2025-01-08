@@ -1,4 +1,5 @@
 mod components;
+mod model;
 mod tabs;
 mod widgets;
 mod window;
@@ -22,6 +23,7 @@ use iced_aw::{
     Menu, MenuBar,
 };
 
+use model::Measurement;
 use rfd::FileHandle;
 use serde::Deserialize;
 use tabs::measurements::{self, Error, WavLoadError};
@@ -30,11 +32,11 @@ use tabs::measurements::{self, Error, WavLoadError};
 enum Message {
     NewProject,
     LoadProject,
-    ProjectLoaded(Result<(MeasurementsState, PathBuf), PickAndLoadError>),
+    ProjectLoaded(Result<(model::Project, PathBuf), PickAndLoadError>),
     SaveProject,
     ProjectSaved(Result<PathBuf, PickAndSaveError>),
     LoopbackMeasurementLoaded(Result<Arc<Measurement>, Error>),
-    MeasurementLoaded(Option<usize>, Result<Arc<Measurement>, Error>),
+    MeasurementLoaded(Result<Arc<Measurement>, Error>),
     TabSelected(TabId),
     MeasurementsTab(tabs::measurements::Message),
     ImpulseResponseTab(tabs::impulse_response::Message),
@@ -76,7 +78,7 @@ enum MeasurementsState {
 
 enum MeasurementsStateChanged {
     LoopbackAdded(MeasurementState),
-    MeasurementAdded(Option<usize>, MeasurementState),
+    MeasurementAdded(MeasurementState),
 }
 
 impl MeasurementsState {
@@ -106,12 +108,7 @@ impl MeasurementsState {
             ) => {
                 match action {
                     MeasurementsStateChanged::LoopbackAdded(m) => loopback = Some(m),
-                    MeasurementsStateChanged::MeasurementAdded(id, m) => match id {
-                        Some(id) => {
-                            let _ = std::mem::replace(&mut measurements[id], m);
-                        }
-                        None => measurements.push(m),
-                    },
+                    MeasurementsStateChanged::MeasurementAdded(m) => measurements.push(m),
                 }
 
                 match loopback {
@@ -134,16 +131,9 @@ impl MeasurementsState {
             }
             (
                 MeasurementsState::Analysing(mut data),
-                MeasurementsStateChanged::MeasurementAdded(id, m),
+                MeasurementsStateChanged::MeasurementAdded(m),
             ) => {
-                match id {
-                    Some(id) => {
-                        let _ = std::mem::replace(&mut data.measurements[id], m);
-                    }
-                    None => {
-                        data.measurements.push(m);
-                    }
-                }
+                data.measurements.push(m);
                 Self::Analysing(data)
             }
         };
@@ -185,15 +175,6 @@ struct OfflineMeasurement {
     name: String,
     path: PathBuf,
 }
-
-#[derive(Debug, Clone)]
-struct Measurement {
-    name: String,
-    path: PathBuf,
-    sample_rate: u32,
-    data: Vec<f32>,
-}
-
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum FileError {
     #[error("Fehler beim laden der Datei: {0}")]
@@ -259,7 +240,7 @@ impl Raumklang {
                 Task::none()
             }
             Message::LoadProject => Task::perform(pick_file_and_load(), Message::ProjectLoaded),
-            Message::ProjectLoaded(Ok((new_measurements_state, _))) => {
+            Message::ProjectLoaded(Ok((project, _))) => {
                 let Raumklang::Loaded {
                     measurements_state, ..
                 } = self
@@ -267,14 +248,11 @@ impl Raumklang {
                     return Task::none();
                 };
 
-                *measurements_state = new_measurements_state;
+                *measurements_state = MeasurementsState::default();
+
                 let mut tasks = vec![];
-                if let MeasurementsState::Collecting {
-                    loopback: Some(MeasurementState::NotLoaded(loopback)),
-                    ..
-                } = &measurements_state
-                {
-                    let path = loopback.path.clone();
+                if let Some(loopback) = project.loopback {
+                    let path = loopback.path().clone();
                     tasks.push(Task::perform(
                         async {
                             load_signal_from_file(path)
@@ -285,20 +263,17 @@ impl Raumklang {
                         Message::LoopbackMeasurementLoaded,
                     ));
                 }
-
-                for (i, m) in measurements_state.measurements().iter().enumerate() {
-                    if let MeasurementState::NotLoaded(signal) = m {
-                        let path = signal.path.clone();
-                        tasks.push(Task::perform(
-                            async {
-                                load_signal_from_file(path)
-                                    .await
-                                    .map(Arc::new)
-                                    .map_err(Error::File)
-                            },
-                            move |result| Message::MeasurementLoaded(Some(i), result),
-                        ));
-                    }
+                for measurement in project.measurements {
+                    let path = measurement.path.clone();
+                    tasks.push(Task::perform(
+                        async {
+                            load_signal_from_file(path)
+                                .await
+                                .map(Arc::new)
+                                .map_err(Error::File)
+                        },
+                        Message::MeasurementLoaded,
+                    ))
                 }
 
                 Task::batch(tasks)
@@ -356,28 +331,64 @@ impl Raumklang {
 
                 Task::none()
             }
-            Message::MeasurementLoaded(id, Ok(measurement)) => {
+            Message::MeasurementLoaded(Ok(measurement)) => {
                 let Raumklang::Loaded {
-                    measurements_state: data,
-                    ..
+                    measurements_state, ..
                 } = self
                 else {
                     return Task::none();
                 };
 
-                data.transition(MeasurementsStateChanged::MeasurementAdded(
-                    id,
+                measurements_state.transition(MeasurementsStateChanged::MeasurementAdded(
                     MeasurementState::Loaded(measurement),
                 ));
 
                 Task::none()
             }
-            Message::LoopbackMeasurementLoaded(Err(err))
-            | Message::MeasurementLoaded(_, Err(err)) => {
+            Message::LoopbackMeasurementLoaded(Err(Error::File(WavLoadError::IoError(
+                path,
+                _,
+            )))) => {
+                let Raumklang::Loaded {
+                    measurements_state, ..
+                } = self
+                else {
+                    return Task::none();
+                };
+
+                measurements_state.transition(MeasurementsStateChanged::LoopbackAdded(
+                    MeasurementState::NotLoaded(OfflineMeasurement::from_path(path)),
+                ));
+
+                Task::none()
+            }
+            Message::LoopbackMeasurementLoaded(Err(err)) => {
+                dbg!(err);
+
+                Task::none()
+            }
+            Message::MeasurementLoaded(Err(err)) => {
                 match err {
-                    Error::File(reason) => println!("Error: {reason}"),
+                    Error::File(WavLoadError::IoError(path, reason)) => {
+                        let Raumklang::Loaded {
+                            measurements_state, ..
+                        } = self
+                        else {
+                            return Task::none();
+                        };
+
+                        measurements_state.transition(MeasurementsStateChanged::MeasurementAdded(
+                            MeasurementState::NotLoaded(OfflineMeasurement::from_path(path)),
+                        ));
+
+                        dbg!(reason);
+                    }
+                    Error::File(err) => {
+                        dbg!(err);
+                    }
                     Error::DialogClosed => {}
                 }
+
                 Task::none()
             }
             Message::TabSelected(tab_id) => {
@@ -416,11 +427,10 @@ impl Raumklang {
                         pick_file_and_load_signal("loopback"),
                         Message::LoopbackMeasurementLoaded,
                     ),
-                    Some(measurements::Event::LoadMeasurement) => {
-                        Task::perform(pick_file_and_load_signal("measurement"), |result| {
-                            Message::MeasurementLoaded(None, result)
-                        })
-                    }
+                    Some(measurements::Event::LoadMeasurement) => Task::perform(
+                        pick_file_and_load_signal("measurement"),
+                        Message::MeasurementLoaded,
+                    ),
                     None => Task::none(),
                 };
 
@@ -610,41 +620,6 @@ impl Raumklang {
     }
 }
 
-impl Measurement {
-    pub fn new(name: String, sample_rate: u32, data: Vec<f32>) -> Self {
-        Self {
-            name,
-            path: PathBuf::new(),
-            sample_rate,
-            data,
-        }
-    }
-
-    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError> {
-        let name = path
-            .as_ref()
-            .file_name()
-            .and_then(|n| n.to_os_string().into_string().ok())
-            .unwrap_or("Unknown".to_string());
-
-        let mut loopback = hound::WavReader::open(path.as_ref()).map_err(map_hound_error)?;
-        let sample_rate = loopback.spec().sample_rate;
-        // only mono files
-        // currently only 32bit float
-        let data = loopback
-            .samples::<f32>()
-            .collect::<hound::Result<Vec<f32>>>()
-            .map_err(map_hound_error)?;
-
-        Ok(Self {
-            name,
-            path: path.as_ref().to_path_buf(),
-            sample_rate,
-            data,
-        })
-    }
-}
-
 impl serde::Serialize for MeasurementState {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -737,10 +712,14 @@ impl serde::Serialize for MeasurementsState {
     }
 }
 
-fn map_hound_error(err: hound::Error) -> WavLoadError {
-    match err {
-        hound::Error::IoError(err) => WavLoadError::IoError(err.kind()),
-        _ => WavLoadError::Other,
+impl OfflineMeasurement {
+    fn from_path(path: PathBuf) -> OfflineMeasurement {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or("Unknown Measurement".to_string());
+
+        Self { name, path }
     }
 }
 
@@ -757,7 +736,7 @@ async fn pick_file_and_save(content: String) -> Result<PathBuf, PickAndSaveError
     Ok(path)
 }
 
-async fn pick_file_and_load() -> Result<(MeasurementsState, PathBuf), PickAndLoadError> {
+async fn pick_file_and_load() -> Result<(model::Project, PathBuf), PickAndLoadError> {
     let handle = rfd::AsyncFileDialog::new()
         .set_title("Choose project file ...")
         .pick_file()
@@ -769,7 +748,7 @@ async fn pick_file_and_load() -> Result<(MeasurementsState, PathBuf), PickAndLoa
 
 async fn load_project_from_file<P: AsRef<Path>>(
     path: P,
-) -> Result<(MeasurementsState, PathBuf), PickAndLoadError> {
+) -> Result<(model::Project, PathBuf), PickAndLoadError> {
     //let store = load_from_file(handle.path()).await?;
     let path = path.as_ref();
     let content = tokio::fs::read(path)

@@ -1,4 +1,4 @@
-use std::io::ErrorKind;
+use std::{io::ErrorKind, path::PathBuf};
 
 use iced::{
     widget::{button, column, container, horizontal_rule, horizontal_space, row, scrollable, text},
@@ -6,7 +6,7 @@ use iced::{
 };
 use thiserror::Error;
 
-use crate::widgets::chart::{self, SignalChart};
+use crate::{model, widgets::chart::{self, SignalChart}};
 use crate::MeasurementState;
 
 #[derive(Default)]
@@ -44,7 +44,7 @@ pub enum Error {
 #[derive(Error, Debug, Clone)]
 pub enum WavLoadError {
     #[error("couldn't read file")]
-    IoError(ErrorKind),
+    IoError(PathBuf, ErrorKind),
     #[error("unknown")]
     Other,
 }
@@ -208,7 +208,7 @@ fn offline_signal_list_entry(signal: &crate::OfflineMeasurement) -> Element<'_, 
         .into()
 }
 
-fn signal_list_entry(signal: &crate::Measurement) -> Element<'_, Message> {
+fn signal_list_entry(signal: &model::Measurement) -> Element<'_, Message> {
     let samples = signal.data.len();
     let sample_rate = signal.sample_rate as f32;
     column!(
