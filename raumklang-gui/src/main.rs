@@ -54,16 +54,15 @@ impl Default for Tab {
     }
 }
 
-enum Raumklang {
-    Loading,
-    Loaded(State),
-}
-
 #[derive(Default)]
-struct State {
-    active_tab: Tab,
-    data: DataState,
-    recent_projects: VecDeque<PathBuf>,
+enum Raumklang {
+    #[default]
+    Loading,
+    Loaded {
+        active_tab: Tab,
+        data: DataState,
+        recent_projects: VecDeque<PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -219,47 +218,131 @@ impl Raumklang {
         const APPLICATION_NAME: &str = "Raumklang";
         let additional_name = match self {
             Raumklang::Loading => "- loading ...",
-            Raumklang::Loaded(_) => "",
+            Raumklang::Loaded { .. } => "",
         };
 
         format!("{APPLICATION_NAME} {additional_name}").to_string()
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
-        match self {
-            Raumklang::Loading => {
-                match message {
-                    Message::RecentProjectsLoaded(Ok(recent_projects)) => {
-                        *self = Self::Loaded(State {
-                            recent_projects,
-                            ..State::default()
-                        })
-                    }
-                    Message::RecentProjectsLoaded(Err(_)) => *self = Self::Loaded(State::default()),
-                    _ => {}
-                }
+        match message {
+            Message::NewProject => {
+                let Raumklang::Loaded { data, .. } = self else {
+                    return Task::none();
+                };
+
+                *data = DataState::default();
 
                 Task::none()
             }
-            Raumklang::Loaded(state) => state.update(message),
-        }
-    }
+            Message::LoadProject => Task::perform(pick_file_and_load(), Message::ProjectLoaded),
+            Message::ProjectLoaded(Ok((new_data, _))) => {
+                let Raumklang::Loaded { data, .. } = self else {
+                    return Task::none();
+                };
 
-    fn view(&self) -> Element<'_, Message> {
-        match self {
-            Raumklang::Loading => text("Application is loading").into(),
-            Raumklang::Loaded(state) => state.view(),
-        }
-    }
-}
+                *data = DataState::default();
+                let mut tasks = vec![];
+                if let MeasurementState::NotLoaded(signal) = &new_data.loopback {
+                    let path = signal.path.clone();
+                    tasks.push(Task::perform(
+                        async {
+                            load_signal_from_file(path)
+                                .await
+                                .map(Arc::new)
+                                .map_err(Error::File)
+                        },
+                        Message::LoopbackMeasurementLoaded,
+                    ));
+                }
 
-impl State {
-    fn update(&mut self, message: Message) -> Task<Message> {
-        match message {
-            Message::RecentProjectsLoaded(_) => Task::none(),
-            Message::TabSelected(id) => {
-                let cur_tab = mem::take(&mut self.active_tab);
-                self.active_tab = match (id, cur_tab) {
+                for m in &new_data.measurements {
+                    if let MeasurementState::NotLoaded(signal) = m {
+                        let path = signal.path.clone();
+                        tasks.push(Task::perform(
+                            async {
+                                load_signal_from_file(path)
+                                    .await
+                                    .map(Arc::new)
+                                    .map_err(Error::File)
+                            },
+                            Message::MeasurementLoaded,
+                        ));
+                    }
+                }
+
+                Task::batch(tasks)
+            }
+            Message::ProjectLoaded(Err(err)) => {
+                dbg!(err);
+
+                Task::none()
+            }
+            Message::SaveProject => {
+                let Raumklang::Loaded { data, .. } = self else {
+                    return Task::none();
+                };
+
+                let content = serde_json::to_string_pretty(&data).unwrap();
+                Task::perform(pick_file_and_save(content), Message::ProjectSaved)
+            }
+            Message::ProjectSaved(Ok(path)) => {
+                let Raumklang::Loaded {
+                    recent_projects, ..
+                } = self
+                else {
+                    return Task::none();
+                };
+
+                if recent_projects.contains(&path) {
+                    return Task::none();
+                }
+
+                recent_projects.push_front(path);
+                let recent = recent_projects.clone();
+                Task::perform(async move { save_recent_projects(&recent).await }, |_| {}).discard()
+            }
+            Message::ProjectSaved(Err(err)) => {
+                dbg!(err);
+
+                Task::none()
+            }
+            Message::LoopbackMeasurementLoaded(Ok(loopback)) => {
+                let Raumklang::Loaded { data, .. } = self else {
+                    return Task::none();
+                };
+
+                data.transition(DataStateChange::LoopbackAdded(MeasurementState::Loaded(
+                    loopback,
+                )));
+
+                Task::none()
+            }
+            Message::MeasurementLoaded(Ok(measurement)) => {
+                let Raumklang::Loaded { data, .. } = self else {
+                    return Task::none();
+                };
+
+                data.transition(DataStateChange::MeasurementAdded(MeasurementState::Loaded(
+                    measurement,
+                )));
+
+                Task::none()
+            }
+            Message::LoopbackMeasurementLoaded(Err(err)) | Message::MeasurementLoaded(Err(err)) => {
+                match err {
+                    Error::File(reason) => println!("Error: {reason}"),
+                    Error::DialogClosed => {}
+                }
+                Task::none()
+            }
+            Message::TabSelected(tab_id) => {
+                let Raumklang::Loaded { active_tab, .. } = self else {
+                    return Task::none();
+                };
+
+                let cur_tab = mem::take(active_tab);
+                *active_tab = match (tab_id, cur_tab) {
                     (TabId::Measurements, _) => Tab::Measurements(tabs::Measurements::default()),
                     (TabId::ImpulseResponse, Tab::Measurements(m_tab)) => {
                         Tab::Analysis(m_tab, tabs::ImpulseResponseTab::default())
@@ -268,12 +351,19 @@ impl State {
                 };
                 Task::none()
             }
-            Message::MeasurementsTab(msg) => {
-                let Tab::Measurements(tab) = &mut self.active_tab else {
+            Message::MeasurementsTab(message) => {
+                let Raumklang::Loaded {
+                    active_tab, data, ..
+                } = self
+                else {
                     return Task::none();
                 };
 
-                let (task, event) = tab.update(msg, &self.data);
+                let Tab::Measurements(active_tab) = active_tab else {
+                    return Task::none();
+                };
+
+                let (task, event) = active_tab.update(message, data);
 
                 let event_task = match event {
                     Some(measurements::Event::LoadLoopbackMeasurement) => Task::perform(
@@ -289,240 +379,187 @@ impl State {
 
                 Task::batch(vec![event_task, task.map(Message::MeasurementsTab)])
             }
-            Message::ImpulseResponseTab(msg) => {
-                //self
-                //.impulse_response_tab
-                //.update(msg)
-                //.map(Message::ImpulseResponseTab),
-                Task::none()
-            }
-            Message::NewProject => {
-                *self = Self {
-                    recent_projects: self.recent_projects.clone(),
-                    ..Self::default()
-                };
-                Task::none()
-            }
-            Message::LoadProject => Task::perform(pick_file_and_load(), Message::ProjectLoaded),
+            Message::ImpulseResponseTab(_message) => Task::none(),
+            Message::Debug => Task::none(),
             Message::LoadRecentProject(id) => {
-                let Some(recent) = self.recent_projects.get(id) else {
+                let Raumklang::Loaded {
+                    recent_projects, ..
+                } = self
+                else {
+                    return Task::none();
+                };
+
+                let Some(project) = recent_projects.get(id) else {
                     return Task::none();
                 };
 
                 Task::perform(
-                    load_project_from_file(recent.clone()),
+                    load_project_from_file(project.clone()),
                     Message::ProjectLoaded,
                 )
             }
-            Message::SaveProject => {
-                let content = serde_json::to_string_pretty(&self.data).unwrap();
-                Task::perform(pick_file_and_save(content), Message::ProjectSaved)
+            Message::RecentProjectsLoaded(Ok(recent_projects)) => {
+                let Self::Loading = self else {
+                    return Task::none();
+                };
+
+                *self = Self::Loaded {
+                    recent_projects,
+                    active_tab: Tab::default(),
+                    data: DataState::default(),
+                };
+
+                Task::none()
             }
-            Message::ProjectLoaded(res) => match &res {
-                Ok((signals, _)) => {
-                    self.data = DataState::default();
-                    let mut tasks = vec![];
-                    if let MeasurementState::NotLoaded(signal) = &signals.loopback {
-                        let path = signal.path.clone();
-                        tasks.push(Task::perform(
-                            async {
-                                load_signal_from_file(path)
-                                    .await
-                                    .map(Arc::new)
-                                    .map_err(Error::File)
-                            },
-                            Message::LoopbackMeasurementLoaded,
-                        ));
-                    }
+            Message::RecentProjectsLoaded(Err(_)) => {
+                let Self::Loading = self else {
+                    return Task::none();
+                };
 
-                    for m in &signals.measurements {
-                        if let MeasurementState::NotLoaded(signal) = m {
-                            let path = signal.path.clone();
-                            tasks.push(Task::perform(
-                                async {
-                                    load_signal_from_file(path)
-                                        .await
-                                        .map(Arc::new)
-                                        .map_err(Error::File)
-                                },
-                                Message::MeasurementLoaded,
-                            ));
-                        }
-                    }
+                *self = Self::Loaded {
+                    active_tab: Tab::default(),
+                    data: DataState::default(),
+                    recent_projects: VecDeque::new(),
+                };
 
-                    Task::batch(tasks)
-                }
-                Err(err) => {
-                    println!("{err}");
-                    Task::none()
-                }
-            },
-            Message::ProjectSaved(res) => match res {
-                Ok(path) => {
-                    if self.recent_projects.contains(&path) {
-                        return Task::none();
-                    }
-
-                    self.recent_projects.push_front(path);
-                    let recent = self.recent_projects.clone();
-                    Task::perform(async move { save_recent_projects(&recent).await }, |_| {})
-                        .discard()
-                }
-                Err(err) => {
-                    println!("{err}");
-                    Task::none()
-                }
-            },
-            Message::LoopbackMeasurementLoaded(result) => match result {
-                Ok(signal) => {
-                    self.data
-                        .transition(DataStateChange::LoopbackAdded(MeasurementState::Loaded(
-                            signal,
-                        )));
-                    Task::none()
-                }
-                Err(err) => {
-                    match err {
-                        Error::File(reason) => println!("Error: {reason}"),
-                        Error::DialogClosed => {}
-                    }
-                    Task::none()
-                }
-            },
-            Message::MeasurementLoaded(result) => match result {
-                Ok(signal) => {
-                    self.data
-                        .transition(DataStateChange::MeasurementAdded(MeasurementState::Loaded(signal)));
-                    Task::none()
-                }
-                Err(err) => {
-                    println!("{:?}", err);
-                    Task::none()
-                }
-            },
-            Message::Debug => Task::none(),
+                Task::none()
+            }
         }
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let menu = {
-            let project_menu = {
-                let recent_menu = {
-                    let recent_entries: Vec<_> = self
-                        .recent_projects
-                        .iter()
-                        .enumerate()
-                        .map(|(i, r)| {
-                            Item::new(
-                                button(r.file_name().unwrap().to_str().unwrap())
-                                    .width(Length::Shrink)
-                                    .style(button::secondary)
-                                    .on_press(Message::LoadRecentProject(i)),
-                            )
-                        })
-                        .collect();
+        match self {
+            Raumklang::Loading => text("Application is loading").into(),
+            Raumklang::Loaded {
+                active_tab,
+                data,
+                recent_projects,
+            } => {
+                let menu = {
+                    let project_menu = {
+                        let recent_menu = {
+                            let recent_entries: Vec<_> = recent_projects
+                                .iter()
+                                .enumerate()
+                                .map(|(i, r)| {
+                                    Item::new(
+                                        button(r.file_name().unwrap().to_str().unwrap())
+                                            .width(Length::Shrink)
+                                            .style(button::secondary)
+                                            .on_press(Message::LoadRecentProject(i)),
+                                    )
+                                })
+                                .collect();
 
-                    if recent_entries.is_empty() {
-                        Item::new(
-                            button("Load recent ...")
-                                .width(Length::Fill)
-                                .style(button::secondary),
-                        )
-                    } else {
+                            if recent_entries.is_empty() {
+                                Item::new(
+                                    button("Load recent ...")
+                                        .width(Length::Fill)
+                                        .style(button::secondary),
+                                )
+                            } else {
+                                Item::with_menu(
+                                    button("Load recent ...")
+                                        .width(Length::Fill)
+                                        .style(button::secondary)
+                                        .on_press(Message::Debug),
+                                    Menu::new(recent_entries).width(Length::Shrink),
+                                )
+                            }
+                        };
+
                         Item::with_menu(
-                            button("Load recent ...")
-                                .width(Length::Fill)
+                            button(text("Project").align_y(Vertical::Center))
+                                .width(Length::Shrink)
                                 .style(button::secondary)
                                 .on_press(Message::Debug),
-                            Menu::new(recent_entries).width(Length::Shrink),
+                            Menu::new(
+                                [
+                                    Item::new(
+                                        button("New")
+                                            .width(Length::Fill)
+                                            .style(button::secondary)
+                                            .on_press(Message::NewProject),
+                                    ),
+                                    Item::new(
+                                        button("Load ...")
+                                            .width(Length::Fill)
+                                            .style(button::secondary)
+                                            .on_press(Message::LoadProject),
+                                    ),
+                                    recent_menu,
+                                    Item::new(
+                                        button("Save ...")
+                                            .width(Length::Fill)
+                                            .style(button::secondary)
+                                            .on_press(Message::SaveProject),
+                                    ),
+                                ]
+                                .into(),
+                            )
+                            .width(180),
                         )
-                    }
+                    };
+
+                    MenuBar::new(vec![project_menu])
+                        .draw_path(menu::DrawPath::Backdrop)
+                        .style(|theme: &iced::Theme, status: Status| menu::Style {
+                            path_border: Border {
+                                radius: Radius::new(3.0),
+                                ..Default::default()
+                            },
+                            ..primary(theme, status)
+                        })
                 };
 
-                Item::with_menu(
-                    button(text("Project").align_y(Vertical::Center))
-                        .width(Length::Shrink)
-                        .style(button::secondary)
-                        .on_press(Message::Debug),
-                    Menu::new(
-                        [
-                            Item::new(
-                                button("New")
-                                    .width(Length::Fill)
-                                    .style(button::secondary)
-                                    .on_press(Message::NewProject),
-                            ),
-                            Item::new(
-                                button("Load ...")
-                                    .width(Length::Fill)
-                                    .style(button::secondary)
-                                    .on_press(Message::LoadProject),
-                            ),
-                            recent_menu,
-                            Item::new(
-                                button("Save ...")
-                                    .width(Length::Fill)
-                                    .style(button::secondary)
-                                    .on_press(Message::SaveProject),
-                            ),
-                        ]
-                        .into(),
-                    )
-                    .width(180),
-                )
-            };
+                let content = {
+                    let ir_button_msg = match data {
+                        DataState::NotEnoughMeasurements { .. } => None,
+                        DataState::Measurements(_) => {
+                            Some(Message::TabSelected(TabId::ImpulseResponse))
+                        }
+                    };
 
-            MenuBar::new(vec![project_menu])
-                .draw_path(menu::DrawPath::Backdrop)
-                .style(|theme: &iced::Theme, status: Status| menu::Style {
-                    path_border: Border {
-                        radius: Radius::new(3.0),
-                        ..Default::default()
-                    },
-                    ..primary(theme, status)
-                })
-        };
+                    fn tab_button(
+                        title: &str,
+                        active: bool,
+                        msg: Option<Message>,
+                    ) -> Element<'_, Message> {
+                        let btn = button(title).on_press_maybe(msg);
+                        match active {
+                            true => btn.style(button::primary),
+                            false => btn.style(button::secondary),
+                        }
+                        .into()
+                    }
 
-        let content = {
-            let ir_button_msg = match self.data {
-                DataState::NotEnoughMeasurements { .. } => None,
-                DataState::Measurements(_) => Some(Message::TabSelected(TabId::ImpulseResponse)),
-            };
+                    let tab_bar = row![
+                        tab_button(
+                            "Measurements",
+                            matches!(active_tab, Tab::Measurements(_)),
+                            Some(Message::TabSelected(TabId::Measurements))
+                        ),
+                        tab_button(
+                            "Impulse Response",
+                            matches!(active_tab, Tab::Analysis(..)),
+                            ir_button_msg
+                        )
+                    ];
 
-            fn tab_button(title: &str, active: bool, msg: Option<Message>) -> Element<'_, Message> {
-                let btn = button(title).on_press_maybe(msg);
-                match active {
-                    true => btn.style(button::primary),
-                    false => btn.style(button::secondary),
-                }
-                .into()
+                    let tab_content = match &active_tab {
+                        Tab::Measurements(tab) => tab.view(data).map(Message::MeasurementsTab),
+                        Tab::Analysis(_, ir) => ir.view().map(Message::ImpulseResponseTab),
+                    };
+
+                    column!(tab_bar, tab_content)
+                };
+                let c = column!(menu, content);
+                //let sc = scrollable(c);
+                let back = container(c).width(Length::Fill).height(Length::Fill);
+
+                back.into()
             }
-
-            let tab_bar = row![
-                tab_button(
-                    "Measurements",
-                    matches!(self.active_tab, Tab::Measurements(_)),
-                    Some(Message::TabSelected(TabId::Measurements))
-                ),
-                tab_button(
-                    "Impulse Response",
-                    matches!(self.active_tab, Tab::Analysis(..)),
-                    ir_button_msg
-                )
-            ];
-
-            let tab_content = match &self.active_tab {
-                Tab::Measurements(tab) => tab.view(&self.data).map(Message::MeasurementsTab),
-                Tab::Analysis(_, ir) => ir.view().map(Message::ImpulseResponseTab),
-            };
-
-            column!(tab_bar, tab_content)
-        };
-        let c = column!(menu, content);
-        //let sc = scrollable(c);
-        let back = container(c).width(Length::Fill).height(Length::Fill);
-
-        back.into()
+        }
     }
 }
 
