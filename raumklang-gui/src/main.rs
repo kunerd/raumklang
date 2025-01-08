@@ -30,11 +30,11 @@ use tabs::measurements::{self, Error, WavLoadError};
 enum Message {
     NewProject,
     LoadProject,
-    ProjectLoaded(Result<(Data, PathBuf), PickAndLoadError>),
+    ProjectLoaded(Result<(MeasurementsState, PathBuf), PickAndLoadError>),
     SaveProject,
     ProjectSaved(Result<PathBuf, PickAndSaveError>),
     LoopbackMeasurementLoaded(Result<Arc<Measurement>, Error>),
-    MeasurementLoaded(Result<Arc<Measurement>, Error>),
+    MeasurementLoaded(Option<usize>, Result<Arc<Measurement>, Error>),
     TabSelected(TabId),
     MeasurementsTab(tabs::measurements::Message),
     ImpulseResponseTab(tabs::impulse_response::Message),
@@ -60,73 +60,91 @@ enum Raumklang {
     Loading,
     Loaded {
         active_tab: Tab,
-        data: DataState,
+        measurements_state: MeasurementsState,
         recent_projects: VecDeque<PathBuf>,
     },
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-enum DataState {
-    NotEnoughMeasurements {
+#[derive(Debug, Clone)]
+enum MeasurementsState {
+    Collecting {
         loopback: Option<MeasurementState>,
         measurements: Vec<MeasurementState>,
     },
-    Measurements(Data),
+    Analysing(Data),
 }
 
-enum DataStateChange {
+enum MeasurementsStateChanged {
     LoopbackAdded(MeasurementState),
-    MeasurementAdded(MeasurementState),
+    MeasurementAdded(Option<usize>, MeasurementState),
 }
 
-impl DataState {
+impl MeasurementsState {
     pub fn loopback(&self) -> Option<&MeasurementState> {
         match self {
-            DataState::NotEnoughMeasurements { loopback, .. } => loopback.as_ref(),
-            DataState::Measurements(data) => Some(&data.loopback),
+            MeasurementsState::Collecting { loopback, .. } => loopback.as_ref(),
+            MeasurementsState::Analysing(data) => Some(&data.loopback),
         }
     }
 
     pub fn measurements(&self) -> &Vec<MeasurementState> {
         match self {
-            DataState::NotEnoughMeasurements { measurements, .. } => measurements,
-            DataState::Measurements(data) => &data.measurements,
+            MeasurementsState::Collecting { measurements, .. } => measurements,
+            MeasurementsState::Analysing(data) => &data.measurements,
         }
     }
 
-    fn transition(&mut self, action: DataStateChange) {
+    fn transition(&mut self, action: MeasurementsStateChanged) {
         let cur_state = mem::take(self);
         let next_state = match (cur_state, action) {
             (
-                DataState::NotEnoughMeasurements {
+                MeasurementsState::Collecting {
                     mut loopback,
                     mut measurements,
                 },
                 action,
             ) => {
                 match action {
-                    DataStateChange::LoopbackAdded(m) => loopback = Some(m),
-                    DataStateChange::MeasurementAdded(m) => measurements.push(m),
+                    MeasurementsStateChanged::LoopbackAdded(m) => loopback = Some(m),
+                    MeasurementsStateChanged::MeasurementAdded(id, m) => match id {
+                        Some(id) => {
+                            let _ = std::mem::replace(&mut measurements[id], m);
+                        }
+                        None => measurements.push(m),
+                    },
                 }
 
                 match loopback {
-                    Some(loopback) if !measurements.is_empty() => Self::Measurements(Data {
+                    Some(loopback) if !measurements.is_empty() => Self::Analysing(Data {
                         loopback,
                         measurements: measurements.to_vec(),
                     }),
-                    _ => Self::NotEnoughMeasurements {
+                    _ => Self::Collecting {
                         loopback,
                         measurements: measurements.to_vec(),
                     },
                 }
             }
-            (DataState::Measurements(mut data), DataStateChange::LoopbackAdded(loopback)) => {
+            (
+                MeasurementsState::Analysing(mut data),
+                MeasurementsStateChanged::LoopbackAdded(loopback),
+            ) => {
                 data.loopback = loopback;
-                Self::Measurements(data)
+                Self::Analysing(data)
             }
-            (DataState::Measurements(mut data), DataStateChange::MeasurementAdded(m)) => {
-                data.measurements.push(m);
-                Self::Measurements(data)
+            (
+                MeasurementsState::Analysing(mut data),
+                MeasurementsStateChanged::MeasurementAdded(id, m),
+            ) => {
+                match id {
+                    Some(id) => {
+                        let _ = std::mem::replace(&mut data.measurements[id], m);
+                    }
+                    None => {
+                        data.measurements.push(m);
+                    }
+                }
+                Self::Analysing(data)
             }
         };
 
@@ -134,14 +152,15 @@ impl DataState {
     }
 }
 
-impl Default for DataState {
+impl Default for MeasurementsState {
     fn default() -> Self {
-        Self::NotEnoughMeasurements {
+        Self::Collecting {
             loopback: None,
             measurements: vec![],
         }
     }
 }
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct Data {
     loopback: MeasurementState,
@@ -227,24 +246,35 @@ impl Raumklang {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::NewProject => {
-                let Raumklang::Loaded { data, .. } = self else {
+                let Raumklang::Loaded {
+                    measurements_state: data,
+                    ..
+                } = self
+                else {
                     return Task::none();
                 };
 
-                *data = DataState::default();
+                *data = MeasurementsState::default();
 
                 Task::none()
             }
             Message::LoadProject => Task::perform(pick_file_and_load(), Message::ProjectLoaded),
-            Message::ProjectLoaded(Ok((new_data, _))) => {
-                let Raumklang::Loaded { data, .. } = self else {
+            Message::ProjectLoaded(Ok((new_measurements_state, _))) => {
+                let Raumklang::Loaded {
+                    measurements_state, ..
+                } = self
+                else {
                     return Task::none();
                 };
 
-                *data = DataState::default();
+                *measurements_state = new_measurements_state;
                 let mut tasks = vec![];
-                if let MeasurementState::NotLoaded(signal) = &new_data.loopback {
-                    let path = signal.path.clone();
+                if let MeasurementsState::Collecting {
+                    loopback: Some(MeasurementState::NotLoaded(loopback)),
+                    ..
+                } = &measurements_state
+                {
+                    let path = loopback.path.clone();
                     tasks.push(Task::perform(
                         async {
                             load_signal_from_file(path)
@@ -256,7 +286,7 @@ impl Raumklang {
                     ));
                 }
 
-                for m in &new_data.measurements {
+                for (i, m) in measurements_state.measurements().iter().enumerate() {
                     if let MeasurementState::NotLoaded(signal) = m {
                         let path = signal.path.clone();
                         tasks.push(Task::perform(
@@ -266,7 +296,7 @@ impl Raumklang {
                                     .map(Arc::new)
                                     .map_err(Error::File)
                             },
-                            Message::MeasurementLoaded,
+                            move |result| Message::MeasurementLoaded(Some(i), result),
                         ));
                     }
                 }
@@ -279,7 +309,11 @@ impl Raumklang {
                 Task::none()
             }
             Message::SaveProject => {
-                let Raumklang::Loaded { data, .. } = self else {
+                let Raumklang::Loaded {
+                    measurements_state: data,
+                    ..
+                } = self
+                else {
                     return Task::none();
                 };
 
@@ -308,28 +342,38 @@ impl Raumklang {
                 Task::none()
             }
             Message::LoopbackMeasurementLoaded(Ok(loopback)) => {
-                let Raumklang::Loaded { data, .. } = self else {
+                let Raumklang::Loaded {
+                    measurements_state: data,
+                    ..
+                } = self
+                else {
                     return Task::none();
                 };
 
-                data.transition(DataStateChange::LoopbackAdded(MeasurementState::Loaded(
-                    loopback,
-                )));
+                data.transition(MeasurementsStateChanged::LoopbackAdded(
+                    MeasurementState::Loaded(loopback),
+                ));
 
                 Task::none()
             }
-            Message::MeasurementLoaded(Ok(measurement)) => {
-                let Raumklang::Loaded { data, .. } = self else {
+            Message::MeasurementLoaded(id, Ok(measurement)) => {
+                let Raumklang::Loaded {
+                    measurements_state: data,
+                    ..
+                } = self
+                else {
                     return Task::none();
                 };
 
-                data.transition(DataStateChange::MeasurementAdded(MeasurementState::Loaded(
-                    measurement,
-                )));
+                data.transition(MeasurementsStateChanged::MeasurementAdded(
+                    id,
+                    MeasurementState::Loaded(measurement),
+                ));
 
                 Task::none()
             }
-            Message::LoopbackMeasurementLoaded(Err(err)) | Message::MeasurementLoaded(Err(err)) => {
+            Message::LoopbackMeasurementLoaded(Err(err))
+            | Message::MeasurementLoaded(_, Err(err)) => {
                 match err {
                     Error::File(reason) => println!("Error: {reason}"),
                     Error::DialogClosed => {}
@@ -353,7 +397,9 @@ impl Raumklang {
             }
             Message::MeasurementsTab(message) => {
                 let Raumklang::Loaded {
-                    active_tab, data, ..
+                    active_tab,
+                    measurements_state,
+                    ..
                 } = self
                 else {
                     return Task::none();
@@ -363,17 +409,18 @@ impl Raumklang {
                     return Task::none();
                 };
 
-                let (task, event) = active_tab.update(message, data);
+                let (task, event) = active_tab.update(message, measurements_state);
 
                 let event_task = match event {
                     Some(measurements::Event::LoadLoopbackMeasurement) => Task::perform(
                         pick_file_and_load_signal("loopback"),
                         Message::LoopbackMeasurementLoaded,
                     ),
-                    Some(measurements::Event::LoadMeasurement) => Task::perform(
-                        pick_file_and_load_signal("measurement"),
-                        Message::MeasurementLoaded,
-                    ),
+                    Some(measurements::Event::LoadMeasurement) => {
+                        Task::perform(pick_file_and_load_signal("measurement"), |result| {
+                            Message::MeasurementLoaded(None, result)
+                        })
+                    }
                     None => Task::none(),
                 };
 
@@ -406,7 +453,7 @@ impl Raumklang {
                 *self = Self::Loaded {
                     recent_projects,
                     active_tab: Tab::default(),
-                    data: DataState::default(),
+                    measurements_state: MeasurementsState::default(),
                 };
 
                 Task::none()
@@ -418,7 +465,7 @@ impl Raumklang {
 
                 *self = Self::Loaded {
                     active_tab: Tab::default(),
-                    data: DataState::default(),
+                    measurements_state: MeasurementsState::default(),
                     recent_projects: VecDeque::new(),
                 };
 
@@ -432,7 +479,7 @@ impl Raumklang {
             Raumklang::Loading => text("Application is loading").into(),
             Raumklang::Loaded {
                 active_tab,
-                data,
+                measurements_state: data,
                 recent_projects,
             } => {
                 let menu = {
@@ -514,8 +561,8 @@ impl Raumklang {
 
                 let content = {
                     let ir_button_msg = match data {
-                        DataState::NotEnoughMeasurements { .. } => None,
-                        DataState::Measurements(_) => {
+                        MeasurementsState::Collecting { .. } => None,
+                        MeasurementsState::Analysing(_) => {
                             Some(Message::TabSelected(TabId::ImpulseResponse))
                         }
                     };
@@ -640,6 +687,56 @@ impl serde::Serialize for Measurement {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for MeasurementsState {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct FlatMeasurements {
+            loopback: Option<MeasurementState>,
+            measurements: Vec<MeasurementState>,
+        }
+
+        let flat_measurements: FlatMeasurements = Deserialize::deserialize(deserializer)?;
+
+        Ok(MeasurementsState::Collecting {
+            loopback: flat_measurements.loopback,
+            measurements: flat_measurements.measurements,
+        })
+    }
+}
+
+impl serde::Serialize for MeasurementsState {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let (loopback, measurements) = match self {
+            MeasurementsState::Collecting {
+                loopback,
+                measurements,
+            } => (loopback, measurements),
+            MeasurementsState::Analysing(data) => {
+                (&Some(data.loopback.clone()), &data.measurements)
+            }
+        };
+
+        #[derive(serde::Serialize)]
+        struct FlatMeasurements {
+            loopback: Option<MeasurementState>,
+            measurements: Vec<MeasurementState>,
+        }
+
+        let flat_measurements = FlatMeasurements {
+            loopback: loopback.clone(),
+            measurements: measurements.clone(),
+        };
+
+        flat_measurements.serialize(serializer)
+    }
+}
+
 fn map_hound_error(err: hound::Error) -> WavLoadError {
     match err {
         hound::Error::IoError(err) => WavLoadError::IoError(err.kind()),
@@ -660,9 +757,9 @@ async fn pick_file_and_save(content: String) -> Result<PathBuf, PickAndSaveError
     Ok(path)
 }
 
-async fn pick_file_and_load() -> Result<(Data, PathBuf), PickAndLoadError> {
+async fn pick_file_and_load() -> Result<(MeasurementsState, PathBuf), PickAndLoadError> {
     let handle = rfd::AsyncFileDialog::new()
-        .set_title("Datei mit Kundendaten auswählen...")
+        .set_title("Choose project file ...")
         .pick_file()
         .await
         .ok_or(PickAndLoadError::DialogClosed)?;
@@ -672,7 +769,7 @@ async fn pick_file_and_load() -> Result<(Data, PathBuf), PickAndLoadError> {
 
 async fn load_project_from_file<P: AsRef<Path>>(
     path: P,
-) -> Result<(Data, PathBuf), PickAndLoadError> {
+) -> Result<(MeasurementsState, PathBuf), PickAndLoadError> {
     //let store = load_from_file(handle.path()).await?;
     let path = path.as_ref();
     let content = tokio::fs::read(path)

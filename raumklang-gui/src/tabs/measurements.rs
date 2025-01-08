@@ -50,13 +50,13 @@ pub enum WavLoadError {
 }
 
 impl Measurements {
-    pub fn view<'a>(&'a self, data: &'a crate::DataState) -> Element<'a, Message> {
+    pub fn view<'a>(&'a self, data: &'a crate::MeasurementsState) -> Element<'a, Message> {
         let (loopback, measurements) = match data {
-            crate::DataState::NotEnoughMeasurements {
+            crate::MeasurementsState::Collecting {
                 loopback,
                 measurements,
             } => (loopback.as_ref(), measurements),
-            crate::DataState::Measurements(data) => (Some(&data.loopback), &data.measurements),
+            crate::MeasurementsState::Analysing(data) => (Some(&data.loopback), &data.measurements),
         };
 
         let side_menu: Element<_> = {
@@ -145,7 +145,7 @@ impl Measurements {
     pub fn update(
         &mut self,
         msg: Message,
-        data: &crate::DataState,
+        data: &crate::MeasurementsState,
     ) -> (Task<Message>, Option<Event>) {
         match msg {
             Message::LoadLoopbackMeasurement => {
