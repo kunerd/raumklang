@@ -23,7 +23,7 @@ use iced_aw::{
     Menu, MenuBar,
 };
 
-use model::{Measurement, Project, ProjectLoopback, ProjectMeasurement};
+use model::{FromFile, Measurement, Project, ProjectLoopback, ProjectMeasurement};
 use rfd::FileHandle;
 use tabs::measurements::{self, Error, WavLoadError};
 
@@ -34,8 +34,8 @@ enum Message {
     ProjectLoaded(Result<(model::Project, PathBuf), PickAndLoadError>),
     SaveProject,
     ProjectSaved(Result<PathBuf, PickAndSaveError>),
-    LoopbackMeasurementLoaded(Result<Arc<Measurement>, Error>),
-    MeasurementLoaded(Result<Arc<Measurement>, Error>),
+    LoopbackMeasurementLoaded(Result<Arc<model::Loopback>, Error>),
+    MeasurementLoaded(Result<Arc<model::Measurement>, Error>),
     TabSelected(TabId),
     MeasurementsTab(tabs::measurements::Message),
     ImpulseResponseTab(tabs::impulse_response::Message),
@@ -69,91 +69,21 @@ enum Raumklang {
 #[derive(Debug, Clone)]
 enum MeasurementsState {
     Collecting {
-        loopback: Option<MeasurementState>,
-        measurements: Vec<MeasurementState>,
+        loopback: Option<MeasurementState<model::Loopback>>,
+        measurements: Vec<MeasurementState<model::Measurement>>,
     },
     Analysing(Data),
 }
 
-enum MeasurementsStateChanged {
-    LoopbackAdded(MeasurementState),
-    MeasurementAdded(MeasurementState),
-}
-
-impl MeasurementsState {
-    pub fn loopback(&self) -> Option<&MeasurementState> {
-        match self {
-            MeasurementsState::Collecting { loopback, .. } => loopback.as_ref(),
-            MeasurementsState::Analysing(data) => Some(&data.loopback),
-        }
-    }
-
-    pub fn measurements(&self) -> &Vec<MeasurementState> {
-        match self {
-            MeasurementsState::Collecting { measurements, .. } => measurements,
-            MeasurementsState::Analysing(data) => &data.measurements,
-        }
-    }
-
-    fn transition(&mut self, action: MeasurementsStateChanged) {
-        let cur_state = mem::take(self);
-        let next_state = match (cur_state, action) {
-            (
-                MeasurementsState::Collecting {
-                    mut loopback,
-                    mut measurements,
-                },
-                action,
-            ) => {
-                match action {
-                    MeasurementsStateChanged::LoopbackAdded(m) => loopback = Some(m),
-                    MeasurementsStateChanged::MeasurementAdded(m) => measurements.push(m),
-                }
-
-                match loopback {
-                    Some(loopback) if !measurements.is_empty() => Self::Analysing(Data {
-                        loopback,
-                        measurements: measurements.to_vec(),
-                    }),
-                    _ => Self::Collecting {
-                        loopback,
-                        measurements: measurements.to_vec(),
-                    },
-                }
-            }
-            (
-                MeasurementsState::Analysing(mut data),
-                MeasurementsStateChanged::LoopbackAdded(loopback),
-            ) => {
-                data.loopback = loopback;
-                Self::Analysing(data)
-            }
-            (
-                MeasurementsState::Analysing(mut data),
-                MeasurementsStateChanged::MeasurementAdded(m),
-            ) => {
-                data.measurements.push(m);
-                Self::Analysing(data)
-            }
-        };
-
-        *self = next_state;
-    }
-}
-
-impl Default for MeasurementsState {
-    fn default() -> Self {
-        Self::Collecting {
-            loopback: None,
-            measurements: vec![],
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 struct Data {
-    loopback: MeasurementState,
-    measurements: Vec<MeasurementState>,
+    loopback: Arc<model::Loopback>,
+    measurements: Vec<Arc<model::Measurement>>,
+}
+
+enum MeasurementsStateChanged {
+    LoopbackAdded(MeasurementState<model::Loopback>),
+    MeasurementAdded(MeasurementState<model::Measurement>),
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -164,9 +94,9 @@ enum TabId {
 }
 
 #[derive(Debug, Clone)]
-enum MeasurementState {
+enum MeasurementState<T> {
     NotLoaded(OfflineMeasurement),
-    Loaded(Arc<Measurement>),
+    Loaded(Arc<T>),
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -295,17 +225,25 @@ impl Raumklang {
                     MeasurementsState::Collecting {
                         loopback,
                         measurements,
-                    } => (loopback.as_ref(), measurements),
+                    } => {
+                        let loopback = loopback.as_ref().map(ProjectLoopback::from);
+
+                        let measurements =
+                            measurements.iter().map(ProjectMeasurement::from).collect();
+
+                        (loopback, measurements)
+                    }
                     MeasurementsState::Analysing(data) => {
-                        (Some(&data.loopback), &data.measurements)
+                        let loopback = ProjectLoopback::from(&*data.loopback);
+                        let measurements = data
+                            .measurements
+                            .iter()
+                            .map(|m| ProjectMeasurement::from(m.as_ref()))
+                            .collect();
+
+                        (Some(loopback), measurements)
                     }
                 };
-
-                let loopback = loopback
-                    .map(ProjectMeasurement::from)
-                    .map(ProjectLoopback::new);
-
-                let measurements = measurements.iter().map(ProjectMeasurement::from).collect();
 
                 let project = Project {
                     loopback,
@@ -440,7 +378,16 @@ impl Raumklang {
                     return Task::none();
                 };
 
-                let (task, event) = active_tab.update(message, measurements_state);
+                let measurements = match &measurements_state {
+                    MeasurementsState::Collecting { measurements, .. } => measurements,
+                    MeasurementsState::Analysing(data) => &data
+                        .measurements
+                        .iter()
+                        .cloned()
+                        .map(MeasurementState::Loaded)
+                        .collect(),
+                };
+                let (task, event) = active_tab.update(message, None, measurements);
 
                 let event_task = match event {
                     Some(measurements::Event::LoadLoopbackMeasurement) => Task::perform(
@@ -504,12 +451,12 @@ impl Raumklang {
         }
     }
 
-    fn view(&self) -> Element<'_, Message> {
+    fn view<'a>(&'a self) -> Element<'a, Message> {
         match self {
             Raumklang::Loading => text("Application is loading").into(),
             Raumklang::Loaded {
                 active_tab,
-                measurements_state: data,
+                measurements_state,
                 recent_projects,
             } => {
                 let menu = {
@@ -590,7 +537,7 @@ impl Raumklang {
                 };
 
                 let content = {
-                    let ir_button_msg = match data {
+                    let ir_button_msg = match &measurements_state {
                         MeasurementsState::Collecting { .. } => None,
                         MeasurementsState::Analysing(_) => {
                             Some(Message::TabSelected(TabId::ImpulseResponse))
@@ -623,8 +570,27 @@ impl Raumklang {
                         )
                     ];
 
+                    let (loopback, measurements) = match measurements_state {
+                        MeasurementsState::Collecting {
+                            loopback,
+                            measurements,
+                        } => (loopback.clone(), measurements.clone()),
+                        MeasurementsState::Analysing(data) => {
+                            let loopback = Some(MeasurementState::Loaded(data.loopback.clone()));
+                            let measurements = data
+                                .measurements
+                                .iter()
+                                .cloned()
+                                .map(MeasurementState::Loaded)
+                                .collect();
+                        (loopback, measurements)
+                        }
+                    };
+
                     let tab_content = match &active_tab {
-                        Tab::Measurements(tab) => tab.view(data).map(Message::MeasurementsTab),
+                        Tab::Measurements(tab) => tab
+                            .view(loopback, measurements)
+                            .map(Message::MeasurementsTab),
                         Tab::Analysis(_, ir) => ir.view().map(Message::ImpulseResponseTab),
                     };
 
@@ -640,8 +606,87 @@ impl Raumklang {
     }
 }
 
-impl From<&MeasurementState> for ProjectMeasurement {
-    fn from(value: &MeasurementState) -> Self {
+impl MeasurementsState {
+    fn transition(&mut self, action: MeasurementsStateChanged) {
+        let cur_state = mem::take(self);
+        let next_state = match (cur_state, action) {
+            (
+                MeasurementsState::Collecting {
+                    mut loopback,
+                    mut measurements,
+                },
+                action,
+            ) => {
+                match action {
+                    MeasurementsStateChanged::LoopbackAdded(m) => loopback = Some(m),
+                    MeasurementsStateChanged::MeasurementAdded(m) => measurements.push(m),
+                }
+
+                match loopback {
+                    Some(MeasurementState::Loaded(loopback)) if !measurements.is_empty() => {
+                        Self::Analysing(Data {
+                            loopback,
+                            measurements: measurements
+                                .iter()
+                                .cloned()
+                                .filter_map(|m| match m {
+                                    MeasurementState::NotLoaded(offline_measurement) => None,
+                                    MeasurementState::Loaded(m) => Some(m),
+                                })
+                                .collect(),
+                        })
+                    }
+                    _ => Self::Collecting {
+                        loopback,
+                        measurements: measurements.to_vec(),
+                    },
+                }
+            }
+            (
+                MeasurementsState::Analysing(mut data),
+                MeasurementsStateChanged::LoopbackAdded(MeasurementState::Loaded(loopback)),
+            ) => {
+                data.loopback = loopback;
+                Self::Analysing(data)
+            }
+            (
+                MeasurementsState::Analysing(mut data),
+                MeasurementsStateChanged::MeasurementAdded(MeasurementState::Loaded(m)),
+            ) => {
+                data.measurements.push(m);
+                Self::Analysing(data)
+            }
+            _ => todo!("FIXME, missing variants"),
+        };
+
+        *self = next_state;
+    }
+}
+
+impl Default for MeasurementsState {
+    fn default() -> Self {
+        Self::Collecting {
+            loopback: None,
+            measurements: vec![],
+        }
+    }
+}
+
+impl From<&MeasurementState<model::Loopback>> for ProjectLoopback {
+    fn from(value: &MeasurementState<model::Loopback>) -> Self {
+        let path = match value {
+            MeasurementState::NotLoaded(om) => &om.path,
+            MeasurementState::Loaded(l) => l.path(),
+        };
+
+        ProjectLoopback::new(ProjectMeasurement {
+            path: path.to_path_buf(),
+        })
+    }
+}
+
+impl From<&MeasurementState<model::Measurement>> for ProjectMeasurement {
+    fn from(value: &MeasurementState<model::Measurement>) -> Self {
         let path = match value {
             MeasurementState::NotLoaded(m) => &m.path,
             MeasurementState::Loaded(m) => &m.path,
@@ -650,23 +695,6 @@ impl From<&MeasurementState> for ProjectMeasurement {
         ProjectMeasurement {
             path: path.to_path_buf(),
         }
-    }
-}
-
-impl serde::Serialize for MeasurementState {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let offline_signal = match self {
-            MeasurementState::NotLoaded(signal) => signal,
-            MeasurementState::Loaded(signal) => &OfflineMeasurement {
-                name: signal.name.clone(),
-                path: signal.path.clone(),
-            },
-        };
-
-        offline_signal.serialize(serializer)
     }
 }
 
@@ -725,7 +753,10 @@ async fn save_to_file(path: PathBuf, content: String) -> Result<(), FileError> {
         .map_err(|err| FileError::Io(err.kind()))
 }
 
-async fn pick_file_and_load_signal(file_type: impl AsRef<str>) -> Result<Arc<Measurement>, Error> {
+async fn pick_file_and_load_signal<T>(file_type: impl AsRef<str>) -> Result<Arc<T>, Error>
+where
+    T: FromFile + Send + 'static,
+{
     let handle = pick_file(file_type).await?;
     load_signal_from_file(handle.path())
         .await
@@ -743,12 +774,13 @@ async fn pick_file(file_type: impl AsRef<str>) -> Result<FileHandle, Error> {
         .ok_or(Error::DialogClosed)
 }
 
-async fn load_signal_from_file<P>(path: P) -> Result<Measurement, WavLoadError>
+async fn load_signal_from_file<P, T>(path: P) -> Result<T, WavLoadError>
 where
+    T: FromFile + Send + 'static,
     P: AsRef<Path> + Send + Sync,
 {
     let path = path.as_ref().to_owned();
-    tokio::task::spawn_blocking(move || Measurement::from_file(path))
+    tokio::task::spawn_blocking(move || T::from_file(path))
         .await
         .unwrap()
 }

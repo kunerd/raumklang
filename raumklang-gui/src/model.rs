@@ -37,6 +37,54 @@ impl ProjectLoopback {
     }
 }
 
+impl From<&Loopback> for ProjectLoopback {
+    fn from(value: &Loopback) -> Self {
+        Self(ProjectMeasurement::from(&value.0))
+    }
+}
+
+impl From<&Measurement> for ProjectMeasurement {
+    fn from(value: &Measurement) -> Self {
+        Self {
+            path: value.path.to_path_buf(),
+        }
+    }
+}
+
+impl Loopback {
+    pub fn name(&self) -> &str {
+        &self.0.name
+    }
+
+    pub fn path(&self) -> &PathBuf {
+        &self.0.path
+    }
+
+    pub fn sample_rate(&self) -> u32 {
+        self.0.sample_rate
+    }
+
+    pub fn data(&self) -> &Vec<f32> {
+        &self.0.data
+    }
+}
+
+impl FromFile for Loopback {
+    fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError>
+    where
+        Self: Sized,
+    {
+        let inner = Measurement::from_file(path)?;
+        Ok(Self(inner))
+    }
+}
+
+pub trait FromFile {
+    fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError>
+    where
+        Self: Sized;
+}
+
 impl Measurement {
     pub fn new(name: String, sample_rate: u32, data: Vec<f32>) -> Self {
         Self {
@@ -46,8 +94,10 @@ impl Measurement {
             data,
         }
     }
+}
 
-    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError> {
+impl FromFile for Measurement {
+    fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError> {
         let path = path.as_ref();
         let name = path
             .file_name()
