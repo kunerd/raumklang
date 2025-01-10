@@ -23,9 +23,8 @@ use iced_aw::{
     Menu, MenuBar,
 };
 
-use model::Measurement;
+use model::{Measurement, Project, ProjectLoopback, ProjectMeasurement};
 use rfd::FileHandle;
-use serde::Deserialize;
 use tabs::measurements::{self, Error, WavLoadError};
 
 #[derive(Debug, Clone)]
@@ -151,7 +150,7 @@ impl Default for MeasurementsState {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 struct Data {
     loopback: MeasurementState,
     measurements: Vec<MeasurementState>,
@@ -292,7 +291,28 @@ impl Raumklang {
                     return Task::none();
                 };
 
-                let content = serde_json::to_string_pretty(&data).unwrap();
+                let (loopback, measurements) = match &data {
+                    MeasurementsState::Collecting {
+                        loopback,
+                        measurements,
+                    } => (loopback.as_ref(), measurements),
+                    MeasurementsState::Analysing(data) => {
+                        (Some(&data.loopback), &data.measurements)
+                    }
+                };
+
+                let loopback = loopback
+                    .map(ProjectMeasurement::from)
+                    .map(ProjectLoopback::new);
+
+                let measurements = measurements.iter().map(ProjectMeasurement::from).collect();
+
+                let project = Project {
+                    loopback,
+                    measurements,
+                };
+
+                let content = serde_json::to_string_pretty(&project).unwrap();
                 Task::perform(pick_file_and_save(content), Message::ProjectSaved)
             }
             Message::ProjectSaved(Ok(path)) => {
@@ -620,6 +640,19 @@ impl Raumklang {
     }
 }
 
+impl From<&MeasurementState> for ProjectMeasurement {
+    fn from(value: &MeasurementState) -> Self {
+        let path = match value {
+            MeasurementState::NotLoaded(m) => &m.path,
+            MeasurementState::Loaded(m) => &m.path,
+        };
+
+        ProjectMeasurement {
+            path: path.to_path_buf(),
+        }
+    }
+}
+
 impl serde::Serialize for MeasurementState {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -634,81 +667,6 @@ impl serde::Serialize for MeasurementState {
         };
 
         offline_signal.serialize(serializer)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for MeasurementState {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let offline_signal = Deserialize::deserialize(deserializer)?;
-
-        Ok(MeasurementState::NotLoaded(offline_signal))
-    }
-}
-
-impl serde::Serialize for Measurement {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let unloaded_signal = OfflineMeasurement {
-            name: self.name.clone(),
-            path: self.path.clone(),
-        };
-
-        unloaded_signal.serialize(serializer)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for MeasurementsState {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(serde::Deserialize)]
-        struct FlatMeasurements {
-            loopback: Option<MeasurementState>,
-            measurements: Vec<MeasurementState>,
-        }
-
-        let flat_measurements: FlatMeasurements = Deserialize::deserialize(deserializer)?;
-
-        Ok(MeasurementsState::Collecting {
-            loopback: flat_measurements.loopback,
-            measurements: flat_measurements.measurements,
-        })
-    }
-}
-
-impl serde::Serialize for MeasurementsState {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let (loopback, measurements) = match self {
-            MeasurementsState::Collecting {
-                loopback,
-                measurements,
-            } => (loopback, measurements),
-            MeasurementsState::Analysing(data) => {
-                (&Some(data.loopback.clone()), &data.measurements)
-            }
-        };
-
-        #[derive(serde::Serialize)]
-        struct FlatMeasurements {
-            loopback: Option<MeasurementState>,
-            measurements: Vec<MeasurementState>,
-        }
-
-        let flat_measurements = FlatMeasurements {
-            loopback: loopback.clone(),
-            measurements: measurements.clone(),
-        };
-
-        flat_measurements.serialize(serializer)
     }
 }
 

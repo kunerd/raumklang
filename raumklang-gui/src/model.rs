@@ -28,6 +28,10 @@ pub struct Measurement {
 pub struct Loopback(Measurement);
 
 impl ProjectLoopback {
+    pub fn new(inner: ProjectMeasurement) -> Self {
+        Self(inner)
+    }
+
     pub fn path(&self) -> &PathBuf {
         &self.0.path
     }
