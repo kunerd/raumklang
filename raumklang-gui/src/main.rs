@@ -5,7 +5,6 @@ mod widgets;
 mod window;
 
 use std::{
-    collections::VecDeque,
     io, mem,
     path::{Path, PathBuf},
     sync::Arc,
@@ -27,6 +26,8 @@ use model::{FromFile, Measurement, Project, ProjectLoopback, ProjectMeasurement}
 use rfd::FileHandle;
 use tabs::measurements::{self, Error, WavLoadError};
 
+const MAX_RECENT_PROJECTS_ENTRIES: usize = 10;
+
 #[derive(Debug, Clone)]
 enum Message {
     NewProject,
@@ -41,7 +42,7 @@ enum Message {
     ImpulseResponseTab(tabs::impulse_response::Message),
     Debug,
     LoadRecentProject(usize),
-    RecentProjectsLoaded(Result<VecDeque<PathBuf>, ()>),
+    RecentProjectsLoaded(Result<model::RecentProjects, ()>),
 }
 
 enum Tab {
@@ -62,7 +63,7 @@ enum Raumklang {
     Loaded {
         active_tab: Tab,
         measurements_state: MeasurementsState,
-        recent_projects: VecDeque<PathBuf>,
+        recent_projects: model::RecentProjects,
     },
 }
 
@@ -169,17 +170,29 @@ impl Raumklang {
                 Task::none()
             }
             Message::LoadProject => Task::perform(pick_file_and_load(), Message::ProjectLoaded),
-            Message::ProjectLoaded(Ok((project, _))) => {
+            Message::ProjectLoaded(Ok((project, path))) => {
                 let Raumklang::Loaded {
-                    measurements_state, ..
+                    measurements_state,
+                    recent_projects,
+                    ..
                 } = self
                 else {
                     return Task::none();
                 };
 
-                *measurements_state = MeasurementsState::default();
-
                 let mut tasks = vec![];
+
+                recent_projects.insert(path);
+                let recent_projects = recent_projects.clone();
+                tasks.push(
+                    Task::perform(
+                        async move { save_recent_projects(&recent_projects).await },
+                        |_| {},
+                    )
+                    .discard(),
+                );
+
+                *measurements_state = MeasurementsState::default();
                 if let Some(loopback) = project.loopback {
                     let path = loopback.path().clone();
                     tasks.push(Task::perform(
@@ -261,13 +274,13 @@ impl Raumklang {
                     return Task::none();
                 };
 
-                if recent_projects.contains(&path) {
-                    return Task::none();
-                }
-
-                recent_projects.push_front(path);
-                let recent = recent_projects.clone();
-                Task::perform(async move { save_recent_projects(&recent).await }, |_| {}).discard()
+                recent_projects.insert(path);
+                let recent_projects = recent_projects.clone();
+                Task::perform(
+                    async move { save_recent_projects(&recent_projects).await },
+                    |_| {},
+                )
+                .discard()
             }
             Message::ProjectSaved(Err(err)) => {
                 dbg!(err);
@@ -443,7 +456,7 @@ impl Raumklang {
                 *self = Self::Loaded {
                     active_tab: Tab::default(),
                     measurements_state: MeasurementsState::default(),
-                    recent_projects: VecDeque::new(),
+                    recent_projects: model::RecentProjects::new(MAX_RECENT_PROJECTS_ENTRIES),
                 };
 
                 Task::none()
@@ -583,7 +596,7 @@ impl Raumklang {
                                 .cloned()
                                 .map(MeasurementState::Loaded)
                                 .collect();
-                        (loopback, measurements)
+                            (loopback, measurements)
                         }
                     };
 
@@ -798,7 +811,7 @@ fn get_recent_project_file_path<P: AsRef<Path>>(path: P) -> PathBuf {
     file_path
 }
 
-async fn save_recent_projects(recent_projects: &VecDeque<PathBuf>) {
+async fn save_recent_projects(recent_projects: &model::RecentProjects) {
     let app_data_dir = get_app_data_dir();
     tokio::fs::create_dir_all(&app_data_dir).await.unwrap();
 
@@ -807,7 +820,7 @@ async fn save_recent_projects(recent_projects: &VecDeque<PathBuf>) {
     tokio::fs::write(file_path, contents).await.unwrap();
 }
 
-async fn load_recent_projects() -> Result<VecDeque<PathBuf>, ()> {
+async fn load_recent_projects() -> Result<model::RecentProjects, ()> {
     let app_data_dir = get_app_data_dir();
     let file_path = get_recent_project_file_path(app_data_dir);
 
