@@ -67,6 +67,12 @@ impl From<Loopback> for Measurement {
     }
 }
 
+impl<'a> From<&'a Loopback> for &'a Measurement {
+    fn from(value: &'a Loopback) -> Self {
+        &value.0
+    }
+}
+
 impl Loopback {
     pub fn name(&self) -> &str {
         &self.0.name

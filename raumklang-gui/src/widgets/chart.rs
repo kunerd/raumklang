@@ -1,7 +1,8 @@
 use std::{
     cell::RefCell,
     fmt::Display,
-    ops::{Range, Sub}, sync::Arc,
+    ops::{Range, Sub},
+    sync::Arc,
 };
 
 use iced::{
@@ -145,10 +146,10 @@ impl std::fmt::Display for AmplitudeUnit {
 }
 
 impl SignalChart {
-    pub fn new(signal: Arc<Measurement>, time_unit: TimeSeriesUnit) -> Self {
+    pub fn new(signal: &Measurement, time_unit: TimeSeriesUnit) -> Self {
         let viewport = InteractiveViewport::new(0..signal.data.len() as i64);
         Self {
-            signal,
+            signal: Arc::new(signal.clone()),
             time_unit,
             viewport,
             cache: Cache::new(),

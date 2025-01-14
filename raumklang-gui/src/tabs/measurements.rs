@@ -1,4 +1,4 @@
-use std::{io::ErrorKind, path::PathBuf, sync::Arc};
+use std::{io::ErrorKind, path::PathBuf};
 
 use iced::{
     widget::{button, column, container, horizontal_rule, horizontal_space, row, scrollable, text},
@@ -7,7 +7,7 @@ use iced::{
 use thiserror::Error;
 
 use crate::{
-    model::{self, Measurement},
+    model,
     widgets::chart::{self, SignalChart},
 };
 use crate::{MeasurementState, MeasurementsState};
@@ -81,8 +81,8 @@ impl Measurements {
     pub fn update(
         &mut self,
         msg: Message,
-        loopback: Option<&MeasurementState<model::Loopback>>,
-        measurements: &[MeasurementState<model::Measurement>],
+        loopback: Option<&model::Loopback>,
+        measurements: Vec<&model::Measurement>,
     ) -> (Task<Message>, Option<Event>) {
         match msg {
             Message::LoadLoopbackMeasurement => {
@@ -90,33 +90,14 @@ impl Measurements {
             }
             Message::LoadMeasurement => (Task::none(), Some(Event::LoadMeasurement)),
             Message::MeasurementSelected(selected) => {
-                let signal = match (selected, loopback) {
-                    (SelectedMeasurement::Loopback, None) => None,
-                    (SelectedMeasurement::Loopback, Some(MeasurementState::Loaded(signal))) => {
-                        Arc::into_inner(signal).unwrap()
-                    }
-                    (SelectedMeasurement::Loopback, Some(_)) => None,
-                    (SelectedMeasurement::Measurement(id), None) => {
-                        measurements.get(id).map_or(None, |state| match state {
-                            MeasurementState::NotLoaded(_) => None,
-                            MeasurementState::Loaded(signal) => Some(Arc::clone(signal)),
-                        })
-                    }
-                    (SelectedMeasurement::Measurement(_), Some(_)) => None,
+                let signal = match selected {
+                    SelectedMeasurement::Loopback => loopback.map(Into::into),
+                    SelectedMeasurement::Measurement(id) => measurements.get(id).copied(),
                 };
-                //let signal = match selected {
-                //    SelectedMeasurement::Loopback => loopback.map(Into::into),
-                //    SelectedMeasurement::Measurement(id) => measurements.get(id),
-                //};
-                //self.selected = Some(selected);
+                self.selected = Some(selected);
 
-                self.chart = match signal {
-                    Some(signal) => Some(chart::SignalChart::new(
-                        signal.clone(),
-                        chart::TimeSeriesUnit::Time,
-                    )),
-                    _ => None,
-                };
+                self.chart = signal
+                    .map(|signal| chart::SignalChart::new(signal, chart::TimeSeriesUnit::Time));
 
                 (Task::none(), None)
             }
@@ -178,8 +159,8 @@ fn collecting_list<'a>(
 
 fn analysing_list<'a>(
     selected: Option<&SelectedMeasurement>,
-    loopback: &'a Arc<model::Loopback>,
-    measurements: &'a [Arc<model::Measurement>],
+    loopback: &'a model::Loopback,
+    measurements: &'a [model::Measurement],
 ) -> Element<'a, Message> {
     let loopback_entry: Element<_> = loopback_list_entry(selected, loopback);
 
@@ -228,7 +209,7 @@ fn offline_signal_list_entry(signal: &crate::OfflineMeasurement) -> Element<'_, 
 
 fn loopback_list_entry<'a>(
     selected: Option<&SelectedMeasurement>,
-    signal: &'a Arc<model::Loopback>,
+    signal: &'a model::Loopback,
 ) -> Element<'a, Message> {
     let samples = signal.data().len();
     let sample_rate = signal.sample_rate() as f32;
@@ -255,7 +236,7 @@ fn loopback_list_entry<'a>(
 
 fn measurement_list_entry<'a>(
     selected: Option<&SelectedMeasurement>,
-    signal: &'a Arc<model::Measurement>,
+    signal: &'a model::Measurement,
     index: usize,
 ) -> Element<'a, Message> {
     let samples = signal.data.len();

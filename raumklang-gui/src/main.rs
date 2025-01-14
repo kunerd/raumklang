@@ -78,8 +78,8 @@ enum MeasurementsState {
 
 #[derive(Debug, Clone)]
 struct Data {
-    loopback: Arc<model::Loopback>,
-    measurements: Vec<Arc<model::Measurement>>,
+    loopback: model::Loopback,
+    measurements: Vec<model::Measurement>,
 }
 
 enum MeasurementsStateChanged {
@@ -97,7 +97,7 @@ enum TabId {
 #[derive(Debug, Clone)]
 enum MeasurementState<T> {
     NotLoaded(OfflineMeasurement),
-    Loaded(Arc<T>),
+    Loaded(T),
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -247,11 +247,11 @@ impl Raumklang {
                         (loopback, measurements)
                     }
                     MeasurementsState::Analysing(data) => {
-                        let loopback = ProjectLoopback::from(&*data.loopback);
+                        let loopback = ProjectLoopback::from(&data.loopback);
                         let measurements = data
                             .measurements
                             .iter()
-                            .map(|m| ProjectMeasurement::from(m.as_ref()))
+                            .map(ProjectMeasurement::from)
                             .collect();
 
                         (Some(loopback), measurements)
@@ -288,6 +288,10 @@ impl Raumklang {
                 Task::none()
             }
             Message::LoopbackMeasurementLoaded(Ok(loopback)) => {
+                let Some(loopback) = Arc::into_inner(loopback) else {
+                    return Task::none();
+                };
+
                 let Raumklang::Loaded {
                     measurements_state: data,
                     ..
@@ -303,6 +307,10 @@ impl Raumklang {
                 Task::none()
             }
             Message::MeasurementLoaded(Ok(measurement)) => {
+                let Some(measurement) = Arc::into_inner(measurement) else {
+                    return Task::none();
+                };
+
                 let Raumklang::Loaded {
                     measurements_state, ..
                 } = self
@@ -391,16 +399,38 @@ impl Raumklang {
                     return Task::none();
                 };
 
-                let measurements = match &measurements_state {
-                    MeasurementsState::Collecting { measurements, .. } => measurements,
-                    MeasurementsState::Analysing(data) => &data
-                        .measurements
-                        .iter()
-                        .cloned()
-                        .map(MeasurementState::Loaded)
-                        .collect(),
+                let (loopback, measurements): (_, Vec<&Measurement>) = match &measurements_state {
+                    MeasurementsState::Collecting {
+                        loopback: Some(MeasurementState::Loaded(loopback)),
+                        measurements,
+                    } => (
+                        Some(loopback),
+                        measurements
+                            .iter()
+                            .filter_map(|m| match m {
+                                MeasurementState::NotLoaded(_om) => None,
+                                MeasurementState::Loaded(m) => Some(m),
+                            })
+                            .collect(),
+                    ),
+                    MeasurementsState::Collecting {
+                        loopback: _,
+                        measurements,
+                    } => (
+                        None,
+                        measurements
+                            .iter()
+                            .filter_map(|m| match m {
+                                MeasurementState::NotLoaded(_om) => None,
+                                MeasurementState::Loaded(m) => Some(m),
+                            })
+                            .collect(),
+                    ),
+                    MeasurementsState::Analysing(data) => {
+                        (Some(&data.loopback), data.measurements.iter().collect())
+                    }
                 };
-                let (task, event) = active_tab.update(message, None, measurements);
+                let (task, event) = active_tab.update(message, loopback, measurements);
 
                 let event_task = match event {
                     Some(measurements::Event::LoadLoopbackMeasurement) => Task::perform(
@@ -464,7 +494,7 @@ impl Raumklang {
         }
     }
 
-    fn view<'a>(&'a self) -> Element<'a, Message> {
+    fn view(&self) -> Element<'_, Message> {
         match self {
             Raumklang::Loading => text("Application is loading").into(),
             Raumklang::Loaded {
@@ -626,7 +656,7 @@ impl MeasurementsState {
                                 .iter()
                                 .cloned()
                                 .filter_map(|m| match m {
-                                    MeasurementState::NotLoaded(offline_measurement) => None,
+                                    MeasurementState::NotLoaded(_) => None,
                                     MeasurementState::Loaded(m) => Some(m),
                                 })
                                 .collect(),
