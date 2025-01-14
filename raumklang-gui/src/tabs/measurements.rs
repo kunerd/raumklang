@@ -6,11 +6,11 @@ use iced::{
 };
 use thiserror::Error;
 
-use crate::MeasurementState;
 use crate::{
-    model,
+    model::{self, Measurement},
     widgets::chart::{self, SignalChart},
 };
+use crate::{MeasurementState, MeasurementsState};
 
 #[derive(Default)]
 pub struct Measurements {
@@ -53,81 +53,15 @@ pub enum WavLoadError {
 }
 
 impl Measurements {
-    pub fn view<'a>(
-        &'a self,
-        loopback: Option<MeasurementState<model::Loopback>>,
-        measurements: Vec<MeasurementState<model::Measurement>>,
-    ) -> Element<'a, Message> {
-        let side_menu: Element<_> = {
-            let loopback_entry = {
-                let content: Element<_> = match &loopback {
-                    Some(MeasurementState::Loaded(signal)) => {
-                        let style = if let Some(SelectedMeasurement::Loopback) = self.selected {
-                            button::primary
-                        } else {
-                            button::secondary
-                        };
-
-                        button(loopback_list_entry(signal.clone()))
-                            .on_press(Message::MeasurementSelected(SelectedMeasurement::Loopback))
-                            .style(style)
-                            .width(Length::Fill)
-                            .into()
-                    }
-                    Some(MeasurementState::NotLoaded(signal)) => {
-                        offline_signal_list_entry(signal.clone())
-                    }
-                    None => text("Please load a loopback signal.").into(),
-                };
-
-                let add_msg = loopback
-                    .as_ref()
-                    .map_or(Some(Message::LoadLoopbackMeasurement), |_| None);
-
-                signal_list_category("Loopback", add_msg, content)
-            };
-
-            let measurement_entries = {
-                let content: Element<_> = {
-                    if measurements.is_empty() {
-                        text("Please load a measurement.").into()
-                    } else {
-                        let entries: Vec<Element<_>> = measurements
-                            .iter()
-                            .cloned()
-                            .enumerate()
-                            .map(|(index, state)| match state {
-                                MeasurementState::Loaded(signal) => {
-                                    let style = match self.selected {
-                                        Some(SelectedMeasurement::Measurement(i)) if i == index => {
-                                            button::primary
-                                        }
-                                        Some(_) => button::secondary,
-                                        None => button::secondary,
-                                    };
-                                    button(measurement_list_entry(signal))
-                                        .on_press(Message::MeasurementSelected(
-                                            SelectedMeasurement::Measurement(index),
-                                        ))
-                                        .width(Length::Fill)
-                                        .style(style)
-                                        .into()
-                                }
-                                MeasurementState::NotLoaded(signal) => {
-                                    offline_signal_list_entry(signal)
-                                }
-                            })
-                            .collect();
-
-                        column(entries).padding(5).spacing(5).into()
-                    }
-                };
-
-                signal_list_category("Measurements", Some(Message::LoadMeasurement), content)
-            };
-            container(column!(loopback_entry, measurement_entries).spacing(10))
-                .padding(5)
-                .into()
+    pub fn view<'a>(&'a self, state: &'a MeasurementsState) -> Element<'a, Message> {
+        let measurement_list = match state {
+            MeasurementsState::Collecting {
+                loopback,
+                measurements,
+            } => collecting_list(self.selected.as_ref(), loopback, measurements),
+            MeasurementsState::Analysing(data) => {
+                analysing_list(self.selected.as_ref(), &data.loopback, &data.measurements)
+            }
         };
 
         let content = if let Some(chart) = &self.chart {
@@ -136,7 +70,7 @@ impl Measurements {
             text("Please select a measurement.").into()
         };
 
-        let side_menu = scrollable(side_menu);
+        let side_menu = scrollable(measurement_list);
         row!(
             side_menu.width(Length::FillPortion(1)),
             container(content).width(Length::FillPortion(3))
@@ -148,7 +82,7 @@ impl Measurements {
         &mut self,
         msg: Message,
         loopback: Option<&MeasurementState<model::Loopback>>,
-        measurements: &Vec<MeasurementState<model::Measurement>>,
+        measurements: &[MeasurementState<model::Measurement>],
     ) -> (Task<Message>, Option<Event>) {
         match msg {
             Message::LoadLoopbackMeasurement => {
@@ -156,15 +90,29 @@ impl Measurements {
             }
             Message::LoadMeasurement => (Task::none(), Some(Event::LoadMeasurement)),
             Message::MeasurementSelected(selected) => {
-                let signal = match selected {
-                    SelectedMeasurement::Loopback => todo!(),
-                    SelectedMeasurement::Measurement(id) => measurements.get(id),
+                let signal = match (selected, loopback) {
+                    (SelectedMeasurement::Loopback, None) => None,
+                    (SelectedMeasurement::Loopback, Some(MeasurementState::Loaded(signal))) => {
+                        Arc::into_inner(signal).unwrap()
+                    }
+                    (SelectedMeasurement::Loopback, Some(_)) => None,
+                    (SelectedMeasurement::Measurement(id), None) => {
+                        measurements.get(id).map_or(None, |state| match state {
+                            MeasurementState::NotLoaded(_) => None,
+                            MeasurementState::Loaded(signal) => Some(Arc::clone(signal)),
+                        })
+                    }
+                    (SelectedMeasurement::Measurement(_), Some(_)) => None,
                 };
-                self.selected = Some(selected);
+                //let signal = match selected {
+                //    SelectedMeasurement::Loopback => loopback.map(Into::into),
+                //    SelectedMeasurement::Measurement(id) => measurements.get(id),
+                //};
+                //self.selected = Some(selected);
 
                 self.chart = match signal {
-                    Some(MeasurementState::Loaded(m)) => Some(chart::SignalChart::new(
-                        m.clone(),
+                    Some(signal) => Some(chart::SignalChart::new(
+                        signal.clone(),
                         chart::TimeSeriesUnit::Time,
                     )),
                     _ => None,
@@ -180,6 +128,76 @@ impl Measurements {
             }
         }
     }
+}
+
+fn collecting_list<'a>(
+    selected: Option<&SelectedMeasurement>,
+    loopback: &'a Option<MeasurementState<model::Loopback>>,
+    measurements: &'a [MeasurementState<model::Measurement>],
+) -> Element<'a, Message> {
+    let loopback_entry = {
+        let content: Element<_> = match &loopback {
+            Some(MeasurementState::Loaded(signal)) => loopback_list_entry(selected, signal),
+            Some(MeasurementState::NotLoaded(signal)) => offline_signal_list_entry(signal),
+            None => text("Please load a loopback signal.").into(),
+        };
+
+        let add_msg = loopback
+            .as_ref()
+            .map_or(Some(Message::LoadLoopbackMeasurement), |_| None);
+
+        signal_list_category("Loopback", add_msg, content)
+    };
+
+    let measurement_entries = {
+        let content: Element<_> = {
+            if measurements.is_empty() {
+                text("Please load a measurement.").into()
+            } else {
+                let entries: Vec<Element<_>> = measurements
+                    .iter()
+                    .enumerate()
+                    .map(|(index, state)| match state {
+                        MeasurementState::Loaded(signal) => {
+                            measurement_list_entry(selected, signal, index)
+                        }
+                        MeasurementState::NotLoaded(signal) => offline_signal_list_entry(signal),
+                    })
+                    .collect();
+
+                column(entries).padding(5).spacing(5).into()
+            }
+        };
+
+        signal_list_category("Measurements", Some(Message::LoadMeasurement), content)
+    };
+    container(column!(loopback_entry, measurement_entries).spacing(10))
+        .padding(5)
+        .into()
+}
+
+fn analysing_list<'a>(
+    selected: Option<&SelectedMeasurement>,
+    loopback: &'a Arc<model::Loopback>,
+    measurements: &'a [Arc<model::Measurement>],
+) -> Element<'a, Message> {
+    let loopback_entry: Element<_> = loopback_list_entry(selected, loopback);
+
+    let measurement_entries = {
+        let content: Element<_> = {
+            let entries: Vec<Element<_>> = measurements
+                .iter()
+                .enumerate()
+                .map(|(index, measurement)| measurement_list_entry(selected, measurement, index))
+                .collect();
+            column(entries).padding(5).spacing(5).into()
+        };
+
+        signal_list_category("Measurements", Some(Message::LoadMeasurement), content)
+    };
+    container(column!(loopback_entry, measurement_entries).spacing(10))
+        .padding(5)
+        .into()
 }
 
 fn signal_list_category<'a>(
@@ -202,33 +220,64 @@ fn signal_list_category<'a>(
         .into()
 }
 
-fn offline_signal_list_entry<'a>(signal: crate::OfflineMeasurement) -> Element<'a, Message> {
-    column!(text(signal.name), button("Reload"))
+fn offline_signal_list_entry(signal: &crate::OfflineMeasurement) -> Element<'_, Message> {
+    column!(text(&signal.name), button("Reload"))
         .padding(2)
         .into()
 }
 
-fn loopback_list_entry<'a>(signal: Arc<model::Loopback>) -> Element<'a, Message> {
+fn loopback_list_entry<'a>(
+    selected: Option<&SelectedMeasurement>,
+    signal: &'a Arc<model::Loopback>,
+) -> Element<'a, Message> {
     let samples = signal.data().len();
     let sample_rate = signal.sample_rate() as f32;
     let name = signal.name().to_string();
-    column!(
+    let content = column!(
         text(name),
         text(format!("Samples: {}", samples)),
         text(format!("Duration: {} s", samples as f32 / sample_rate)),
     )
-    .padding(2)
-    .into()
+    .padding(2);
+
+    let style = if let Some(SelectedMeasurement::Loopback) = selected {
+        button::primary
+    } else {
+        button::secondary
+    };
+
+    button(content)
+        .on_press(Message::MeasurementSelected(SelectedMeasurement::Loopback))
+        .style(style)
+        .width(Length::Fill)
+        .into()
 }
 
-fn measurement_list_entry<'a>(signal: Arc<model::Measurement>) -> Element<'a, Message> {
+fn measurement_list_entry<'a>(
+    selected: Option<&SelectedMeasurement>,
+    signal: &'a Arc<model::Measurement>,
+    index: usize,
+) -> Element<'a, Message> {
     let samples = signal.data.len();
     let sample_rate = signal.sample_rate as f32;
-    column!(
+    let content = column!(
         text(signal.name.clone()),
         text(format!("Samples: {}", samples)),
         text(format!("Duration: {} s", samples as f32 / sample_rate)),
     )
-    .padding(2)
-    .into()
+    .padding(2);
+
+    let style = match selected {
+        Some(SelectedMeasurement::Measurement(i)) if *i == index => button::primary,
+        Some(_) => button::secondary,
+        None => button::secondary,
+    };
+
+    button(content)
+        .on_press(Message::MeasurementSelected(
+            SelectedMeasurement::Measurement(index),
+        ))
+        .width(Length::Fill)
+        .style(style)
+        .into()
 }

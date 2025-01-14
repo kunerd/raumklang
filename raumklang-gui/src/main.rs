@@ -583,27 +583,10 @@ impl Raumklang {
                         )
                     ];
 
-                    let (loopback, measurements) = match measurements_state {
-                        MeasurementsState::Collecting {
-                            loopback,
-                            measurements,
-                        } => (loopback.clone(), measurements.clone()),
-                        MeasurementsState::Analysing(data) => {
-                            let loopback = Some(MeasurementState::Loaded(data.loopback.clone()));
-                            let measurements = data
-                                .measurements
-                                .iter()
-                                .cloned()
-                                .map(MeasurementState::Loaded)
-                                .collect();
-                            (loopback, measurements)
-                        }
-                    };
-
                     let tab_content = match &active_tab {
-                        Tab::Measurements(tab) => tab
-                            .view(loopback, measurements)
-                            .map(Message::MeasurementsTab),
+                        Tab::Measurements(tab) => {
+                            tab.view(measurements_state).map(Message::MeasurementsTab)
+                        }
                         Tab::Analysis(_, ir) => ir.view().map(Message::ImpulseResponseTab),
                     };
 
