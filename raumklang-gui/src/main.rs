@@ -73,13 +73,10 @@ enum MeasurementsState {
         loopback: Option<MeasurementState<model::Loopback>>,
         measurements: Vec<MeasurementState<model::Measurement>>,
     },
-    Analysing(Data),
-}
-
-#[derive(Debug, Clone)]
-struct Data {
-    loopback: model::Loopback,
-    measurements: Vec<model::Measurement>,
+    Analysing {
+        loopback: model::Loopback,
+        measurements: Vec<model::Measurement>,
+    },
 }
 
 enum MeasurementsStateChanged {
@@ -246,13 +243,13 @@ impl Raumklang {
 
                         (loopback, measurements)
                     }
-                    MeasurementsState::Analysing(data) => {
-                        let loopback = ProjectLoopback::from(&data.loopback);
-                        let measurements = data
-                            .measurements
-                            .iter()
-                            .map(ProjectMeasurement::from)
-                            .collect();
+                    MeasurementsState::Analysing {
+                        loopback,
+                        measurements,
+                    } => {
+                        let loopback = ProjectLoopback::from(loopback);
+                        let measurements =
+                            measurements.iter().map(ProjectMeasurement::from).collect();
 
                         (Some(loopback), measurements)
                     }
@@ -426,9 +423,10 @@ impl Raumklang {
                             })
                             .collect(),
                     ),
-                    MeasurementsState::Analysing(data) => {
-                        (Some(&data.loopback), data.measurements.iter().collect())
-                    }
+                    MeasurementsState::Analysing {
+                        loopback,
+                        measurements,
+                    } => (Some(loopback), measurements.iter().collect()),
                 };
                 let (task, event) = active_tab.update(message, loopback, measurements);
 
@@ -582,7 +580,7 @@ impl Raumklang {
                 let content = {
                     let ir_button_msg = match &measurements_state {
                         MeasurementsState::Collecting { .. } => None,
-                        MeasurementsState::Analysing(_) => {
+                        MeasurementsState::Analysing { .. } => {
                             Some(Message::TabSelected(TabId::ImpulseResponse))
                         }
                     };
@@ -645,15 +643,21 @@ impl MeasurementsState {
                 MeasurementsStateChanged::MeasurementAdded(new_measurement),
             ) => measurements.push(new_measurement),
             (
-                MeasurementsState::Analysing(data),
+                MeasurementsState::Analysing {
+                    loopback,
+                    ..
+                },
                 MeasurementsStateChanged::LoopbackAdded(MeasurementState::Loaded(new_loopback)),
-            ) => data.loopback = new_loopback,
+            ) => *loopback = new_loopback,
             (
-                MeasurementsState::Analysing(data),
+                MeasurementsState::Analysing {
+                    measurements,
+                    ..
+                },
                 MeasurementsStateChanged::MeasurementAdded(MeasurementState::Loaded(
                     new_measurement,
                 )),
-            ) => data.measurements.push(new_measurement),
+            ) => measurements.push(new_measurement),
 
             _ => todo!("FIXME, missing variants"),
         }
@@ -669,7 +673,7 @@ impl MeasurementsState {
                         .find(|m| matches!(m, MeasurementState::Loaded(_)));
 
                     if loaded.is_some() {
-                        MeasurementsState::Analysing(Data {
+                        MeasurementsState::Analysing {
                             loopback,
                             measurements: measurements
                                 .into_iter()
@@ -678,7 +682,7 @@ impl MeasurementsState {
                                     MeasurementState::Loaded(m) => Some(m),
                                 })
                                 .collect(),
-                        })
+                        }
                     } else {
                         MeasurementsState::Collecting {
                             loopback: Some(MeasurementState::Loaded(loopback)),
@@ -692,7 +696,7 @@ impl MeasurementsState {
                     }
                 }
             }
-            MeasurementsState::Analysing(data) => MeasurementsState::Analysing(data),
+            state => state
         };
 
         *self = next_state;

@@ -59,8 +59,8 @@ impl Measurements {
                 loopback,
                 measurements,
             } => collecting_list(self.selected.as_ref(), loopback, measurements),
-            MeasurementsState::Analysing(data) => {
-                analysing_list(self.selected.as_ref(), &data.loopback, &data.measurements)
+            MeasurementsState::Analysing { loopback, measurements } => {
+                analysing_list(self.selected.as_ref(), loopback, measurements)
             }
         };
 
