@@ -634,55 +634,65 @@ impl Raumklang {
 
 impl MeasurementsState {
     fn transition(&mut self, action: MeasurementsStateChanged) {
-        let cur_state = mem::take(self);
-        let next_state = match (cur_state, action) {
+        let mut cur_state = mem::take(self);
+        match (&mut cur_state, action) {
             (
-                MeasurementsState::Collecting {
-                    mut loopback,
-                    mut measurements,
-                },
-                action,
-            ) => {
-                match action {
-                    MeasurementsStateChanged::LoopbackAdded(m) => loopback = Some(m),
-                    MeasurementsStateChanged::MeasurementAdded(m) => measurements.push(m),
-                }
+                MeasurementsState::Collecting { loopback, .. },
+                MeasurementsStateChanged::LoopbackAdded(new_loopback),
+            ) => *loopback = Some(new_loopback),
+            (
+                MeasurementsState::Collecting { measurements, .. },
+                MeasurementsStateChanged::MeasurementAdded(new_measurement),
+            ) => measurements.push(new_measurement),
+            (
+                MeasurementsState::Analysing(data),
+                MeasurementsStateChanged::LoopbackAdded(MeasurementState::Loaded(new_loopback)),
+            ) => data.loopback = new_loopback,
+            (
+                MeasurementsState::Analysing(data),
+                MeasurementsStateChanged::MeasurementAdded(MeasurementState::Loaded(
+                    new_measurement,
+                )),
+            ) => data.measurements.push(new_measurement),
 
-                match loopback {
-                    Some(MeasurementState::Loaded(loopback)) if !measurements.is_empty() => {
-                        Self::Analysing(Data {
+            _ => todo!("FIXME, missing variants"),
+        }
+
+        let next_state = match cur_state {
+            MeasurementsState::Collecting {
+                loopback,
+                measurements,
+            } => {
+                if let Some(MeasurementState::Loaded(loopback)) = loopback {
+                    let loaded = measurements
+                        .iter()
+                        .find(|m| matches!(m, MeasurementState::Loaded(_)));
+
+                    if loaded.is_some() {
+                        MeasurementsState::Analysing(Data {
                             loopback,
                             measurements: measurements
-                                .iter()
-                                .cloned()
+                                .into_iter()
                                 .filter_map(|m| match m {
                                     MeasurementState::NotLoaded(_) => None,
                                     MeasurementState::Loaded(m) => Some(m),
                                 })
                                 .collect(),
                         })
+                    } else {
+                        MeasurementsState::Collecting {
+                            loopback: Some(MeasurementState::Loaded(loopback)),
+                            measurements,
+                        }
                     }
-                    _ => Self::Collecting {
+                } else {
+                    MeasurementsState::Collecting {
                         loopback,
-                        measurements: measurements.to_vec(),
-                    },
+                        measurements,
+                    }
                 }
             }
-            (
-                MeasurementsState::Analysing(mut data),
-                MeasurementsStateChanged::LoopbackAdded(MeasurementState::Loaded(loopback)),
-            ) => {
-                data.loopback = loopback;
-                Self::Analysing(data)
-            }
-            (
-                MeasurementsState::Analysing(mut data),
-                MeasurementsStateChanged::MeasurementAdded(MeasurementState::Loaded(m)),
-            ) => {
-                data.measurements.push(m);
-                Self::Analysing(data)
-            }
-            _ => todo!("FIXME, missing variants"),
+            MeasurementsState::Analysing(data) => MeasurementsState::Analysing(data),
         };
 
         *self = next_state;
