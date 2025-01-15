@@ -1,5 +1,5 @@
 mod components;
-mod model;
+mod data;
 mod tabs;
 mod widgets;
 mod window;
@@ -22,7 +22,7 @@ use iced_aw::{
     Menu, MenuBar,
 };
 
-use model::{FromFile, Measurement, Project, ProjectLoopback, ProjectMeasurement};
+use data::{FromFile, Measurement, Project, ProjectLoopback, ProjectMeasurement};
 use rfd::FileHandle;
 use tabs::measurements::{self, Error, WavLoadError};
 
@@ -32,17 +32,17 @@ const MAX_RECENT_PROJECTS_ENTRIES: usize = 10;
 enum Message {
     NewProject,
     LoadProject,
-    ProjectLoaded(Result<(model::Project, PathBuf), PickAndLoadError>),
+    ProjectLoaded(Result<(data::Project, PathBuf), PickAndLoadError>),
     SaveProject,
     ProjectSaved(Result<PathBuf, PickAndSaveError>),
-    LoopbackMeasurementLoaded(Result<Arc<model::Loopback>, Error>),
-    MeasurementLoaded(Result<Arc<model::Measurement>, Error>),
+    LoopbackMeasurementLoaded(Result<Arc<data::Loopback>, Error>),
+    MeasurementLoaded(Result<Arc<data::Measurement>, Error>),
     TabSelected(TabId),
     MeasurementsTab(tabs::measurements::Message),
     ImpulseResponseTab(tabs::impulse_response::Message),
     Debug,
     LoadRecentProject(usize),
-    RecentProjectsLoaded(Result<model::RecentProjects, ()>),
+    RecentProjectsLoaded(Result<data::RecentProjects, ()>),
 }
 
 enum Tab {
@@ -63,25 +63,25 @@ enum Raumklang {
     Loaded {
         active_tab: Tab,
         measurements_state: MeasurementsState,
-        recent_projects: model::RecentProjects,
+        recent_projects: data::RecentProjects,
     },
 }
 
 #[derive(Debug, Clone)]
 enum MeasurementsState {
     Collecting {
-        loopback: Option<MeasurementState<model::Loopback>>,
-        measurements: Vec<MeasurementState<model::Measurement>>,
+        loopback: Option<MeasurementState<data::Loopback>>,
+        measurements: Vec<MeasurementState<data::Measurement>>,
     },
     Analysing {
-        loopback: model::Loopback,
-        measurements: Vec<model::Measurement>,
+        loopback: data::Loopback,
+        measurements: Vec<data::Measurement>,
     },
 }
 
 enum MeasurementsStateChanged {
-    LoopbackAdded(MeasurementState<model::Loopback>),
-    MeasurementAdded(MeasurementState<model::Measurement>),
+    LoopbackAdded(MeasurementState<data::Loopback>),
+    MeasurementAdded(MeasurementState<data::Measurement>),
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -484,7 +484,7 @@ impl Raumklang {
                 *self = Self::Loaded {
                     active_tab: Tab::default(),
                     measurements_state: MeasurementsState::default(),
-                    recent_projects: model::RecentProjects::new(MAX_RECENT_PROJECTS_ENTRIES),
+                    recent_projects: data::RecentProjects::new(MAX_RECENT_PROJECTS_ENTRIES),
                 };
 
                 Task::none()
@@ -643,17 +643,11 @@ impl MeasurementsState {
                 MeasurementsStateChanged::MeasurementAdded(new_measurement),
             ) => measurements.push(new_measurement),
             (
-                MeasurementsState::Analysing {
-                    loopback,
-                    ..
-                },
+                MeasurementsState::Analysing { loopback, .. },
                 MeasurementsStateChanged::LoopbackAdded(MeasurementState::Loaded(new_loopback)),
             ) => *loopback = new_loopback,
             (
-                MeasurementsState::Analysing {
-                    measurements,
-                    ..
-                },
+                MeasurementsState::Analysing { measurements, .. },
                 MeasurementsStateChanged::MeasurementAdded(MeasurementState::Loaded(
                     new_measurement,
                 )),
@@ -696,7 +690,7 @@ impl MeasurementsState {
                     }
                 }
             }
-            state => state
+            state => state,
         };
 
         *self = next_state;
@@ -712,8 +706,8 @@ impl Default for MeasurementsState {
     }
 }
 
-impl From<&MeasurementState<model::Loopback>> for ProjectLoopback {
-    fn from(value: &MeasurementState<model::Loopback>) -> Self {
+impl From<&MeasurementState<data::Loopback>> for ProjectLoopback {
+    fn from(value: &MeasurementState<data::Loopback>) -> Self {
         let path = match value {
             MeasurementState::NotLoaded(om) => &om.path,
             MeasurementState::Loaded(l) => l.path(),
@@ -725,8 +719,8 @@ impl From<&MeasurementState<model::Loopback>> for ProjectLoopback {
     }
 }
 
-impl From<&MeasurementState<model::Measurement>> for ProjectMeasurement {
-    fn from(value: &MeasurementState<model::Measurement>) -> Self {
+impl From<&MeasurementState<data::Measurement>> for ProjectMeasurement {
+    fn from(value: &MeasurementState<data::Measurement>) -> Self {
         let path = match value {
             MeasurementState::NotLoaded(m) => &m.path,
             MeasurementState::Loaded(m) => &m.path,
@@ -762,7 +756,7 @@ async fn pick_file_and_save(content: String) -> Result<PathBuf, PickAndSaveError
     Ok(path)
 }
 
-async fn pick_file_and_load() -> Result<(model::Project, PathBuf), PickAndLoadError> {
+async fn pick_file_and_load() -> Result<(data::Project, PathBuf), PickAndLoadError> {
     let handle = rfd::AsyncFileDialog::new()
         .set_title("Choose project file ...")
         .pick_file()
@@ -774,7 +768,7 @@ async fn pick_file_and_load() -> Result<(model::Project, PathBuf), PickAndLoadEr
 
 async fn load_project_from_file<P: AsRef<Path>>(
     path: P,
-) -> Result<(model::Project, PathBuf), PickAndLoadError> {
+) -> Result<(data::Project, PathBuf), PickAndLoadError> {
     //let store = load_from_file(handle.path()).await?;
     let path = path.as_ref();
     let content = tokio::fs::read(path)
@@ -838,7 +832,7 @@ fn get_recent_project_file_path<P: AsRef<Path>>(path: P) -> PathBuf {
     file_path
 }
 
-async fn save_recent_projects(recent_projects: &model::RecentProjects) {
+async fn save_recent_projects(recent_projects: &data::RecentProjects) {
     let app_data_dir = get_app_data_dir();
     tokio::fs::create_dir_all(&app_data_dir).await.unwrap();
 
@@ -847,7 +841,7 @@ async fn save_recent_projects(recent_projects: &model::RecentProjects) {
     tokio::fs::write(file_path, contents).await.unwrap();
 }
 
-async fn load_recent_projects() -> Result<model::RecentProjects, ()> {
+async fn load_recent_projects() -> Result<data::RecentProjects, ()> {
     let app_data_dir = get_app_data_dir();
     let file_path = get_recent_project_file_path(app_data_dir);
 

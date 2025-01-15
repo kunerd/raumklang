@@ -7,7 +7,7 @@ use iced::{
 use thiserror::Error;
 
 use crate::{
-    model,
+    data,
     widgets::chart::{self, SignalChart},
 };
 use crate::{MeasurementState, MeasurementsState};
@@ -81,8 +81,8 @@ impl Measurements {
     pub fn update(
         &mut self,
         msg: Message,
-        loopback: Option<&model::Loopback>,
-        measurements: Vec<&model::Measurement>,
+        loopback: Option<&data::Loopback>,
+        measurements: Vec<&data::Measurement>,
     ) -> (Task<Message>, Option<Event>) {
         match msg {
             Message::LoadLoopbackMeasurement => {
@@ -113,8 +113,8 @@ impl Measurements {
 
 fn collecting_list<'a>(
     selected: Option<&SelectedMeasurement>,
-    loopback: &'a Option<MeasurementState<model::Loopback>>,
-    measurements: &'a [MeasurementState<model::Measurement>],
+    loopback: &'a Option<MeasurementState<data::Loopback>>,
+    measurements: &'a [MeasurementState<data::Measurement>],
 ) -> Element<'a, Message> {
     let loopback_entry = {
         let content: Element<_> = match &loopback {
@@ -159,8 +159,8 @@ fn collecting_list<'a>(
 
 fn analysing_list<'a>(
     selected: Option<&SelectedMeasurement>,
-    loopback: &'a model::Loopback,
-    measurements: &'a [model::Measurement],
+    loopback: &'a data::Loopback,
+    measurements: &'a [data::Measurement],
 ) -> Element<'a, Message> {
     let loopback_entry: Element<_> = loopback_list_entry(selected, loopback);
 
@@ -209,7 +209,7 @@ fn offline_signal_list_entry(signal: &crate::OfflineMeasurement) -> Element<'_, 
 
 fn loopback_list_entry<'a>(
     selected: Option<&SelectedMeasurement>,
-    signal: &'a model::Loopback,
+    signal: &'a data::Loopback,
 ) -> Element<'a, Message> {
     let samples = signal.data().len();
     let sample_rate = signal.sample_rate() as f32;
@@ -236,7 +236,7 @@ fn loopback_list_entry<'a>(
 
 fn measurement_list_entry<'a>(
     selected: Option<&SelectedMeasurement>,
-    signal: &'a model::Measurement,
+    signal: &'a data::Measurement,
     index: usize,
 ) -> Element<'a, Message> {
     let samples = signal.data.len();
