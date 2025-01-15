@@ -2,5 +2,7 @@ mod model;
 mod recent_projects;
 
 pub use model::{
-    FromFile, Measurement, Project, Loopback, ProjectLoopback, ProjectMeasurement, RecentProjects,
+    FromFile, Loopback, Measurement, Project, ProjectLoopback, ProjectMeasurement,
 };
+
+pub use recent_projects::RecentProjects;
