@@ -59,9 +59,10 @@ impl Measurements {
                 loopback,
                 measurements,
             } => collecting_list(self.selected.as_ref(), loopback, measurements),
-            MeasurementsState::Analysing { loopback, measurements } => {
-                analysing_list(self.selected.as_ref(), loopback, measurements)
-            }
+            MeasurementsState::Analysing {
+                loopback,
+                measurements,
+            } => analysing_list(self.selected.as_ref(), loopback, measurements),
         };
 
         let content = if let Some(chart) = &self.chart {
@@ -242,7 +243,7 @@ fn measurement_list_entry<'a>(
     let samples = signal.data.len();
     let sample_rate = signal.sample_rate as f32;
     let content = column!(
-        text(signal.name.clone()),
+        text(&signal.name),
         text(format!("Samples: {}", samples)),
         text(format!("Duration: {} s", samples as f32 / sample_rate)),
     )
