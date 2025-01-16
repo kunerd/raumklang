@@ -29,6 +29,7 @@ pub enum Message {
     LoadMeasurement,
     RemoveMeasurement(usize),
     LoadLoopbackMeasurement,
+    RemoveLoopbackMeasurement,
     MeasurementSelected(SelectedMeasurement),
     TimeSeriesChart(chart::SignalChartMessage),
 }
@@ -36,8 +37,9 @@ pub enum Message {
 #[derive(Debug, Clone)]
 pub enum Event {
     LoadMeasurement,
-    LoadLoopbackMeasurement,
     RemoveMeasurement(usize),
+    LoadLoopbackMeasurement,
+    RemoveLoopbackMeasurement,
 }
 
 #[derive(Debug, Clone)]
@@ -86,7 +88,9 @@ impl Measurements {
             Message::LoadLoopbackMeasurement => {
                 (Task::none(), Some(Event::LoadLoopbackMeasurement))
             }
+            Message::RemoveLoopbackMeasurement => (Task::none(), Some(Event::RemoveLoopbackMeasurement)),
             Message::LoadMeasurement => (Task::none(), Some(Event::LoadMeasurement)),
+            Message::RemoveMeasurement(id) => (Task::none(), Some(Event::RemoveMeasurement(id))),
             Message::MeasurementSelected(selected) => {
                 let signal = match selected {
                     SelectedMeasurement::Loopback => loopback.map(Into::into),
@@ -105,7 +109,6 @@ impl Measurements {
                 }
                 (Task::none(), None)
             }
-            Message::RemoveMeasurement(id) => (Task::none(), Some(Event::RemoveMeasurement(id))),
         }
     }
 }
@@ -188,9 +191,14 @@ fn loopback_list_entry<'a>(
 ) -> Element<'a, Message> {
     let samples = signal.data().len();
     let sample_rate = signal.sample_rate() as f32;
-    let name = signal.name().to_string();
     let content = column!(
-        text(name),
+        row![
+            text(signal.name()),
+            horizontal_space(),
+            button(delete_icon())
+                .on_press(Message::RemoveLoopbackMeasurement)
+                .style(button::danger)
+        ],
         text(format!("Samples: {}", samples)),
         text(format!("Duration: {} s", samples as f32 / sample_rate)),
     );

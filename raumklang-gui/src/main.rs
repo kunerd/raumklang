@@ -340,19 +340,23 @@ impl Raumklang {
                     return Task::none();
                 };
 
-                let loopback = match &loopback {
+                let loopback_ref = match &loopback {
                     Some(data::MeasurementState::Loaded(l)) => Some(l),
                     Some(data::MeasurementState::NotLoaded(_)) => None,
                     None => None,
                 };
                 let measurement_refs: Vec<_> = measurements.loaded().collect();
-                let (task, event) = active_tab.update(message, loopback, &measurement_refs);
+                let (task, event) = active_tab.update(message, loopback_ref, &measurement_refs);
 
                 let event_task = match event {
                     Some(measurements::Event::LoadLoopbackMeasurement) => Task::perform(
                         pick_file_and_load_signal("loopback"),
                         Message::LoopbackMeasurementLoaded,
                     ),
+                    Some(measurements::Event::RemoveLoopbackMeasurement) => {
+                        *loopback = None;
+                        Task::none()
+                    }
                     Some(measurements::Event::LoadMeasurement) => Task::perform(
                         pick_file_and_load_signal("measurement"),
                         Message::MeasurementLoaded,
