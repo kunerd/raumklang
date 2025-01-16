@@ -9,8 +9,8 @@ use thiserror::Error;
 use crate::{
     data,
     widgets::chart::{self, SignalChart},
+    OfflineMeasurement,
 };
-use crate::{MeasurementState, MeasurementsState};
 
 #[derive(Default)]
 pub struct Measurements {
@@ -53,17 +53,12 @@ pub enum WavLoadError {
 }
 
 impl Measurements {
-    pub fn view<'a>(&'a self, state: &'a MeasurementsState) -> Element<'a, Message> {
-        let measurement_list = match state {
-            MeasurementsState::Collecting {
-                loopback,
-                measurements,
-            } => collecting_list(self.selected.as_ref(), loopback, measurements),
-            MeasurementsState::Analysing {
-                loopback,
-                measurements,
-            } => analysing_list(self.selected.as_ref(), loopback, measurements),
-        };
+    pub fn view<'a>(
+        &'a self,
+        loopback: Option<&'a data::MeasurementState<data::Loopback, OfflineMeasurement>>,
+        measurements: Vec<data::MeasurementState<&'a data::Measurement, &'a OfflineMeasurement>>,
+    ) -> Element<'a, Message> {
+        let measurements_list = collecting_list(self.selected.as_ref(), loopback, measurements);
 
         let content = if let Some(chart) = &self.chart {
             chart.view().map(Message::TimeSeriesChart)
@@ -71,7 +66,7 @@ impl Measurements {
             text("Please select a measurement.").into()
         };
 
-        let side_menu = scrollable(measurement_list);
+        let side_menu = scrollable(measurements_list);
         row!(
             side_menu.width(Length::FillPortion(1)),
             container(content).width(Length::FillPortion(3))
@@ -83,7 +78,7 @@ impl Measurements {
         &mut self,
         msg: Message,
         loopback: Option<&data::Loopback>,
-        measurements: Vec<&data::Measurement>,
+        measurements: &[&data::Measurement],
     ) -> (Task<Message>, Option<Event>) {
         match msg {
             Message::LoadLoopbackMeasurement => {
@@ -114,13 +109,13 @@ impl Measurements {
 
 fn collecting_list<'a>(
     selected: Option<&SelectedMeasurement>,
-    loopback: &'a Option<MeasurementState<data::Loopback>>,
-    measurements: &'a [MeasurementState<data::Measurement>],
+    loopback: Option<&'a data::MeasurementState<data::Loopback, OfflineMeasurement>>,
+    measurements: Vec<data::MeasurementState<&'a data::Measurement, &'a OfflineMeasurement>>,
 ) -> Element<'a, Message> {
     let loopback_entry = {
         let content: Element<_> = match &loopback {
-            Some(MeasurementState::Loaded(signal)) => loopback_list_entry(selected, signal),
-            Some(MeasurementState::NotLoaded(signal)) => offline_signal_list_entry(signal),
+            Some(data::MeasurementState::Loaded(signal)) => loopback_list_entry(selected, signal),
+            Some(data::MeasurementState::NotLoaded(signal)) => offline_signal_list_entry(signal),
             None => text("Please load a loopback signal.").into(),
         };
 
@@ -140,39 +135,17 @@ fn collecting_list<'a>(
                     .iter()
                     .enumerate()
                     .map(|(index, state)| match state {
-                        MeasurementState::Loaded(signal) => {
+                        data::MeasurementState::Loaded(signal) => {
                             measurement_list_entry(selected, signal, index)
                         }
-                        MeasurementState::NotLoaded(signal) => offline_signal_list_entry(signal),
+                        data::MeasurementState::NotLoaded(signal) => {
+                            offline_signal_list_entry(signal)
+                        }
                     })
                     .collect();
 
                 column(entries).padding(5).spacing(5).into()
             }
-        };
-
-        signal_list_category("Measurements", Some(Message::LoadMeasurement), content)
-    };
-    container(column!(loopback_entry, measurement_entries).spacing(10))
-        .padding(5)
-        .into()
-}
-
-fn analysing_list<'a>(
-    selected: Option<&SelectedMeasurement>,
-    loopback: &'a data::Loopback,
-    measurements: &'a [data::Measurement],
-) -> Element<'a, Message> {
-    let loopback_entry: Element<_> = loopback_list_entry(selected, loopback);
-
-    let measurement_entries = {
-        let content: Element<_> = {
-            let entries: Vec<Element<_>> = measurements
-                .iter()
-                .enumerate()
-                .map(|(index, measurement)| measurement_list_entry(selected, measurement, index))
-                .collect();
-            column(entries).padding(5).spacing(5).into()
         };
 
         signal_list_category("Measurements", Some(Message::LoadMeasurement), content)
