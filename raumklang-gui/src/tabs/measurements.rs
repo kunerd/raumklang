@@ -144,7 +144,7 @@ fn collecting_list<'a>(
                     })
                     .collect();
 
-                column(entries).padding(5).spacing(5).into()
+                column(entries).spacing(5).into()
             }
         };
 
@@ -176,9 +176,7 @@ fn signal_list_category<'a>(
 }
 
 fn offline_signal_list_entry(signal: &crate::OfflineMeasurement) -> Element<'_, Message> {
-    column!(text(&signal.name), button("Reload"))
-        .padding(2)
-        .into()
+    column!(text(&signal.name), button("Reload")).into()
 }
 
 fn loopback_list_entry<'a>(
@@ -192,8 +190,7 @@ fn loopback_list_entry<'a>(
         text(name),
         text(format!("Samples: {}", samples)),
         text(format!("Duration: {} s", samples as f32 / sample_rate)),
-    )
-    .padding(2);
+    );
 
     let style = if let Some(SelectedMeasurement::Loopback) = selected {
         button::primary
@@ -219,8 +216,7 @@ fn measurement_list_entry<'a>(
         text(&signal.name),
         text(format!("Samples: {}", samples)),
         text(format!("Duration: {} s", samples as f32 / sample_rate)),
-    )
-    .padding(2);
+    );
 
     let style = match selected {
         Some(SelectedMeasurement::Measurement(i)) if *i == index => button::primary,
