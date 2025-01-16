@@ -60,6 +60,17 @@ impl<L, O> Store<L, O> {
     pub fn is_loaded_empty(&self) -> bool {
         self.loaded.is_empty()
     }
+
+    pub fn remove(&mut self, id: usize) -> Option<MeasurementState<L, O>> {
+        let state = self.all.remove(id);
+
+        match state {
+            MeasurementState::Loaded(id) => self.loaded.remove(&id).map(MeasurementState::Loaded),
+            MeasurementState::NotLoaded(id) => {
+                self.not_loaded.remove(&id).map(MeasurementState::NotLoaded)
+            }
+        }
+    }
 }
 
 pub struct Iter<'a, L, O> {
@@ -104,5 +115,9 @@ impl<T> IdMap<T> {
 
     fn is_empty(&self) -> bool {
         self.data.is_empty()
+    }
+
+    fn remove(&mut self, id: &usize) -> Option<T> {
+        self.data.remove(id)
     }
 }

@@ -14,7 +14,7 @@ use iced::{
     alignment::Vertical,
     border::Radius,
     widget::{button, column, container, row, text},
-    Border, Element, Font, Length, Task,
+    Border, Element, Font, Length, Settings, Task,
 };
 use iced_aw::{
     menu::{self, primary, Item},
@@ -108,6 +108,12 @@ pub enum PickAndSaveError {
 
 fn main() -> iced::Result {
     iced::application(Raumklang::title, Raumklang::update, Raumklang::view)
+        .settings(Settings {
+            fonts: vec![include_bytes!("../fonts/raumklang-icons.ttf")
+                .as_slice()
+                .into()],
+            ..Default::default()
+        })
         .default_font(Font::with_name("Noto Sans"))
         .antialiasing(true)
         .run_with(Raumklang::new)
@@ -339,8 +345,8 @@ impl Raumklang {
                     Some(data::MeasurementState::NotLoaded(_)) => None,
                     None => None,
                 };
-                let measurements: Vec<_> = measurements.loaded().collect();
-                let (task, event) = active_tab.update(message, loopback, &measurements);
+                let measurement_refs: Vec<_> = measurements.loaded().collect();
+                let (task, event) = active_tab.update(message, loopback, &measurement_refs);
 
                 let event_task = match event {
                     Some(measurements::Event::LoadLoopbackMeasurement) => Task::perform(
@@ -351,6 +357,10 @@ impl Raumklang {
                         pick_file_and_load_signal("measurement"),
                         Message::MeasurementLoaded,
                     ),
+                    Some(measurements::Event::RemoveMeasurement(id)) => {
+                        measurements.remove(id);
+                        Task::none()
+                    }
                     None => Task::none(),
                 };
 
@@ -546,6 +556,16 @@ impl Raumklang {
             }
         }
     }
+}
+
+pub fn icon<'a, M>(codepoint: char) -> Element<'a, M> {
+    const ICON_FONT: Font = Font::with_name("raumklang-icons");
+
+    text(codepoint).font(ICON_FONT).into()
+}
+
+pub fn delete_icon<'a, M>() -> Element<'a, M> {
+    icon('\u{F1F8}')
 }
 
 impl From<&data::MeasurementState<data::Loopback, OfflineMeasurement>> for ProjectLoopback {

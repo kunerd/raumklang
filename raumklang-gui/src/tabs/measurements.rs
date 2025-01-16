@@ -7,7 +7,7 @@ use iced::{
 use thiserror::Error;
 
 use crate::{
-    data,
+    data, delete_icon,
     widgets::chart::{self, SignalChart},
     OfflineMeasurement,
 };
@@ -27,6 +27,7 @@ pub enum SelectedMeasurement {
 #[derive(Debug, Clone)]
 pub enum Message {
     LoadMeasurement,
+    RemoveMeasurement(usize),
     LoadLoopbackMeasurement,
     MeasurementSelected(SelectedMeasurement),
     TimeSeriesChart(chart::SignalChartMessage),
@@ -34,8 +35,9 @@ pub enum Message {
 
 #[derive(Debug, Clone)]
 pub enum Event {
-    LoadLoopbackMeasurement,
     LoadMeasurement,
+    LoadLoopbackMeasurement,
+    RemoveMeasurement(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -103,6 +105,7 @@ impl Measurements {
                 }
                 (Task::none(), None)
             }
+            Message::RemoveMeasurement(id) => (Task::none(), Some(Event::RemoveMeasurement(id))),
         }
     }
 }
@@ -213,7 +216,13 @@ fn measurement_list_entry<'a>(
     let samples = signal.data.len();
     let sample_rate = signal.sample_rate as f32;
     let content = column!(
-        text(&signal.name),
+        row![
+            text(&signal.name),
+            horizontal_space(),
+            button(delete_icon())
+                .on_press(Message::RemoveMeasurement(index))
+                .style(button::danger)
+        ],
         text(format!("Samples: {}", samples)),
         text(format!("Duration: {} s", samples as f32 / sample_rate)),
     );
