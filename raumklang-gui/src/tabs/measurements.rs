@@ -57,27 +57,6 @@ pub enum WavLoadError {
 }
 
 impl Measurements {
-    pub fn view<'a>(
-        &'a self,
-        loopback: Option<&'a data::MeasurementState<data::Loopback, OfflineMeasurement>>,
-        measurements: Vec<data::MeasurementState<&'a data::Measurement, &'a OfflineMeasurement>>,
-    ) -> Element<'a, Message> {
-        let measurements_list = collecting_list(self.selected.as_ref(), loopback, measurements);
-
-        let content = if let Some(chart) = &self.chart {
-            chart.view().map(Message::TimeSeriesChart)
-        } else {
-            text("Please select a measurement.").into()
-        };
-
-        let side_menu = scrollable(measurements_list);
-        row!(
-            side_menu.width(Length::FillPortion(1)),
-            container(content).width(Length::FillPortion(3))
-        )
-        .into()
-    }
-
     pub fn update(
         &mut self,
         msg: Message,
@@ -88,7 +67,9 @@ impl Measurements {
             Message::LoadLoopbackMeasurement => {
                 (Task::none(), Some(Event::LoadLoopbackMeasurement))
             }
-            Message::RemoveLoopbackMeasurement => (Task::none(), Some(Event::RemoveLoopbackMeasurement)),
+            Message::RemoveLoopbackMeasurement => {
+                (Task::none(), Some(Event::RemoveLoopbackMeasurement))
+            }
             Message::LoadMeasurement => (Task::none(), Some(Event::LoadMeasurement)),
             Message::RemoveMeasurement(id) => (Task::none(), Some(Event::RemoveMeasurement(id))),
             Message::MeasurementSelected(selected) => {
@@ -110,6 +91,34 @@ impl Measurements {
                 (Task::none(), None)
             }
         }
+    }
+
+    pub fn view<'a>(
+        &'a self,
+        loopback: Option<&'a data::MeasurementState<data::Loopback, OfflineMeasurement>>,
+        measurements: Vec<data::MeasurementState<&'a data::Measurement, &'a OfflineMeasurement>>,
+    ) -> Element<'a, Message> {
+        let measurements_list = collecting_list(self.selected.as_ref(), loopback, measurements);
+
+        let content = if let Some(chart) = &self.chart {
+            chart.view().map(Message::TimeSeriesChart)
+        } else {
+            text("Please select a measurement.").into()
+        };
+
+        let side_menu =
+            container(container(scrollable(measurements_list).height(Length::Fill)).padding(8))
+                .style(container::rounded_box);
+
+        row!(
+            side_menu.width(Length::FillPortion(1)),
+            container(content)
+                .center(Length::FillPortion(4))
+                .width(Length::FillPortion(4))
+        )
+        .height(Length::Fill)
+        .spacing(5)
+        .into()
     }
 }
 
@@ -156,8 +165,9 @@ fn collecting_list<'a>(
 
         signal_list_category("Measurements", Some(Message::LoadMeasurement), content)
     };
-    container(column!(loopback_entry, measurement_entries).spacing(10))
-        .padding(5)
+
+    column!(loopback_entry, measurement_entries)
+        .spacing(10)
         .into()
 }
 
@@ -177,7 +187,6 @@ fn signal_list_category<'a>(
     column!(header, horizontal_rule(1), content)
         .width(Length::Fill)
         .spacing(5)
-        .padding(10)
         .into()
 }
 

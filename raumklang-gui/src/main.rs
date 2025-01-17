@@ -15,7 +15,7 @@ use iced::{
     alignment::Vertical,
     border::Radius,
     widget::{button, column, container, row, text},
-    Border, Element, Font, Length, Settings, Task,
+    Border, Element, Font, Length, Settings, Task, Theme,
 };
 use iced_aw::{
     menu::{self, primary, Item},
@@ -113,6 +113,7 @@ pub enum PickAndSaveError {
 
 fn main() -> iced::Result {
     iced::application(Raumklang::title, Raumklang::update, Raumklang::view)
+        .theme(Raumklang::theme)
         .settings(Settings {
             fonts: vec![include_bytes!("../fonts/raumklang-icons.ttf")
                 .as_slice()
@@ -140,6 +141,10 @@ impl Raumklang {
         };
 
         format!("{APPLICATION_NAME} {additional_name}").to_string()
+    }
+
+    fn theme(&self) -> Theme {
+        Theme::KanagawaDragon
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -582,9 +587,11 @@ impl Raumklang {
                         }
                     };
 
-                    column!(tab_bar, tab_content)
+                    container(column!(tab_bar, tab_content).spacing(5))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
                 };
-                let c = column!(menu, content);
+                let c = column!(menu, content).spacing(8).padding(8);
                 //let sc = scrollable(c);
                 let back = container(c).width(Length::Fill).height(Length::Fill);
 

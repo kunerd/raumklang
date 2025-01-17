@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use iced::{
-    widget::{button, column, container, row, scrollable, text},
-    Element,
+    widget::{button, column, container, horizontal_rule, horizontal_space, row, scrollable, text},
+    Alignment, Element,
     Length::{self, FillPortion},
     Task,
 };
@@ -111,7 +111,11 @@ impl ImpulseResponseTab {
                 })
                 .collect();
 
-            column![text("Measurements"), scrollable(column(entries).spacing(5))].spacing(10)
+            let content = scrollable(column(entries).spacing(5)).into();
+            container(list_category("Measurements", content))
+                .style(container::rounded_box)
+                .height(Length::Fill)
+                .padding(8)
         };
 
         let content = if let Some(chart) = &self.chart {
@@ -127,7 +131,6 @@ impl ImpulseResponseTab {
             list.width(Length::FillPortion(1)),
             content.width(FillPortion(4))
         ]
-        .padding(10)
         .spacing(10)
         .into()
     }
@@ -137,6 +140,15 @@ impl ImpulseResponseTab {
         let signal = data::Measurement::new("Impulse response".to_string(), 44_100, data.clone());
         self.chart = Some(ImpulseResponseChart::new(signal, TimeSeriesUnit::Time));
     }
+}
+
+fn list_category<'a>(name: &'a str, content: Element<'a, Message>) -> Element<'a, Message> {
+    let header = row!(text(name), horizontal_space()).align_y(Alignment::Center);
+
+    column!(header, horizontal_rule(1), content)
+        .width(Length::Fill)
+        .spacing(5)
+        .into()
 }
 
 async fn compute_impulse_response(
