@@ -89,6 +89,10 @@ impl Loopback {
     pub fn data(&self) -> &Vec<f32> {
         &self.0.data
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = &f32> {
+        self.0.data.iter()
+    }
 }
 
 impl FromFile for Loopback {
@@ -115,6 +119,10 @@ impl Measurement {
             sample_rate,
             data,
         }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &f32> {
+        self.data.iter()
     }
 }
 

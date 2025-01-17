@@ -42,6 +42,10 @@ impl<L, O> Store<L, O> {
         self.all.push(id);
     }
 
+    pub fn get_loaded(&self, id: &usize) -> Option<&L> {
+        self.loaded.get(id)
+    }
+
     pub fn iter(&self) -> Iter<L, O> {
         Iter {
             inner: self.all.iter(),

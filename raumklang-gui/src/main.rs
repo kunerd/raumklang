@@ -5,6 +5,7 @@ mod widgets;
 //mod window;
 
 use std::{
+    collections::HashMap,
     io, mem,
     path::{Path, PathBuf},
     sync::Arc,
@@ -24,7 +25,10 @@ use iced_aw::{
 
 use data::{FromFile, Measurement, Project, ProjectLoopback, ProjectMeasurement};
 use rfd::FileHandle;
-use tabs::measurements::{self, Error, WavLoadError};
+use tabs::{
+    impulse_response,
+    measurements::{self, Error, WavLoadError},
+};
 
 const MAX_RECENT_PROJECTS_ENTRIES: usize = 10;
 
@@ -65,6 +69,7 @@ enum Raumklang {
         active_tab: Tab,
         loopback: Option<data::MeasurementState<data::Loopback, OfflineMeasurement>>,
         measurements: data::Store<data::Measurement, OfflineMeasurement>,
+        impulse_responses: HashMap<usize, raumklang_core::ImpulseResponse>,
         recent_projects: data::RecentProjects,
     },
 }
@@ -370,7 +375,29 @@ impl Raumklang {
 
                 Task::batch(vec![event_task, task.map(Message::MeasurementsTab)])
             }
-            Message::ImpulseResponseTab(_message) => Task::none(),
+            Message::ImpulseResponseTab(message) => {
+                let Raumklang::Loaded {
+                    active_tab: Tab::Analysis(tab),
+                    loopback: Some(data::MeasurementState::Loaded(loopback)),
+                    measurements,
+                    impulse_responses,
+                    ..
+                } = self
+                else {
+                    return Task::none();
+                };
+
+                let (task, event) = tab.update(message, loopback, measurements, impulse_responses);
+
+                match event {
+                    Some(impulse_response::Event::ImpulseResponseComputed(id, ir)) => {
+                        impulse_responses.insert(id, ir);
+                    }
+                    None => {}
+                };
+
+                task.map(Message::ImpulseResponseTab)
+            }
             Message::Debug => Task::none(),
             Message::LoadRecentProject(id) => {
                 let Raumklang::Loaded {
@@ -397,6 +424,7 @@ impl Raumklang {
                 *self = Self::Loaded {
                     loopback: None,
                     measurements: data::Store::new(),
+                    impulse_responses: HashMap::new(),
                     recent_projects,
                     active_tab: Tab::default(),
                 };
@@ -409,9 +437,10 @@ impl Raumklang {
                 };
 
                 *self = Self::Loaded {
-                    active_tab: Tab::default(),
                     loopback: None,
                     measurements: data::Store::new(),
+                    impulse_responses: HashMap::new(),
+                    active_tab: Tab::default(),
                     recent_projects: data::RecentProjects::new(MAX_RECENT_PROJECTS_ENTRIES),
                 };
 
@@ -547,7 +576,10 @@ impl Raumklang {
                             tab.view(loopback.as_ref(), measurements)
                                 .map(Message::MeasurementsTab)
                         }
-                        Tab::Analysis(ir) => ir.view().map(Message::ImpulseResponseTab),
+                        Tab::Analysis(tab) => {
+                            let measurements: Vec<_> = measurements.loaded().collect();
+                            tab.view(&measurements).map(Message::ImpulseResponseTab)
+                        }
                     };
 
                     column!(tab_bar, tab_content)

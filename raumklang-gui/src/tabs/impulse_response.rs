@@ -1,36 +1,155 @@
-use iced::{
-    widget::text,
-    Element,
-};
+use std::collections::HashMap;
 
+use iced::{
+    widget::{button, column, container, row, scrollable, text},
+    Element,
+    Length::{self, FillPortion},
+    Task,
+};
+use rustfft::num_complex::ComplexFloat;
+
+use crate::{
+    data,
+    widgets::chart::{self, ImpulseResponseChart, TimeSeriesUnit},
+    OfflineMeasurement,
+};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-//    ImpulseResponseComputed((Arc<raumklang_core::ImpulseResponse>, u32)),
-//    TimeSeriesChart(chart::Message),
-//    TabSelected(TabId),
-//    WindowSettings(window_settings::Message),
-//    FrequencyResponseChart(FrequencyResponseChartMessage),
-//    FrequencyResponseComputed(Arc<FrequencyResponse>),
+    MeasurementSelected(usize),
+    ImpulseResponseComputed((usize, raumklang_core::ImpulseResponse)),
+    Chart(chart::Message),
+    //    ImpulseResponseComputed((Arc<raumklang_core::ImpulseResponse>, u32)),
+    //    TimeSeriesChart(chart::Message),
+    //    TabSelected(TabId),
+    //    WindowSettings(window_settings::Message),
+    //    FrequencyResponseChart(FrequencyResponseChartMessage),
+    //    FrequencyResponseComputed(Arc<FrequencyResponse>),
+}
+
+pub enum Event {
+    ImpulseResponseComputed(usize, raumklang_core::ImpulseResponse),
 }
 
 #[derive(Default)]
 pub struct ImpulseResponseTab {
-//    active_tab: TabId,
-//    loopback_signal: Option<Measurement>,
-//    measurement_signal: Option<Measurement>,
-//    window_settings: Option<WindowSettings>,
-//    impulse_response: Option<raumklang_core::ImpulseResponse>,
-//    impulse_response_chart: Option<ImpulseResponseChart>,
-//    frequency_response: Option<Arc<FrequencyResponse>>,
-//    frequency_response_chart: Option<FrequencyResponseChart>,
+    selected: Option<usize>,
+    chart: Option<ImpulseResponseChart>,
+    //    active_tab: TabId,
+    //    loopback_signal: Option<Measurement>,
+    //    measurement_signal: Option<Measurement>,
+    //    window_settings: Option<WindowSettings>,
+    //    impulse_response: Option<raumklang_core::ImpulseResponse>,
+    //    frequency_response: Option<Arc<FrequencyResponse>>,
+    //    frequency_response_chart: Option<FrequencyResponseChart>,
 }
 
 impl ImpulseResponseTab {
-    pub fn view(&self) -> Element<'_, Message> {
-        text("Not implemented, yet").into()
+    pub fn update(
+        &mut self,
+        message: Message,
+        loopback: &data::Loopback,
+        measurements: &data::Store<data::Measurement, OfflineMeasurement>,
+        impulse_response: &HashMap<usize, raumklang_core::ImpulseResponse>,
+    ) -> (Task<Message>, Option<Event>) {
+        match message {
+            Message::MeasurementSelected(id) => {
+                self.selected = Some(id);
+                if let Some(ir) = impulse_response.get(&id) {
+                    self.update_chart(ir);
+                    (Task::none(), None)
+                } else {
+                    let loopback = loopback.iter().cloned().collect();
+                    let measurement = measurements.get_loaded(&id);
+
+                    if let Some(measurement) = measurement {
+                        let measurement = measurement.iter().cloned().collect();
+                        (
+                            Task::perform(
+                                compute_impulse_response(id, loopback, measurement),
+                                Message::ImpulseResponseComputed,
+                            ),
+                            None,
+                        )
+                    } else {
+                        (Task::none(), None)
+                    }
+                }
+            }
+            Message::ImpulseResponseComputed((id, ir)) => {
+                self.update_chart(&ir);
+                (Task::none(), Some(Event::ImpulseResponseComputed(id, ir)))
+            }
+            Message::Chart(message) => {
+                let Some(chart) = &mut self.chart else {
+                    return (Task::none(), None);
+                };
+
+                chart.update_msg(message);
+                (Task::none(), None)
+            }
+        }
+    }
+
+    pub fn view<'a>(&'a self, measurements: &[&'a data::Measurement]) -> Element<'a, Message> {
+        let list = {
+            let entries: Vec<Element<_>> = measurements
+                .iter()
+                .enumerate()
+                .map(|(i, m)| {
+                    let style = if self.selected == Some(i) {
+                        button::primary
+                    } else {
+                        button::secondary
+                    };
+
+                    button(m.name.as_str())
+                        .on_press(Message::MeasurementSelected(i))
+                        .style(style)
+                        .width(Length::Fill)
+                        .into()
+                })
+                .collect();
+
+            column![text("Measurements"), scrollable(column(entries).spacing(5))].spacing(10)
+        };
+
+        let content = if let Some(chart) = &self.chart {
+            container(chart.view().map(Message::Chart))
+        } else {
+            container(text(
+                "Please select a measurement to compute the corresponding impulse response.",
+            ))
+            .center(Length::Fill)
+        };
+
+        row![
+            list.width(Length::FillPortion(1)),
+            content.width(FillPortion(4))
+        ]
+        .padding(10)
+        .spacing(10)
+        .into()
+    }
+
+    fn update_chart(&mut self, ir: &raumklang_core::ImpulseResponse) {
+        let data: Vec<_> = ir.impulse_response.iter().map(|s| s.re().abs()).collect();
+        let signal = data::Measurement::new("Impulse response".to_string(), 44_100, data.clone());
+        self.chart = Some(ImpulseResponseChart::new(signal, TimeSeriesUnit::Time));
     }
 }
+
+async fn compute_impulse_response(
+    id: usize,
+    loopback: Vec<f32>,
+    measurement: Vec<f32>,
+) -> (usize, raumklang_core::ImpulseResponse) {
+    (
+        id,
+        raumklang_core::ImpulseResponse::from_signals(loopback, measurement).unwrap(),
+    )
+}
+
 //
 //#[derive(Debug, Clone, PartialEq, Eq, Default)]
 //pub enum TabId {
