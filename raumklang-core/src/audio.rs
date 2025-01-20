@@ -1,6 +1,31 @@
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
-
 use ringbuf::{HeapConsumer, HeapProducer, HeapRb};
+use thiserror::Error;
+
+use std::sync::mpsc::{sync_channel, Receiver, SendError, SyncSender};
+
+#[derive(Error, Debug)]
+pub enum AudioBackendError {
+    #[error("audio backend crashed")]
+    Stopped,
+    #[error("audio backend crashed")]
+    Other,
+}
+
+impl From<jack::Error> for AudioBackendError {
+    fn from(_err: jack::Error) -> Self {
+        Self::Other
+    }
+}
+
+impl<I, J> From<SendError<Message<I, J>>> for AudioBackendError
+where
+    I: Iterator<Item = f32>,
+    J: IntoIterator<IntoIter = I>,
+{
+    fn from(_err: SendError<Message<I, J>>) -> Self {
+        Self::Stopped
+    }
+}
 
 enum Message<I, J>
 where
@@ -88,7 +113,7 @@ where
     I: Iterator<Item = f32> + Send + 'static,
     J: IntoIterator<IntoIter = I> + Send + Sync + 'static,
 {
-    pub fn new(name: &str) -> anyhow::Result<Self> {
+    pub fn new(name: &str) -> Result<Self, AudioBackendError> {
         let (client, _status) = jack::Client::new(name, jack::ClientOptions::NO_START_SERVER)?;
 
         let (msg_tx, msg_rx) = sync_channel(64);
@@ -113,7 +138,7 @@ where
         &self,
         port_name: &str,
         dest_ports: &[T],
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), AudioBackendError> {
         let out_port = self
             .client
             .as_client()
@@ -136,7 +161,7 @@ where
         &self,
         port_name: &str,
         input_port_name: &str,
-    ) -> anyhow::Result<HeapConsumer<f32>> {
+    ) -> Result<HeapConsumer<f32>, AudioBackendError> {
         const BUFF_SIZE: usize = 1024;
 
         let in_port = self
@@ -161,7 +186,7 @@ where
         self.client.as_client().sample_rate()
     }
 
-    pub fn play_signal(&self, signal: J) -> anyhow::Result<Receiver<bool>> {
+    pub fn play_signal(&self, signal: J) -> Result<Receiver<bool>, AudioBackendError> {
         let (tx, rx) = sync_channel(1);
         self.msg_tx.send(Message::PlaySignal {
             signal,

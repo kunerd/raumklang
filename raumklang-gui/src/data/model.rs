@@ -2,8 +2,7 @@ use std::{
     collections::{vec_deque, VecDeque},
     path::{Path, PathBuf},
 };
-
-use crate::tabs::measurements::WavLoadError;
+use raumklang_core::WavLoadError;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RecentProjects {
@@ -109,14 +108,6 @@ impl FromFile for Measurement {
             path: path.to_path_buf(),
             data,
         })
-    }
-}
-
-fn map_hound_error(path: impl AsRef<Path>, err: hound::Error) -> WavLoadError {
-    let path = path.as_ref().to_path_buf();
-    match err {
-        hound::Error::IoError(err) => WavLoadError::IoError(path, err.kind()),
-        _ => WavLoadError::Other,
     }
 }
 

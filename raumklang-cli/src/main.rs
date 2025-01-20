@@ -420,7 +420,7 @@ fn play_signal(
         }
     };
 
-    engine.play_signal(signal)
+    Ok(engine.play_signal(signal)?)
 }
 
 pub fn meter_rms(source_port_name: &str) -> anyhow::Result<()> {

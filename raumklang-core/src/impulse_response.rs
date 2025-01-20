@@ -3,7 +3,7 @@ use rustfft::{
     FftPlanner,
 };
 
-use crate::{Loopback, Measurement};
+use crate::{Error, Loopback, Measurement};
 
 #[derive(Debug, Clone)]
 pub struct ImpulseResponse {
@@ -20,7 +20,7 @@ pub struct FrequencyResponse {
 }
 
 impl ImpulseResponse {
-    pub fn from_signals(loopback: &Loopback, response: &Measurement) -> anyhow::Result<Self> {
+    pub fn from_signals(loopback: &Loopback, response: &Measurement) -> Result<Self, Error> {
         let sample_rate = loopback.0.sample_rate;
         assert!(sample_rate == response.sample_rate());
 
@@ -81,7 +81,7 @@ impl ImpulseResponse {
         })
     }
 
-    pub fn from_files(loopback_path: &str, measurment_path: &str) -> anyhow::Result<Self> {
+    pub fn from_files(loopback_path: &str, measurment_path: &str) -> Result<Self, Error> {
         let loopback = Loopback::from_file(loopback_path)?;
         let measurement = Measurement::from_file(measurment_path)?;
 

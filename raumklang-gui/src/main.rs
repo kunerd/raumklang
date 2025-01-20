@@ -24,10 +24,11 @@ use iced_aw::{
 };
 
 use data::{FromFile, Project, ProjectLoopback, ProjectMeasurement};
+use raumklang_core::WavLoadError;
 use rfd::FileHandle;
 use tabs::{
     impulse_response,
-    measurements::{self, Error, WavLoadError},
+    measurements::{self, Error},
 };
 
 const MAX_RECENT_PROJECTS_ENTRIES: usize = 10;
@@ -185,11 +186,11 @@ impl Raumklang {
                 if let Some(loopback) = project.loopback {
                     let path = loopback.path().clone();
                     tasks.push(Task::perform(
-                        async {
-                            load_signal_from_file(path)
+                        async move {
+                            load_signal_from_file(path.clone())
                                 .await
                                 .map(Arc::new)
-                                .map_err(Error::File)
+                                .map_err(|err| Error::File(path.to_path_buf(), Arc::new(err)))
                         },
                         Message::LoopbackMeasurementLoaded,
                     ));
@@ -197,11 +198,11 @@ impl Raumklang {
                 for measurement in project.measurements {
                     let path = measurement.path.clone();
                     tasks.push(Task::perform(
-                        async {
-                            load_signal_from_file(path)
+                        async move {
+                            load_signal_from_file(path.clone())
                                 .await
                                 .map(Arc::new)
-                                .map_err(Error::File)
+                                .map_err(|err| Error::File(path.to_path_buf(), Arc::new(err)))
                         },
                         Message::MeasurementLoaded,
                     ))
@@ -282,10 +283,7 @@ impl Raumklang {
 
                 Task::none()
             }
-            Message::LoopbackMeasurementLoaded(Err(Error::File(WavLoadError::IoError(
-                path,
-                _,
-            )))) => {
+            Message::LoopbackMeasurementLoaded(Err(Error::File(path, _err))) => {
                 let Raumklang::Loaded { loopback, .. } = self else {
                     return Task::none();
                 };
@@ -302,7 +300,7 @@ impl Raumklang {
             }
             Message::MeasurementLoaded(Err(err)) => {
                 match err {
-                    Error::File(WavLoadError::IoError(path, reason)) => {
+                    Error::File(path, reason) => {
                         let Raumklang::Loaded { measurements, .. } = self else {
                             return Task::none();
                         };
@@ -311,9 +309,6 @@ impl Raumklang {
                         measurements.insert(data::MeasurementState::NotLoaded(measurement));
 
                         dbg!(reason);
-                    }
-                    Error::File(err) => {
-                        dbg!(err);
                     }
                     Error::DialogClosed => {}
                 }
@@ -700,7 +695,7 @@ where
     load_signal_from_file(handle.path())
         .await
         .map(Arc::new)
-        .map_err(Error::File)
+        .map_err(|err| Error::File(handle.path().to_path_buf(), Arc::new(err)))
 }
 
 async fn pick_file(file_type: impl AsRef<str>) -> Result<FileHandle, Error> {

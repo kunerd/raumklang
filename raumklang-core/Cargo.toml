@@ -9,5 +9,4 @@ ringbuf = "0.3.2"
 rustfft = "6.0"
 rand = { version = "0.8", features = ["std", "std_rng", "small_rng"] }
 jack = "0.11.4"
-#FIXME remove anyhow from core
-anyhow = "1.0.42"
+thiserror = "2.0"

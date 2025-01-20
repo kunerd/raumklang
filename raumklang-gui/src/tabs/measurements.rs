@@ -1,10 +1,10 @@
-use std::{io::ErrorKind, path::PathBuf};
+use std::{path::PathBuf, sync::Arc};
 
 use iced::{
     widget::{button, column, container, horizontal_rule, horizontal_space, row, scrollable, text},
     Alignment, Element, Length, Task,
 };
-use thiserror::Error;
+use raumklang_core::WavLoadError;
 
 use crate::{
     data::{self},
@@ -45,16 +45,8 @@ pub enum Event {
 
 #[derive(Debug, Clone)]
 pub enum Error {
-    File(WavLoadError),
+    File(PathBuf, Arc<WavLoadError>),
     DialogClosed,
-}
-
-#[derive(Error, Debug, Clone)]
-pub enum WavLoadError {
-    #[error("couldn't read file")]
-    IoError(PathBuf, ErrorKind),
-    #[error("unknown")]
-    Other,
 }
 
 impl Measurements {

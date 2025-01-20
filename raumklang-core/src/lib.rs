@@ -6,8 +6,29 @@ pub use impulse_response::*;
 
 use rand::{distributions, distributions::Distribution, rngs, SeedableRng};
 use ringbuf::Rb;
+use thiserror::Error;
 
-use std::{f32, path::Path};
+use std::{
+    f32,
+    io::{self},
+    path::Path,
+};
+
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("error laoding a measurement")]
+    WavLoadFile(#[from] WavLoadError),
+    #[error(transparent)]
+    AudioBackend(#[from] AudioBackendError),
+}
+
+#[derive(Error, Debug)]
+pub enum WavLoadError {
+    #[error(transparent)]
+    Io(#[from] io::Error),
+    #[error("unknown")]
+    Other,
+}
 
 #[derive(Debug, Clone)]
 pub struct Loopback(pub Measurement);
@@ -23,7 +44,7 @@ impl Loopback {
         Self(Measurement::new(sample_rate, data))
     }
 
-    pub fn from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError> {
         let measurement = Measurement::from_file(path)?;
 
         Ok(Self(measurement))
@@ -35,11 +56,14 @@ impl Measurement {
         Self { sample_rate, data }
     }
 
-    pub fn from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let mut file = hound::WavReader::open(path)?;
+    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError> {
+        let mut file = hound::WavReader::open(path).map_err(map_hound_error)?;
 
         let sample_rate = file.spec().sample_rate;
-        let data: Vec<f32> = file.samples::<f32>().collect::<Result<Vec<f32>, _>>()?;
+        let data: Vec<f32> = file
+            .samples::<f32>()
+            .collect::<Result<Vec<f32>, _>>()
+            .map_err(map_hound_error)?;
 
         Ok(Measurement::new(sample_rate, data))
     }
@@ -54,6 +78,13 @@ impl Measurement {
 
     pub fn len(&self) -> usize {
         self.data.len()
+    }
+}
+
+fn map_hound_error(err: hound::Error) -> WavLoadError {
+    match err {
+        hound::Error::IoError(error) => WavLoadError::Io(error),
+        _ => WavLoadError::Other,
     }
 }
 
@@ -239,7 +270,7 @@ pub fn volume_to_amplitude(volume: f32) -> f32 {
 pub fn write_signal_to_file(
     signal: Box<dyn FiniteSignal<Item = f32>>,
     path: &Path,
-) -> anyhow::Result<()> {
+) -> Result<(), Error> {
     let sample_rate = 44_100;
 
     let spec = hound::WavSpec {
@@ -249,13 +280,13 @@ pub fn write_signal_to_file(
         sample_format: hound::SampleFormat::Float,
     };
 
-    let mut writer = hound::WavWriter::create(path, spec)?;
+    let mut writer = hound::WavWriter::create(path, spec).map_err(map_hound_error)?;
 
     for s in signal {
-        writer.write_sample(s)?;
+        writer.write_sample(s).map_err(map_hound_error)?;
     }
 
-    writer.finalize()?;
+    writer.finalize().map_err(map_hound_error)?;
 
     Ok(())
 }
