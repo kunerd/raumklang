@@ -326,7 +326,7 @@ impl Raumklang {
                     TabId::Measurements => Tab::Measurements(tabs::Measurements::default()),
                     TabId::ImpulseResponse => Tab::Analysis(tabs::ImpulseResponseTab::default()),
                     TabId::FrequencyResponse => {
-                        Tab::FrequencyResponse(tabs::FrequencyResponse::default())
+                        Tab::FrequencyResponse(tabs::FrequencyResponse::new())
                     }
                 };
                 Task::none()
@@ -399,7 +399,23 @@ impl Raumklang {
 
                 task.map(Message::ImpulseResponseTab)
             }
-            Message::Debug => Task::none(),
+            Message::FrequencyResponseTab(message) => {
+                let Raumklang::Loaded {
+                    active_tab: Tab::FrequencyResponse(tab),
+                    //loopback: Some(data::MeasurementState::Loaded(loopback)),
+                    //measurements,
+                    //impulse_responses,
+                    ..
+                } = self
+                else {
+                    return Task::none();
+                };
+
+
+                tab.update(message);
+
+                Task::none()
+            }
             Message::LoadRecentProject(id) => {
                 let Raumklang::Loaded {
                     recent_projects, ..
@@ -447,6 +463,7 @@ impl Raumklang {
 
                 Task::none()
             }
+            Message::Debug => Task::none(),
         }
     }
 
@@ -571,12 +588,12 @@ impl Raumklang {
                         ),
                         tab_button(
                             "Impulse Response",
-                            matches!(active_tab, Tab::Analysis(..)),
+                            matches!(active_tab, Tab::Analysis(_)),
                             ir_button_msg
                         ),
                         tab_button(
                             "Frequency Responses",
-                            matches!(active_tab, Tab::Analysis(..)),
+                            matches!(active_tab, Tab::FrequencyResponse(_)),
                             fr_button_msg
                         )
                     ]
