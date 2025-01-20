@@ -2,13 +2,12 @@ mod components;
 mod data;
 mod tabs;
 mod widgets;
-//mod window;
 
-use std::{
-    collections::HashMap,
-    io, mem,
-    path::{Path, PathBuf},
-    sync::Arc,
+use data::{FromFile, Project, ProjectLoopback, ProjectMeasurement};
+use raumklang_core::WavLoadError;
+use tabs::{
+    impulse_response,
+    measurements::{self, Error},
 };
 
 use iced::{
@@ -22,13 +21,13 @@ use iced_aw::{
     style::Status,
     Menu, MenuBar,
 };
-
-use data::{FromFile, Project, ProjectLoopback, ProjectMeasurement};
-use raumklang_core::WavLoadError;
 use rfd::FileHandle;
-use tabs::{
-    impulse_response,
-    measurements::{self, Error},
+
+use std::{
+    collections::HashMap,
+    io,
+    path::{Path, PathBuf},
+    sync::Arc,
 };
 
 const MAX_RECENT_PROJECTS_ENTRIES: usize = 10;
@@ -43,16 +42,18 @@ enum Message {
     LoopbackMeasurementLoaded(Result<Arc<data::Loopback>, Error>),
     MeasurementLoaded(Result<Arc<data::Measurement>, Error>),
     TabSelected(TabId),
-    MeasurementsTab(tabs::measurements::Message),
-    ImpulseResponseTab(tabs::impulse_response::Message),
     Debug,
     LoadRecentProject(usize),
     RecentProjectsLoaded(Result<data::RecentProjects, ()>),
+    MeasurementsTab(tabs::measurements::Message),
+    ImpulseResponseTab(tabs::impulse_response::Message),
+    FrequencyResponseTab(tabs::frequency_response::Message),
 }
 
 enum Tab {
     Measurements(tabs::Measurements),
     Analysis(tabs::ImpulseResponseTab),
+    FrequencyResponse(tabs::FrequencyResponse),
 }
 
 impl Default for Tab {
@@ -80,6 +81,7 @@ enum TabId {
     #[default]
     Measurements,
     ImpulseResponse,
+    FrequencyResponse,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -320,13 +322,12 @@ impl Raumklang {
                     return Task::none();
                 };
 
-                let cur_tab = mem::take(active_tab);
-                *active_tab = match (tab_id, cur_tab) {
-                    (TabId::Measurements, _) => Tab::Measurements(tabs::Measurements::default()),
-                    (TabId::ImpulseResponse, Tab::Measurements(_)) => {
-                        Tab::Analysis(tabs::ImpulseResponseTab::default())
+                *active_tab = match tab_id {
+                    TabId::Measurements => Tab::Measurements(tabs::Measurements::default()),
+                    TabId::ImpulseResponse => Tab::Analysis(tabs::ImpulseResponseTab::default()),
+                    TabId::FrequencyResponse => {
+                        Tab::FrequencyResponse(tabs::FrequencyResponse::default())
                     }
-                    (TabId::ImpulseResponse, tab) => tab,
                 };
                 Task::none()
             }
@@ -537,13 +538,6 @@ impl Raumklang {
                 };
 
                 let content = {
-                    let ir_button_msg = match (loopback, measurements.is_loaded_empty()) {
-                        (Some(data::MeasurementState::Loaded(_)), false) => {
-                            Some(Message::TabSelected(TabId::ImpulseResponse))
-                        }
-                        _ => None,
-                    };
-
                     fn tab_button(
                         title: &str,
                         active: bool,
@@ -557,6 +551,18 @@ impl Raumklang {
                         .into()
                     }
 
+                    let ir_button_msg = match (loopback, measurements.is_loaded_empty()) {
+                        (Some(data::MeasurementState::Loaded(_)), false) => {
+                            Some(Message::TabSelected(TabId::ImpulseResponse))
+                        }
+                        _ => None,
+                    };
+                    let fr_button_msg = match (loopback, measurements.is_loaded_empty()) {
+                        (Some(data::MeasurementState::Loaded(_)), false) => {
+                            Some(Message::TabSelected(TabId::FrequencyResponse))
+                        }
+                        _ => None,
+                    };
                     let tab_bar = row![
                         tab_button(
                             "Measurements",
@@ -567,8 +573,14 @@ impl Raumklang {
                             "Impulse Response",
                             matches!(active_tab, Tab::Analysis(..)),
                             ir_button_msg
+                        ),
+                        tab_button(
+                            "Frequency Responses",
+                            matches!(active_tab, Tab::Analysis(..)),
+                            fr_button_msg
                         )
-                    ];
+                    ]
+                    .spacing(5);
 
                     let tab_content = match &active_tab {
                         Tab::Measurements(tab) => {
@@ -579,6 +591,9 @@ impl Raumklang {
                         Tab::Analysis(tab) => {
                             let measurements: Vec<_> = measurements.loaded().collect();
                             tab.view(&measurements).map(Message::ImpulseResponseTab)
+                        }
+                        Tab::FrequencyResponse(tab) => {
+                            tab.view().map(Message::FrequencyResponseTab)
                         }
                     };
 
