@@ -318,7 +318,12 @@ impl Raumklang {
                 Task::none()
             }
             Message::TabSelected(tab_id) => {
-                let Raumklang::Loaded { active_tab, .. } = self else {
+                let Raumklang::Loaded {
+                    active_tab,
+                    measurements,
+                    ..
+                } = self
+                else {
                     return Task::none();
                 };
 
@@ -326,7 +331,7 @@ impl Raumklang {
                     TabId::Measurements => Tab::Measurements(tabs::Measurements::default()),
                     TabId::ImpulseResponse => Tab::Analysis(tabs::ImpulseResponseTab::default()),
                     TabId::FrequencyResponse => {
-                        Tab::FrequencyResponse(tabs::FrequencyResponse::new())
+                        Tab::FrequencyResponse(tabs::FrequencyResponse::new(measurements.loaded()))
                     }
                 };
                 Task::none()
@@ -410,7 +415,6 @@ impl Raumklang {
                 else {
                     return Task::none();
                 };
-
 
                 tab.update(message);
 

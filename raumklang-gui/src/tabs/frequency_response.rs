@@ -4,6 +4,8 @@ use iced::{
     Length::{self, FillPortion},
 };
 
+use crate::data;
+
 #[derive(Debug, Clone)]
 pub enum Message {
     ListEntry(usize, ListEntryMessage),
@@ -26,17 +28,13 @@ struct ListEntry {
 }
 
 impl FrequencyResponse {
-    pub fn new() -> Self {
-        let entries = vec![
-            ListEntry {
-                name: "Measurement 1".to_string(),
+    pub fn new<'a>(measurement: impl Iterator<Item = &'a data::Measurement>) -> Self {
+        let entries = measurement
+            .map(|m| ListEntry {
+                name: m.name.clone(),
                 show_in_graph: true,
-            },
-            ListEntry {
-                name: "Measurement 2".to_string(),
-                show_in_graph: false,
-            },
-        ];
+            })
+            .collect();
 
         Self { entries }
     }
@@ -48,7 +46,8 @@ impl FrequencyResponse {
             .enumerate()
             .map(|(i, e)| e.view().map(move |msg| Message::ListEntry(i, msg)));
 
-        let list = container(column(entries).spacing(5).padding(8).width(FillPortion(1))).style(container::rounded_box);
+        let list = container(column(entries).spacing(5).padding(8).width(FillPortion(1)))
+            .style(container::rounded_box);
         let content = container(text("Not implemented")).center(Length::FillPortion(4));
 
         row![list, content].padding(10).into()
