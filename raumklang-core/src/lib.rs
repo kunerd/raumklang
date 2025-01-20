@@ -1,12 +1,67 @@
 mod audio;
+mod impulse_response;
 
 pub use audio::*;
+pub use impulse_response::*;
 
 use rand::{distributions, distributions::Distribution, rngs, SeedableRng};
 use ringbuf::Rb;
-use rustfft::{num_complex::{Complex, Complex32}, FftPlanner};
 
 use std::{f32, path::Path};
+
+#[derive(Debug, Clone)]
+pub struct Loopback(pub Measurement);
+
+#[derive(Debug, Clone)]
+pub struct Measurement {
+    sample_rate: u32,
+    data: Vec<f32>,
+}
+
+impl Loopback {
+    pub fn new(sample_rate: u32, data: Vec<f32>) -> Self {
+        Self(Measurement::new(sample_rate, data))
+    }
+
+    pub fn from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let measurement = Measurement::from_file(path)?;
+
+        Ok(Self(measurement))
+    }
+}
+
+impl Measurement {
+    pub fn new(sample_rate: u32, data: Vec<f32>) -> Self {
+        Self { sample_rate, data }
+    }
+
+    pub fn from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let mut file = hound::WavReader::open(path)?;
+
+        let sample_rate = file.spec().sample_rate;
+        let data: Vec<f32> = file.samples::<f32>().collect::<Result<Vec<f32>, _>>()?;
+
+        Ok(Measurement::new(sample_rate, data))
+    }
+
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &f32> {
+        self.data.iter()
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+}
+
+impl From<Loopback> for Measurement {
+    fn from(loopback: Loopback) -> Self {
+        loopback.0
+    }
+}
 
 pub enum Signal<F, I>
 where
@@ -15,8 +70,6 @@ where
     Finite(F),
     Infinite(I),
 }
-
-pub trait FiniteSignal: Send + Sync + ExactSizeIterator<Item = f32> {}
 
 pub struct LinearSineSweep {
     sample_rate: usize,
@@ -77,6 +130,9 @@ impl ExactSizeIterator for LinearSineSweep {
         self.n_samples - self.sample_index
     }
 }
+
+pub trait FiniteSignal: Send + Sync + ExactSizeIterator<Item = f32> {}
+
 impl FiniteSignal for LinearSineSweep {}
 
 pub struct WhiteNoise {
@@ -273,115 +329,6 @@ impl LoudnessMeter {
         }
     }
 }
-
-#[derive(Debug, Clone)]
-pub struct ImpulseResponse {
-    pub loopback_fft: Vec<Complex<f32>>,
-    pub response_fft: Vec<Complex<f32>>,
-    pub impulse_response: Vec<Complex<f32>>,
-}
-
-impl ImpulseResponse {
-    pub fn from_signals(mut loopback: Vec<f32>, mut response: Vec<f32>) -> anyhow::Result<Self> {
-        let response_len = response.len();
-        let loopback_len = loopback.len();
-
-        // make record and sweep the same length
-        if response_len > loopback_len {
-            loopback.append(&mut vec![0.0; response_len - loopback_len]);
-        } else {
-            response.append(&mut vec![0.0; loopback_len - response_len]);
-        }
-
-        assert!(response.len() == loopback.len());
-
-        // double the size
-        response.append(&mut vec![0.0; response.len()]);
-        loopback.append(&mut vec![0.0; loopback.len()]);
-
-        // convert to complex
-        let mut response: Vec<_> = response.iter().map(Complex::from).collect();
-        let mut loopback: Vec<_> = loopback.iter().map(Complex::from).collect();
-
-        // convert into frequency domain
-        let mut planner = FftPlanner::<f32>::new();
-        let fft = planner.plan_fft_forward(response.len());
-
-        fft.process(&mut response);
-        fft.process(&mut loopback);
-
-        // devide both
-        let mut result: Vec<Complex<f32>> = response
-            .iter()
-            .zip(loopback.iter())
-            .map(|(r, l)| r / l)
-            .collect();
-
-        // back to time domain
-        let fft = planner.plan_fft_inverse(result.len());
-        fft.process(&mut result);
-
-        let scale: f32 = 1.0 / (result.len() as f32);
-        let impulse_response_len = result.len() / 2 - 1;
-        let impulse_response: Vec<_> = result
-            .into_iter()
-            .map(|s| s.scale(scale))
-            .take(impulse_response_len)
-            .collect();
-
-        Ok(Self {
-            loopback_fft: loopback,
-            response_fft: response,
-            impulse_response,
-        })
-    }
-
-    pub fn from_files(loopback_path: &str, measurment_path: &str) -> anyhow::Result<Self> {
-        let mut loopback = hound::WavReader::open(loopback_path)?;
-        let mut response = hound::WavReader::open(measurment_path)?;
-
-        let loopback: Vec<f32> = loopback.samples::<f32>().collect::<Result<Vec<f32>, _>>()?;
-        let response: Vec<f32> = response.samples::<f32>().collect::<Result<Vec<f32>, _>>()?;
-
-        Self::from_signals(loopback, response)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct FrequencyResponse {
-    pub sample_rate: u32,
-    pub data: Vec<Complex32>,
-}
-
-impl FrequencyResponse {
-    pub fn new(
-        impulse_response: ImpulseResponse,
-        sample_rate: u32,
-        window: &[f32],
-    ) -> Self {
-        let mut windowed_impulse_response: Vec<_> = impulse_response
-            .impulse_response
-            .iter()
-            .take(window.len())
-            .enumerate()
-            .map(|(i, s)| s * window[i])
-            .collect();
-
-        let mut planner = FftPlanner::<f32>::new();
-        let fft = planner.plan_fft_forward(windowed_impulse_response.len());
-
-        fft.process(&mut windowed_impulse_response);
-
-        let data_len = windowed_impulse_response.len() / 2 - 1;
-        let data = windowed_impulse_response
-            .into_iter()
-            .take(data_len)
-            .collect();
-
-        Self { sample_rate, data }
-    }
-}
-
 
 //pub fn old_rir(
 //    host: &cpal::Host,

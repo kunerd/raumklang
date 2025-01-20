@@ -7,7 +7,8 @@ use iced::{
 use thiserror::Error;
 
 use crate::{
-    data, delete_icon,
+    data::{self},
+    delete_icon,
     widgets::chart::{self, SignalChart},
     OfflineMeasurement,
 };
@@ -74,12 +75,17 @@ impl Measurements {
             Message::RemoveMeasurement(id) => (Task::none(), Some(Event::RemoveMeasurement(id))),
             Message::MeasurementSelected(selected) => {
                 let signal = match selected {
-                    SelectedMeasurement::Loopback => loopback.map(Into::into),
-                    SelectedMeasurement::Measurement(id) => measurements.get(id).copied(),
+                    SelectedMeasurement::Loopback => {
+                        loopback.map(|l| raumklang_core::Measurement::from(l.0.data.clone()))
+                    }
+                    SelectedMeasurement::Measurement(id) => {
+                        measurements.get(id).map(|m| m.data.clone())
+                    }
                 };
                 self.selected = Some(selected);
 
                 self.chart = signal
+                    .as_ref()
                     .map(|signal| chart::SignalChart::new(signal, chart::TimeSeriesUnit::Time));
 
                 (Task::none(), None)
@@ -198,11 +204,11 @@ fn loopback_list_entry<'a>(
     selected: Option<&SelectedMeasurement>,
     signal: &'a data::Loopback,
 ) -> Element<'a, Message> {
-    let samples = signal.data().len();
-    let sample_rate = signal.sample_rate() as f32;
+    let samples = signal.0.data.0.len();
+    let sample_rate = signal.0.data.0.sample_rate() as f32;
     let content = column!(
         row![
-            text(signal.name()),
+            text(&signal.0.name),
             horizontal_space(),
             button(delete_icon())
                 .on_press(Message::RemoveLoopbackMeasurement)
@@ -231,7 +237,7 @@ fn measurement_list_entry<'a>(
     index: usize,
 ) -> Element<'a, Message> {
     let samples = signal.data.len();
-    let sample_rate = signal.sample_rate as f32;
+    let sample_rate = signal.data.sample_rate() as f32;
     let content = column!(
         row![
             text(&signal.name),

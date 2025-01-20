@@ -156,7 +156,7 @@ fn main() -> anyhow::Result<()> {
             //    .collect();
 
             //plot_heatmap(&start)?;
-            plot_heatmap(&impulse_respone.impulse_response)?;
+            plot_heatmap(impulse_respone.data)?;
 
             Ok(())
         }
@@ -166,14 +166,14 @@ fn main() -> anyhow::Result<()> {
 
             let data: Vec<_> = data.iter().map(Complex::from).collect();
 
-            plot_heatmap(&data)?;
+            plot_heatmap(data)?;
 
             Ok(())
         }
     }
 }
 
-fn plot_heatmap(ir: &Vec<Complex<f32>>) -> anyhow::Result<()> {
+fn plot_heatmap(ir: Vec<Complex<f32>>) -> anyhow::Result<()> {
     let _sample_rate = 44100;
     let window_size = 4 * 1024;
 

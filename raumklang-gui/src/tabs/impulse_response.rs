@@ -6,7 +6,6 @@ use iced::{
     Length::{self, FillPortion},
     Task,
 };
-use rustfft::num_complex::ComplexFloat;
 
 use crate::{
     data,
@@ -59,14 +58,15 @@ impl ImpulseResponseTab {
                     self.update_chart(ir);
                     (Task::none(), None)
                 } else {
-                    let loopback = loopback.iter().cloned().collect();
                     let measurement = measurements.get_loaded(&id);
-
                     if let Some(measurement) = measurement {
-                        let measurement = measurement.iter().cloned().collect();
                         (
                             Task::perform(
-                                compute_impulse_response(id, loopback, measurement),
+                                compute_impulse_response(
+                                    id,
+                                    loopback.0.data.clone(),
+                                    measurement.data.clone(),
+                                ),
                                 Message::ImpulseResponseComputed,
                             ),
                             None,
@@ -136,9 +136,7 @@ impl ImpulseResponseTab {
     }
 
     fn update_chart(&mut self, ir: &raumklang_core::ImpulseResponse) {
-        let data: Vec<_> = ir.impulse_response.iter().map(|s| s.re().abs()).collect();
-        let signal = data::Measurement::new("Impulse response".to_string(), 44_100, data.clone());
-        self.chart = Some(ImpulseResponseChart::new(signal, TimeSeriesUnit::Time));
+        self.chart = Some(ImpulseResponseChart::new(ir.clone(), TimeSeriesUnit::Time));
     }
 }
 
@@ -153,12 +151,12 @@ fn list_category<'a>(name: &'a str, content: Element<'a, Message>) -> Element<'a
 
 async fn compute_impulse_response(
     id: usize,
-    loopback: Vec<f32>,
-    measurement: Vec<f32>,
+    loopback: raumklang_core::Loopback,
+    measurement: raumklang_core::Measurement,
 ) -> (usize, raumklang_core::ImpulseResponse) {
     (
         id,
-        raumklang_core::ImpulseResponse::from_signals(loopback, measurement).unwrap(),
+        raumklang_core::ImpulseResponse::from_signals(&loopback, &measurement).unwrap(),
     )
 }
 

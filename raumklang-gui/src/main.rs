@@ -23,7 +23,7 @@ use iced_aw::{
     Menu, MenuBar,
 };
 
-use data::{FromFile, Measurement, Project, ProjectLoopback, ProjectMeasurement};
+use data::{FromFile, Project, ProjectLoopback, ProjectMeasurement};
 use rfd::FileHandle;
 use tabs::{
     impulse_response,
@@ -614,7 +614,7 @@ pub fn delete_icon<'a, M>() -> Element<'a, M> {
 impl From<&data::MeasurementState<data::Loopback, OfflineMeasurement>> for ProjectLoopback {
     fn from(value: &data::MeasurementState<data::Loopback, OfflineMeasurement>) -> Self {
         let path = match value {
-            data::MeasurementState::Loaded(l) => l.path(),
+            data::MeasurementState::Loaded(l) => &l.0.path,
             data::MeasurementState::NotLoaded(om) => &om.path,
         };
 

@@ -27,15 +27,14 @@ pub struct ProjectMeasurement {
 }
 
 #[derive(Debug, Clone)]
-pub struct Measurement {
-    pub name: String,
-    pub path: PathBuf,
-    pub sample_rate: u32,
-    pub data: Vec<f32>,
-}
+pub struct Loopback(pub Measurement<raumklang_core::Loopback>);
 
 #[derive(Debug, Clone)]
-pub struct Loopback(Measurement);
+pub struct Measurement<D = raumklang_core::Measurement> {
+    pub name: String,
+    pub path: PathBuf,
+    pub data: D,
+}
 
 impl ProjectLoopback {
     pub fn new(inner: ProjectMeasurement) -> Self {
@@ -53,8 +52,8 @@ impl From<&Loopback> for ProjectLoopback {
     }
 }
 
-impl From<&Measurement> for ProjectMeasurement {
-    fn from(value: &Measurement) -> Self {
+impl<D> From<&Measurement<D>> for ProjectMeasurement {
+    fn from(value: &Measurement<D>) -> Self {
         Self {
             path: value.path.to_path_buf(),
         }
@@ -62,36 +61,12 @@ impl From<&Measurement> for ProjectMeasurement {
 }
 
 impl From<Loopback> for Measurement {
-    fn from(value: Loopback) -> Self {
-        value.0
-    }
-}
-
-impl<'a> From<&'a Loopback> for &'a Measurement {
-    fn from(value: &'a Loopback) -> Self {
-        &value.0
-    }
-}
-
-impl Loopback {
-    pub fn name(&self) -> &str {
-        &self.0.name
-    }
-
-    pub fn path(&self) -> &PathBuf {
-        &self.0.path
-    }
-
-    pub fn sample_rate(&self) -> u32 {
-        self.0.sample_rate
-    }
-
-    pub fn data(&self) -> &Vec<f32> {
-        &self.0.data
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &f32> {
-        self.0.data.iter()
+    fn from(loopback: Loopback) -> Self {
+        Self {
+            name: loopback.0.name,
+            path: loopback.0.path,
+            data: raumklang_core::Measurement::from(loopback.0.data),
+        }
     }
 }
 
@@ -100,8 +75,16 @@ impl FromFile for Loopback {
     where
         Self: Sized,
     {
-        let inner = Measurement::from_file(path)?;
-        Ok(Self(inner))
+        let path = path.as_ref();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_os_string().into_string().ok())
+            .unwrap_or("Unknown".to_string());
+
+        let data = raumklang_core::Loopback::from_file(path).unwrap();
+
+        let path = path.to_path_buf();
+        Ok(Self(Measurement { name, path, data }))
     }
 }
 
@@ -109,21 +92,6 @@ pub trait FromFile {
     fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError>
     where
         Self: Sized;
-}
-
-impl Measurement {
-    pub fn new(name: String, sample_rate: u32, data: Vec<f32>) -> Self {
-        Self {
-            name,
-            path: PathBuf::new(),
-            sample_rate,
-            data,
-        }
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &f32> {
-        self.data.iter()
-    }
 }
 
 impl FromFile for Measurement {
@@ -134,20 +102,11 @@ impl FromFile for Measurement {
             .and_then(|n| n.to_os_string().into_string().ok())
             .unwrap_or("Unknown".to_string());
 
-        let mut loopback =
-            hound::WavReader::open(path).map_err(|err| map_hound_error(path, err))?;
-        let sample_rate = loopback.spec().sample_rate;
-        // only mono files
-        // currently only 32bit float
-        let data = loopback
-            .samples::<f32>()
-            .collect::<hound::Result<Vec<f32>>>()
-            .map_err(|err| map_hound_error(path, err))?;
+        let data = raumklang_core::Measurement::from_file(path).unwrap();
 
         Ok(Self {
             name,
             path: path.to_path_buf(),
-            sample_rate,
             data,
         })
     }

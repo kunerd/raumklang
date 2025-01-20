@@ -33,8 +33,6 @@ use rustfft::{
     num_traits::SaturatingSub,
 };
 
-use crate::Measurement;
-
 #[derive(Debug, Clone)]
 pub enum Message {
     TimeUnitChanged(TimeSeriesUnit),
@@ -50,14 +48,14 @@ pub enum SignalChartMessage {
 }
 
 pub struct SignalChart {
-    signal: Arc<Measurement>,
+    signal: Arc<raumklang_core::Measurement>,
     time_unit: TimeSeriesUnit,
     viewport: InteractiveViewport<TimeSeriesRange>,
     cache: Cache,
 }
 
 pub struct ImpulseResponseChart {
-    signal: Measurement,
+    impulse_response: raumklang_core::ImpulseResponse,
     window: Option<Vec<f32>>,
     noise_floor: Option<f32>,
     noise_floor_crossing: Option<usize>,
@@ -146,8 +144,9 @@ impl std::fmt::Display for AmplitudeUnit {
 }
 
 impl SignalChart {
-    pub fn new(signal: &Measurement, time_unit: TimeSeriesUnit) -> Self {
-        let viewport = InteractiveViewport::new(0..signal.data.len() as i64);
+    pub fn new(signal: &raumklang_core::Measurement, time_unit: TimeSeriesUnit) -> Self {
+        let length = signal.len() as i64;
+        let viewport = InteractiveViewport::new(0..length);
         Self {
             signal: Arc::new(signal.clone()),
             time_unit,
@@ -214,21 +213,21 @@ impl Chart<SignalChartMessage> for SignalChart {
         let range = self.viewport.range().clone().into();
         let x_range = match self.time_unit {
             TimeSeriesUnit::Samples => TimeSeriesRange::Samples(range),
-            TimeSeriesUnit::Time => TimeSeriesRange::Time(self.signal.sample_rate, range),
+            TimeSeriesUnit::Time => TimeSeriesRange::Time(self.signal.sample_rate(), range),
         };
 
         let min = self
             .signal
-            .data
-            .clone()
+            .iter()
+            .cloned()
             .into_iter()
             .reduce(f32::min)
             .unwrap();
 
         let max = self
             .signal
-            .data
-            .clone()
+            .iter()
+            .cloned()
             .into_iter()
             .reduce(f32::max)
             .unwrap();
@@ -243,7 +242,6 @@ impl Chart<SignalChartMessage> for SignalChart {
         chart
             .draw_series(LineSeries::new(
                 self.signal
-                    .data
                     .iter()
                     .cloned()
                     .enumerate()
@@ -568,10 +566,14 @@ impl Display for SmoothingType {
 }
 
 impl ImpulseResponseChart {
-    pub fn new(signal: Measurement, time_unit: TimeSeriesUnit) -> Self {
-        let viewport = InteractiveViewport::new(0..signal.data.len() as i64);
+    pub fn new(
+        impulse_response: raumklang_core::ImpulseResponse,
+        time_unit: TimeSeriesUnit,
+    ) -> Self {
+        let length = impulse_response.len() as i64;
+        let viewport = InteractiveViewport::new(0..length);
         Self {
-            signal,
+            impulse_response,
             window: None,
             noise_floor: None,
             noise_floor_crossing: None,
@@ -664,30 +666,25 @@ impl Chart<Message> for ImpulseResponseChart {
         let range = self.viewport.range().clone().into();
         let x_range = match self.time_unit {
             TimeSeriesUnit::Samples => TimeSeriesRange::Samples(range),
-            TimeSeriesUnit::Time => TimeSeriesRange::Time(self.signal.sample_rate, range),
+            TimeSeriesUnit::Time => TimeSeriesRange::Time(self.impulse_response.sample_rate, range),
         };
 
-        //let max = self
-        //    .signal
-        //    .data
-        //    .clone()
-        //    .into_iter()
-        //    .reduce(f32::max)
-        //    .unwrap();
-        let max = self
-            .signal
+        let data: Vec<_> = self
+            .impulse_response
             .data
+            .iter()
+            .map(|s| s.re.abs())
+            .collect();
+
+        let max = data
             .iter()
             .map(|s| s.powi(2).sqrt())
             .fold(f32::NEG_INFINITY, |a, b| a.max(b));
+
         // FIXME: precompute on amplitude change
         let processed_data: Vec<_> = match &self.amplitude_unit {
-            AmplitudeUnit::PercentFullScale => {
-                self.signal.data.iter().map(|s| *s / max * 100f32).collect()
-            }
-            AmplitudeUnit::DezibelFullScale => self
-                .signal
-                .data
+            AmplitudeUnit::PercentFullScale => data.iter().map(|s| *s / max * 100f32).collect(),
+            AmplitudeUnit::DezibelFullScale => data
                 .iter()
                 .map(|s| 20f32 * f32::log10(s.abs() / max))
                 .collect(),
@@ -717,7 +714,7 @@ impl Chart<Message> for ImpulseResponseChart {
         if let Some(nf) = self.noise_floor {
             chart
                 .draw_series(LineSeries::new(
-                    (0..self.signal.data.len()).map(|i| (i as i64, nf)),
+                    (0..data.len()).map(|i| (i as i64, nf)),
                     &style::RGBColor(0, 0, 128),
                 ))
                 .unwrap();
