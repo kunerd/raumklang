@@ -6,7 +6,7 @@ mod widgets;
 use data::{FromFile, Project, ProjectLoopback, ProjectMeasurement};
 use raumklang_core::WavLoadError;
 use tabs::{
-    impulse_response,
+    frequency_response, impulse_response,
     measurements::{self, Error},
 };
 
@@ -24,7 +24,10 @@ use iced_aw::{
 use rfd::FileHandle;
 
 use std::{
-    collections::HashMap, io, mem, path::{Path, PathBuf}, sync::Arc
+    collections::HashMap,
+    io, mem,
+    path::{Path, PathBuf},
+    sync::Arc,
 };
 
 const MAX_RECENT_PROJECTS_ENTRIES: usize = 10;
@@ -429,18 +432,26 @@ impl Raumklang {
             Message::FrequencyResponseTab(message) => {
                 let Raumklang::Loaded {
                     active_tab: Tab::FrequencyResponse(tab),
-                    //loopback: Some(data::MeasurementState::Loaded(loopback)),
-                    //measurements,
-                    //impulse_responses,
+                    impulse_responses,
+                    frequency_responses,
                     ..
                 } = self
                 else {
                     return Task::none();
                 };
 
-                tab.update(message);
+                let (task, event) = tab.update(message, frequency_responses);
+                match event {
+                    Some(frequency_response::Event::ImpulseResponseComputed(id, ir)) => {
+                        impulse_responses.insert(id, ir);
+                    }
+                    Some(frequency_response::Event::FrequencyResponseComputed(id, fr)) => {
+                        frequency_responses.insert(id, fr);
+                    }
+                    None => {}
+                }
 
-                Task::none()
+                task.map(Message::FrequencyResponseTab)
             }
             Message::LoadRecentProject(id) => {
                 let Raumklang::Loaded {

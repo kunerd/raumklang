@@ -10,13 +10,19 @@ use iced::{
     Task,
 };
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub enum Message {
     ListEntry(usize, ListEntryMessage),
     Chart(chart::FrequencyResponseChartMessage),
-    FrequencyResponseComputed(Arc<raumklang_core::FrequencyResponse>),
+    FrequencyResponseComputed((usize, raumklang_core::FrequencyResponse)),
+    ImpulseResponseComputed((usize, raumklang_core::ImpulseResponse)),
+}
+
+pub enum Event {
+    ImpulseResponseComputed(usize, raumklang_core::ImpulseResponse),
+    FrequencyResponseComputed(usize, raumklang_core::FrequencyResponse),
 }
 
 #[derive(Debug, Clone)]
@@ -47,10 +53,13 @@ impl FrequencyResponse {
         let mut entries = Vec::with_capacity(size_hint.unwrap_or(10));
         let mut tasks = vec![];
 
-        for measurement in measurements {
-            let id = 0;
-            let frequency_response_id = if let Some(_fr) = frequency_responses.get(&id) {
-                Some(id)
+        for (id, measurement) in measurements.enumerate() {
+            if let Some(_fr) = frequency_responses.get(&id) {
+                entries.push(ListEntry {
+                    name: measurement.name.clone(),
+                    show_in_graph: false,
+                    frequency_response_id: Some(id),
+                });
             } else {
                 let window = raumklang_core::WindowBuilder::default().build();
 
@@ -63,27 +72,12 @@ impl FrequencyResponse {
                         Message::FrequencyResponseComputed,
                     ));
                 } else {
-                    tasks.push(
-                        Task::future(compute_impulse_response(id, loopback, measurement)).then(
-                            move |(id, ir)| {
-                                let window = window.clone();
-                                Task::perform(
-                                    compute_frequency_response(id, ir, window),
-                                    Message::FrequencyResponseComputed,
-                                )
-                            },
-                        ),
-                    );
+                    tasks.push(Task::perform(
+                        compute_impulse_response(id, loopback, measurement),
+                        Message::ImpulseResponseComputed,
+                    ));
                 };
-
-                None
             };
-
-            entries.push(ListEntry {
-                name: measurement.name.clone(),
-                show_in_graph: true,
-                frequency_response_id,
-            });
         }
 
         (
@@ -116,22 +110,55 @@ impl FrequencyResponse {
         row![list, content].padding(10).into()
     }
 
-    pub fn update(&mut self, message: Message) {
+    pub fn update(
+        &mut self,
+        message: Message,
+        frequency_responses: &HashMap<usize, raumklang_core::FrequencyResponse>,
+    ) -> (Task<Message>, Option<Event>) {
         match message {
             Message::ListEntry(id, message) => {
-                if let Some(entry) = self.entries.get_mut(id) {
-                    entry.update(message)
+                let Some(entry) = self.entries.get_mut(id) else {
+                    return (Task::none(), None);
+                };
+
+                if let ListEntryMessage::ShowInGraphToggled(true) = &message {
+                    self.chart = frequency_responses
+                        .get(&entry.frequency_response_id.unwrap())
+                        .cloned()
+                        .map(FrequencyResponseChart::new);
                 }
+
+                entry.update(message);
+
+                (Task::none(), None)
             }
             Message::Chart(message) => {
                 let Some(chart) = &mut self.chart else {
-                    return;
+                    return (Task::none(), None);
                 };
 
                 chart.update(message);
+                (Task::none(), None)
             }
-            Message::FrequencyResponseComputed(fr) => {
-                self.chart = Some(FrequencyResponseChart::new(fr));
+            Message::ImpulseResponseComputed((id, ir)) => {
+                let window = raumklang_core::WindowBuilder::default().build();
+
+                let task = Task::perform(
+                    compute_frequency_response(id, ir.clone(), window),
+                    Message::FrequencyResponseComputed,
+                );
+
+                (task, Some(Event::ImpulseResponseComputed(id, ir)))
+            }
+            Message::FrequencyResponseComputed((id, fr)) => {
+                self.entries.push(ListEntry {
+                    name: "Fixme".to_string(),
+                    show_in_graph: false,
+                    frequency_response_id: Some(id),
+                });
+
+                self.chart = Some(FrequencyResponseChart::new(fr.clone()));
+                (Task::none(), Some(Event::FrequencyResponseComputed(id, fr)))
             }
         }
     }
@@ -158,19 +185,25 @@ async fn compute_impulse_response(
     loopback: raumklang_core::Loopback,
     measurement: raumklang_core::Measurement,
 ) -> (usize, raumklang_core::ImpulseResponse) {
-    (
-        id,
-        raumklang_core::ImpulseResponse::from_signals(&loopback, &measurement).unwrap(),
-    )
+    let impulse_response = tokio::task::spawn_blocking(move || {
+        raumklang_core::ImpulseResponse::from_signals(&loopback, &measurement).unwrap()
+    })
+    .await
+    .unwrap();
+
+    (id, impulse_response)
 }
 
 async fn compute_frequency_response(
     id: usize,
     impulse_response: raumklang_core::ImpulseResponse,
     window: Vec<f32>,
-) -> Arc<raumklang_core::FrequencyResponse> {
-    Arc::new(raumklang_core::FrequencyResponse::new(
-        impulse_response,
-        &window,
-    ))
+) -> (usize, raumklang_core::FrequencyResponse) {
+    let frequency_response = tokio::task::spawn_blocking(move || {
+        raumklang_core::FrequencyResponse::new(impulse_response, &window)
+    })
+    .await
+    .unwrap();
+
+    (id, frequency_response)
 }
