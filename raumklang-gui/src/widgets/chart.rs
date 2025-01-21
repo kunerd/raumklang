@@ -66,12 +66,93 @@ pub struct ImpulseResponseChart {
 }
 
 pub struct FrequencyResponseChart {
-    data: Vec<f32>,
-    frequency_response: FrequencyResponse,
+    responses: Vec<FrequencyResponseData>,
     unit: FrequencyResponseUnit,
     smoothing: Option<SmoothingType>,
     viewport: InteractiveViewport<FrequencyResponseRange>,
     cache: Cache,
+}
+
+struct FrequencyResponseData {
+    graph: Vec<f32>,
+    original: FrequencyResponse,
+}
+
+impl FrequencyResponseData {
+    fn new(original: FrequencyResponse) -> Self {
+        let graph: Vec<_> = original
+            .data
+            .iter()
+            .cloned()
+            .map(Complex::re)
+            .map(f32::abs)
+            .map(dbfs)
+            .collect();
+
+        Self { graph, original }
+    }
+
+    fn smooth(&mut self, smoothing: SmoothingType) {
+        let data: Vec<f32> = self
+            .original
+            .data
+            .iter()
+            .cloned()
+            .map(Complex::re)
+            .map(f32::abs)
+            .map(dbfs)
+            .collect();
+
+        let mut new_data = vec![];
+        for i in 0..data.len() {
+            let center_bin = |i: usize| -> f32 {
+                2.0_f32
+                    .powf(i as f32 / usize::from(smoothing) as f32)
+                    .floor()
+            };
+
+            let lower_bin =
+                f32::sqrt(center_bin(i.saturating_sub(1)) * center_bin(i)).floor() as usize;
+            let mut upper_bin = f32::sqrt(center_bin(i) * center_bin(usize::min(data.len(), i + 1)))
+                .floor() as usize;
+
+            if lower_bin >= data.len() {
+                break;
+            }
+
+            if upper_bin >= data.len() {
+                upper_bin = data.len();
+            }
+
+            // TODO: include min values
+            //let min = data[lower_bin..upper_bin]
+            //    .iter()
+            //    .cloned()
+            //    .reduce(f32::min)
+            //    .unwrap_or(f32::NEG_INFINITY);
+
+            let max = data[lower_bin..upper_bin].iter().cloned().reduce(f32::max);
+
+            if let Some(max) = max {
+                new_data.push(((lower_bin..upper_bin).len(), max));
+            }
+        }
+
+        self.graph = vec![];
+        let mut prev = f32::NEG_INFINITY;
+        let mut iter = new_data.iter().peekable();
+        while let Some((n, cur)) = iter.next() {
+            if let Some((_, next)) = iter.peek() {
+                for i in 0..*n {
+                    let weight = i as f32 / *n as f32;
+                    let intermediate = interpolation::quad_bez(&prev, cur, next, &(weight / 2.0));
+                    self.graph
+                        .push(interpolation::quad_bez(&prev, &intermediate, cur, &weight));
+                }
+                prev = *cur;
+            }
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -757,20 +838,13 @@ impl Chart<Message> for ImpulseResponseChart {
 
 impl FrequencyResponseChart {
     pub fn new(frequency_response: FrequencyResponse) -> Self {
-        let data: Vec<_> = frequency_response
-            .data
-            .iter()
-            .cloned()
-            .map(Complex::re)
-            .map(f32::abs)
-            .map(dbfs)
-            .collect();
+        let response = FrequencyResponseData::new(frequency_response);
+        let viewport = InteractiveViewport::new(0..response.graph.len() as i64);
 
-        let viewport = InteractiveViewport::new(0..data.len() as i64);
+        let responses = vec![response];
 
         Self {
-            data,
-            frequency_response,
+            responses,
             unit: FrequencyResponseUnit::default(),
             smoothing: None,
             viewport,
@@ -819,78 +893,21 @@ impl FrequencyResponseChart {
             FrequencyResponseChartMessage::UnitChanged(unit) => self.unit = unit,
             FrequencyResponseChartMessage::SmoothingChanged(smoothing) => {
                 self.smoothing = Some(smoothing);
-                let data: Vec<f32> = self
-                    .frequency_response
-                    .data
-                    .iter()
-                    .cloned()
-                    .map(Complex::re)
-                    .map(f32::abs)
-                    .map(dbfs)
-                    .collect();
-
-                let mut new_data = vec![];
-                for i in 0..data.len() {
-                    let center_bin = |i: usize| -> f32 {
-                        2.0_f32
-                            .powf(i as f32 / usize::from(smoothing) as f32)
-                            .floor()
-                    };
-
-                    let lower_bin =
-                        f32::sqrt(center_bin(i.saturating_sub(1)) * center_bin(i)).floor() as usize;
-                    let mut upper_bin = f32::sqrt(
-                        center_bin(i) * center_bin(usize::min(data.len(), i + 1)),
-                    )
-                    .floor() as usize;
-
-                    if lower_bin >= data.len() {
-                        break;
-                    }
-
-                    if upper_bin >= data.len() {
-                        upper_bin = data.len();
-                    }
-
-                    // TODO: include min values
-                    //let min = data[lower_bin..upper_bin]
-                    //    .iter()
-                    //    .cloned()
-                    //    .reduce(f32::min)
-                    //    .unwrap_or(f32::NEG_INFINITY);
-
-                    let max = data[lower_bin..upper_bin].iter().cloned().reduce(f32::max);
-
-                    if let Some(max) = max {
-                        new_data.push(((lower_bin..upper_bin).len(), max));
-                    }
-                }
-
-                self.data = vec![];
-                let mut prev = f32::NEG_INFINITY;
-                let mut iter = new_data.iter().peekable();
-                while let Some((n, cur)) = iter.next() {
-                    if let Some((_, next)) = iter.peek() {
-                        for i in 0..*n {
-                            let weight = i as f32 / *n as f32;
-                            let intermediate =
-                                interpolation::quad_bez(&prev, cur, next, &(weight / 2.0));
-                            self.data.push(interpolation::quad_bez(
-                                &prev,
-                                &intermediate,
-                                cur,
-                                &weight,
-                            ));
-                        }
-                        prev = *cur;
-                    }
-                }
+                self.responses.iter_mut().for_each(|r| r.smooth(smoothing));
             }
             FrequencyResponseChartMessage::InteractiveViewport(msg) => {
                 self.viewport.update(msg);
                 self.cache.clear();
             }
         }
+    }
+
+    pub fn update_data(
+        &mut self,
+        responses: impl Iterator<Item = raumklang_core::FrequencyResponse>,
+    ) {
+        self.responses = responses.map(FrequencyResponseData::new).collect();
+        self.cache.clear();
     }
 }
 
@@ -909,13 +926,17 @@ impl Chart<FrequencyResponseChartMessage> for FrequencyResponseChart {
 
     fn build_chart<DB: DrawingBackend>(&self, _state: &Self::State, mut builder: ChartBuilder<DB>) {
         use plotters::prelude::*;
-        let data = &self.data;
+        let mut iter = self.responses.iter();
+
+        let Some(response) = iter.next() else {
+            return;
+        };
 
         let range = self.viewport.range().clone().into();
         let x_range = match self.unit {
             FrequencyResponseUnit::Frequency => FrequencyResponseRange::Frequency {
-                sample_rate: self.frequency_response.sample_rate,
-                fft_size: data.len(),
+                sample_rate: response.original.sample_rate,
+                fft_size: response.graph.len(),
                 range,
             },
             FrequencyResponseUnit::Bins => FrequencyResponseRange::Bins(range),
@@ -934,12 +955,25 @@ impl Chart<FrequencyResponseChartMessage> for FrequencyResponseChart {
             .build_cartesian_2d(x_range, y_range)
             .unwrap();
 
-        chart
-            .draw_series(LineSeries::new(
-                self.data.iter().enumerate().map(|(i, s)| (i as i64, *s)),
-                &style::RGBColor(2, 125, 66),
-            ))
-            .unwrap();
+        let mut response = response;
+        loop {
+            chart
+                .draw_series(LineSeries::new(
+                    response
+                        .graph
+                        .iter()
+                        .enumerate()
+                        .map(|(i, s)| (i as i64, *s)),
+                    &style::RGBColor(2, 125, 66),
+                ))
+                .unwrap();
+
+            response = if let Some(response) = iter.next() {
+                response
+            } else {
+                break;
+            }
+        }
 
         chart
             .configure_mesh()

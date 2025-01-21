@@ -10,7 +10,7 @@ use iced::{
     Task,
 };
 
-use std::collections::HashMap;
+use std::{collections::HashMap, iter};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -57,7 +57,7 @@ impl FrequencyResponse {
             if let Some(_fr) = frequency_responses.get(&id) {
                 entries.push(ListEntry {
                     name: measurement.name.clone(),
-                    show_in_graph: false,
+                    show_in_graph: true,
                     frequency_response_id: Some(id),
                 });
             } else {
@@ -121,14 +121,19 @@ impl FrequencyResponse {
                     return (Task::none(), None);
                 };
 
-                if let ListEntryMessage::ShowInGraphToggled(true) = &message {
-                    self.chart = frequency_responses
-                        .get(&entry.frequency_response_id.unwrap())
-                        .cloned()
-                        .map(FrequencyResponseChart::new);
-                }
-
                 entry.update(message);
+
+                if let Some(chart) = &mut self.chart {
+                    let responses = self
+                        .entries
+                        .iter()
+                        .filter(|e| e.show_in_graph)
+                        .map(|e| e.frequency_response_id.unwrap())
+                        .flat_map(|id| frequency_responses.get(&id))
+                        .cloned();
+
+                    chart.update_data(responses);
+                }
 
                 (Task::none(), None)
             }
@@ -153,11 +158,24 @@ impl FrequencyResponse {
             Message::FrequencyResponseComputed((id, fr)) => {
                 self.entries.push(ListEntry {
                     name: "Fixme".to_string(),
-                    show_in_graph: false,
+                    show_in_graph: true,
                     frequency_response_id: Some(id),
                 });
 
-                self.chart = Some(FrequencyResponseChart::new(fr.clone()));
+                if let Some(chart) = &mut self.chart {
+                    let responses = self
+                        .entries
+                        .iter()
+                        .filter(|e| e.show_in_graph)
+                        .map(|e| e.frequency_response_id.unwrap())
+                        .flat_map(|id| frequency_responses.get(&id))
+                        .chain(iter::once(&fr))
+                        .cloned();
+
+                    chart.update_data(responses);
+                } else {
+                    self.chart = Some(FrequencyResponseChart::new(fr.clone()));
+                }
                 (Task::none(), Some(Event::FrequencyResponseComputed(id, fr)))
             }
         }
