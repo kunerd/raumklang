@@ -24,10 +24,7 @@ use iced_aw::{
 use rfd::FileHandle;
 
 use std::{
-    collections::HashMap,
-    io,
-    path::{Path, PathBuf},
-    sync::Arc,
+    collections::HashMap, io, mem, path::{Path, PathBuf}, sync::Arc
 };
 
 const MAX_RECENT_PROJECTS_ENTRIES: usize = 10;
@@ -72,6 +69,7 @@ enum Raumklang {
         loopback: Option<data::MeasurementState<data::Loopback, OfflineMeasurement>>,
         measurements: data::Store<data::Measurement, OfflineMeasurement>,
         impulse_responses: HashMap<usize, raumklang_core::ImpulseResponse>,
+        frequency_responses: HashMap<usize, raumklang_core::FrequencyResponse>,
         recent_projects: data::RecentProjects,
     },
 }
@@ -320,21 +318,45 @@ impl Raumklang {
             Message::TabSelected(tab_id) => {
                 let Raumklang::Loaded {
                     active_tab,
+                    loopback,
                     measurements,
+                    impulse_responses,
+                    frequency_responses,
                     ..
                 } = self
                 else {
                     return Task::none();
                 };
 
-                *active_tab = match tab_id {
-                    TabId::Measurements => Tab::Measurements(tabs::Measurements::default()),
-                    TabId::ImpulseResponse => Tab::Analysis(tabs::ImpulseResponseTab::default()),
+                let (tab, task) = match tab_id {
+                    TabId::Measurements => (
+                        Tab::Measurements(tabs::Measurements::default()),
+                        Task::none(),
+                    ),
+                    TabId::ImpulseResponse => (
+                        Tab::Analysis(tabs::ImpulseResponseTab::default()),
+                        Task::none(),
+                    ),
                     TabId::FrequencyResponse => {
-                        Tab::FrequencyResponse(tabs::FrequencyResponse::new(measurements.loaded()))
+                        if let Some(data::MeasurementState::Loaded(loopback)) = loopback {
+                            let (tab, tasks) = tabs::FrequencyResponse::new(
+                                loopback,
+                                measurements.loaded(),
+                                impulse_responses,
+                                frequency_responses,
+                            );
+                            (
+                                Tab::FrequencyResponse(tab),
+                                tasks.map(Message::FrequencyResponseTab),
+                            )
+                        } else {
+                            (mem::take(active_tab), Task::none())
+                        }
                     }
                 };
-                Task::none()
+
+                *active_tab = tab;
+                task
             }
             Message::MeasurementsTab(message) => {
                 let Raumklang::Loaded {
@@ -446,6 +468,7 @@ impl Raumklang {
                     loopback: None,
                     measurements: data::Store::new(),
                     impulse_responses: HashMap::new(),
+                    frequency_responses: HashMap::new(),
                     recent_projects,
                     active_tab: Tab::default(),
                 };
@@ -461,6 +484,7 @@ impl Raumklang {
                     loopback: None,
                     measurements: data::Store::new(),
                     impulse_responses: HashMap::new(),
+                    frequency_responses: HashMap::new(),
                     active_tab: Tab::default(),
                     recent_projects: data::RecentProjects::new(MAX_RECENT_PROJECTS_ENTRIES),
                 };

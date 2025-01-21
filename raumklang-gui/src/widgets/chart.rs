@@ -67,7 +67,7 @@ pub struct ImpulseResponseChart {
 
 pub struct FrequencyResponseChart {
     data: Vec<f32>,
-    frequency_response: FrequencyResponse,
+    frequency_response: Arc<FrequencyResponse>,
     unit: FrequencyResponseUnit,
     smoothing: Option<SmoothingType>,
     viewport: InteractiveViewport<FrequencyResponseRange>,
@@ -756,7 +756,7 @@ impl Chart<Message> for ImpulseResponseChart {
 }
 
 impl FrequencyResponseChart {
-    pub fn new(frequency_response: FrequencyResponse) -> Self {
+    pub fn new(frequency_response: Arc<FrequencyResponse>) -> Self {
         let data: Vec<_> = frequency_response
             .data
             .iter()

@@ -1,8 +1,10 @@
 mod audio;
 mod impulse_response;
+mod window;
 
 pub use audio::*;
 pub use impulse_response::*;
+pub use window::*;
 
 use rand::{distributions, distributions::Distribution, rngs, SeedableRng};
 use ringbuf::Rb;

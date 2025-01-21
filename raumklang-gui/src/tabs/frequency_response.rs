@@ -1,14 +1,22 @@
+use crate::{
+    data,
+    widgets::chart::{self, FrequencyResponseChart},
+};
+
 use iced::{
     widget::{column, container, row, text, toggler},
     Element,
     Length::{self, FillPortion},
+    Task,
 };
 
-use crate::data;
+use std::{collections::HashMap, sync::Arc};
 
 #[derive(Debug, Clone)]
 pub enum Message {
     ListEntry(usize, ListEntryMessage),
+    Chart(chart::FrequencyResponseChartMessage),
+    FrequencyResponseComputed(Arc<raumklang_core::FrequencyResponse>),
 }
 
 #[derive(Debug, Clone)]
@@ -16,27 +24,75 @@ pub enum ListEntryMessage {
     ShowInGraphToggled(bool),
 }
 
-#[derive(Debug)]
 pub struct FrequencyResponse {
     entries: Vec<ListEntry>,
+    chart: Option<FrequencyResponseChart>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct ListEntry {
     name: String,
     show_in_graph: bool,
+    frequency_response_id: Option<usize>,
 }
 
 impl FrequencyResponse {
-    pub fn new<'a>(measurement: impl Iterator<Item = &'a data::Measurement>) -> Self {
-        let entries = measurement
-            .map(|m| ListEntry {
-                name: m.name.clone(),
-                show_in_graph: true,
-            })
-            .collect();
+    pub fn new<'a>(
+        loopback: &'a data::Loopback,
+        measurements: impl Iterator<Item = &'a data::Measurement>,
+        impulse_responses: &'a HashMap<usize, raumklang_core::ImpulseResponse>,
+        frequency_responses: &'a HashMap<usize, raumklang_core::FrequencyResponse>,
+    ) -> (Self, Task<Message>) {
+        let (_, size_hint) = measurements.size_hint();
+        let mut entries = Vec::with_capacity(size_hint.unwrap_or(10));
+        let mut tasks = vec![];
 
-        Self { entries }
+        for measurement in measurements {
+            let id = 0;
+            let frequency_response_id = if let Some(_fr) = frequency_responses.get(&id) {
+                Some(id)
+            } else {
+                let window = raumklang_core::WindowBuilder::default().build();
+
+                let loopback = loopback.0.data.clone();
+                let measurement = measurement.data.clone();
+
+                if let Some(ir) = impulse_responses.get(&id) {
+                    tasks.push(Task::perform(
+                        compute_frequency_response(id, ir.clone(), window),
+                        Message::FrequencyResponseComputed,
+                    ));
+                } else {
+                    tasks.push(
+                        Task::future(compute_impulse_response(id, loopback, measurement)).then(
+                            move |(id, ir)| {
+                                let window = window.clone();
+                                Task::perform(
+                                    compute_frequency_response(id, ir, window),
+                                    Message::FrequencyResponseComputed,
+                                )
+                            },
+                        ),
+                    );
+                };
+
+                None
+            };
+
+            entries.push(ListEntry {
+                name: measurement.name.clone(),
+                show_in_graph: true,
+                frequency_response_id,
+            });
+        }
+
+        (
+            Self {
+                entries,
+                chart: None,
+            },
+            Task::batch(tasks),
+        )
     }
 
     pub fn view(&self) -> Element<'_, Message> {
@@ -48,7 +104,14 @@ impl FrequencyResponse {
 
         let list = container(column(entries).spacing(5).padding(8).width(FillPortion(1)))
             .style(container::rounded_box);
-        let content = container(text("Not implemented")).center(Length::FillPortion(4));
+
+        let content = if let Some(chart) = &self.chart {
+            container(chart.view().map(Message::Chart))
+        } else {
+            container(text("Please select a frequency respone.")).center(Length::FillPortion(4))
+        }
+        .padding(10)
+        .width(Length::FillPortion(4));
 
         row![list, content].padding(10).into()
     }
@@ -59,6 +122,16 @@ impl FrequencyResponse {
                 if let Some(entry) = self.entries.get_mut(id) {
                     entry.update(message)
                 }
+            }
+            Message::Chart(message) => {
+                let Some(chart) = &mut self.chart else {
+                    return;
+                };
+
+                chart.update(message);
+            }
+            Message::FrequencyResponseComputed(fr) => {
+                self.chart = Some(FrequencyResponseChart::new(fr));
             }
         }
     }
@@ -78,4 +151,26 @@ impl ListEntry {
             ListEntryMessage::ShowInGraphToggled(state) => self.show_in_graph = state,
         }
     }
+}
+
+async fn compute_impulse_response(
+    id: usize,
+    loopback: raumklang_core::Loopback,
+    measurement: raumklang_core::Measurement,
+) -> (usize, raumklang_core::ImpulseResponse) {
+    (
+        id,
+        raumklang_core::ImpulseResponse::from_signals(&loopback, &measurement).unwrap(),
+    )
+}
+
+async fn compute_frequency_response(
+    id: usize,
+    impulse_response: raumklang_core::ImpulseResponse,
+    window: Vec<f32>,
+) -> Arc<raumklang_core::FrequencyResponse> {
+    Arc::new(raumklang_core::FrequencyResponse::new(
+        impulse_response,
+        &window,
+    ))
 }
