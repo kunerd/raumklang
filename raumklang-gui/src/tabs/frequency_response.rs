@@ -1,15 +1,18 @@
 use crate::{
     data,
-    widgets::chart::{self, FrequencyResponseChart, FrequencyResponseData},
+    widgets::{
+        chart::{self, FrequencyResponseChart, FrequencyResponseData},
+        colored_circle,
+    },
 };
 
 use iced::{
-    widget::{column, container, row, text, toggler},
-    Element,
+    widget::{column, container, horizontal_space, row, text, toggler},
+    Alignment, Color, Element,
     Length::{self, FillPortion},
     Task,
 };
-use plotters::style::{Color, Palette, Palette99, RGBAColor};
+use plotters::style::{Color as _, Palette, Palette99, RGBAColor};
 use rand::Rng;
 
 use std::{collections::HashMap, iter};
@@ -52,6 +55,7 @@ impl FrequencyResponse {
         frequency_responses: &'a HashMap<usize, raumklang_core::FrequencyResponse>,
     ) -> (Self, Task<Message>) {
         let (_, size_hint) = measurements.size_hint();
+
         let mut entries = Vec::with_capacity(size_hint.unwrap_or(10));
         let mut tasks = vec![];
 
@@ -78,10 +82,19 @@ impl FrequencyResponse {
             };
         }
 
+        let responses = entries
+            .iter()
+            .filter(|e| e.show_in_graph)
+            .map(|e| (e.frequency_response_id, e.color))
+            .flat_map(|(id, color)| frequency_responses.get(&id).map(|fr| (fr.clone(), color)))
+            .map(|(fr, color)| FrequencyResponseData::new(fr, color));
+
+        let chart = FrequencyResponseChart::from_iter(responses);
+
         (
             Self {
                 entries,
-                chart: None,
+                chart
             },
             Task::batch(tasks),
         )
@@ -94,7 +107,7 @@ impl FrequencyResponse {
             .enumerate()
             .map(|(i, e)| e.view().map(move |msg| Message::ListEntry(i, msg)));
 
-        let list = container(column(entries).spacing(5).padding(8).width(FillPortion(1)))
+        let list = container(column(entries).spacing(10).padding(8).width(FillPortion(1)))
             .style(container::rounded_box);
 
         let content = if let Some(chart) = &self.chart {
@@ -200,10 +213,25 @@ impl ListEntry {
     }
 
     fn view(&self) -> Element<'_, ListEntryMessage> {
+        let color = Color::from_rgba8(
+            self.color.0,
+            self.color.1,
+            self.color.2,
+            self.color.3 as f32,
+        );
         let content = column![
             text(&self.name),
-            toggler(self.show_in_graph).on_toggle(ListEntryMessage::ShowInGraphToggled)
-        ];
+            row![
+                toggler(self.show_in_graph)
+                    .on_toggle(ListEntryMessage::ShowInGraphToggled)
+                    .width(Length::Shrink),
+                horizontal_space(),
+                colored_circle(10.0, color),
+            ]
+            .align_y(Alignment::Center)
+        ]
+        .spacing(5);
+
         container(content).style(container::rounded_box).into()
     }
 

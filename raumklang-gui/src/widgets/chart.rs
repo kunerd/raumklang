@@ -906,14 +906,24 @@ impl FrequencyResponseChart {
         }
     }
 
-    pub fn update_data(&mut self, responses: impl Iterator<Item = FrequencyResponseData>) {
-        self.responses = responses.collect();
+    pub fn update_data(&mut self, iter: impl Iterator<Item = FrequencyResponseData>) {
+        self.responses = iter.collect();
 
         if let Some(smoothing) = self.smoothing {
             self.responses.iter_mut().for_each(|r| r.smooth(smoothing))
         }
 
         self.cache.clear();
+    }
+
+    pub fn from_iter(mut iter: impl Iterator<Item = FrequencyResponseData>) -> Option<FrequencyResponseChart> {
+        if let Some(response) = iter.next() {
+            let mut chart = FrequencyResponseChart::new(response);
+            chart.responses.extend(iter);
+            Some(chart)
+        } else {
+            None
+        }
     }
 }
 
