@@ -1,6 +1,6 @@
 use crate::{
     data,
-    widgets::chart::{self, FrequencyResponseChart},
+    widgets::chart::{self, FrequencyResponseChart, FrequencyResponseData},
 };
 
 use iced::{
@@ -9,6 +9,8 @@ use iced::{
     Length::{self, FillPortion},
     Task,
 };
+use plotters::style::{Color, Palette, Palette99, RGBAColor};
+use rand::Rng;
 
 use std::{collections::HashMap, iter};
 
@@ -35,11 +37,11 @@ pub struct FrequencyResponse {
     chart: Option<FrequencyResponseChart>,
 }
 
-#[derive(Default)]
 struct ListEntry {
     name: String,
     show_in_graph: bool,
-    frequency_response_id: Option<usize>,
+    color: RGBAColor,
+    frequency_response_id: usize,
 }
 
 impl FrequencyResponse {
@@ -55,11 +57,7 @@ impl FrequencyResponse {
 
         for (id, measurement) in measurements.enumerate() {
             if let Some(_fr) = frequency_responses.get(&id) {
-                entries.push(ListEntry {
-                    name: measurement.name.clone(),
-                    show_in_graph: true,
-                    frequency_response_id: Some(id),
-                });
+                entries.push(ListEntry::new(measurement.name.clone(), id));
             } else {
                 let window = raumklang_core::WindowBuilder::default().build();
 
@@ -128,9 +126,11 @@ impl FrequencyResponse {
                         .entries
                         .iter()
                         .filter(|e| e.show_in_graph)
-                        .map(|e| e.frequency_response_id.unwrap())
-                        .flat_map(|id| frequency_responses.get(&id))
-                        .cloned();
+                        .map(|e| (e.frequency_response_id, e.color))
+                        .flat_map(|(id, color)| {
+                            frequency_responses.get(&id).map(|fr| (fr.clone(), color))
+                        })
+                        .map(|(fr, color)| FrequencyResponseData::new(fr, color));
 
                     chart.update_data(responses);
                 }
@@ -156,26 +156,29 @@ impl FrequencyResponse {
                 (task, Some(Event::ImpulseResponseComputed(id, ir)))
             }
             Message::FrequencyResponseComputed((id, fr)) => {
-                self.entries.push(ListEntry {
-                    name: "Fixme".to_string(),
-                    show_in_graph: true,
-                    frequency_response_id: Some(id),
-                });
+                let entry = ListEntry::new("Fixme".to_string(), id);
 
                 if let Some(chart) = &mut self.chart {
                     let responses = self
                         .entries
                         .iter()
                         .filter(|e| e.show_in_graph)
-                        .map(|e| e.frequency_response_id.unwrap())
-                        .flat_map(|id| frequency_responses.get(&id))
-                        .chain(iter::once(&fr))
-                        .cloned();
+                        .map(|e| (e.frequency_response_id, e.color))
+                        .flat_map(|(id, color)| {
+                            frequency_responses.get(&id).map(|fr| (fr.clone(), color))
+                        })
+                        .chain(iter::once((fr.clone(), entry.color)))
+                        .map(|(fr, color)| FrequencyResponseData::new(fr, color));
 
                     chart.update_data(responses);
                 } else {
-                    self.chart = Some(FrequencyResponseChart::new(fr.clone()));
+                    self.chart = Some(FrequencyResponseChart::new(
+                        chart::FrequencyResponseData::new(fr.clone(), entry.color),
+                    ));
                 }
+
+                self.entries.push(entry);
+
                 (Task::none(), Some(Event::FrequencyResponseComputed(id, fr)))
             }
         }
@@ -183,6 +186,19 @@ impl FrequencyResponse {
 }
 
 impl ListEntry {
+    fn new(name: String, frequency_response_id: usize) -> Self {
+        let max = Palette99::COLORS.len();
+        let index = rand::thread_rng().gen_range(0..max);
+        let color = Palette99::pick(index).to_rgba();
+
+        Self {
+            name,
+            show_in_graph: true,
+            color,
+            frequency_response_id,
+        }
+    }
+
     fn view(&self) -> Element<'_, ListEntryMessage> {
         let content = column![
             text(&self.name),

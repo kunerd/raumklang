@@ -23,7 +23,7 @@ use plotters::{
         ReverseCoordTranslate,
     },
     prelude::Ranged,
-    style,
+    style::{self, RGBAColor},
 };
 use plotters_backend::DrawingBackend;
 use plotters_iced::{Chart, ChartBuilder, ChartWidget, Renderer};
@@ -73,13 +73,14 @@ pub struct FrequencyResponseChart {
     cache: Cache,
 }
 
-struct FrequencyResponseData {
+pub struct FrequencyResponseData {
     graph: Vec<f32>,
     original: FrequencyResponse,
+    color: RGBAColor,
 }
 
 impl FrequencyResponseData {
-    fn new(original: FrequencyResponse) -> Self {
+    pub fn new(original: FrequencyResponse, color: RGBAColor) -> Self {
         let graph: Vec<_> = original
             .data
             .iter()
@@ -89,7 +90,11 @@ impl FrequencyResponseData {
             .map(dbfs)
             .collect();
 
-        Self { graph, original }
+        Self {
+            graph,
+            original,
+            color,
+        }
     }
 
     fn smooth(&mut self, smoothing: SmoothingType) {
@@ -837,11 +842,10 @@ impl Chart<Message> for ImpulseResponseChart {
 }
 
 impl FrequencyResponseChart {
-    pub fn new(frequency_response: FrequencyResponse) -> Self {
-        let response = FrequencyResponseData::new(frequency_response);
-        let viewport = InteractiveViewport::new(0..response.graph.len() as i64);
+    pub fn new(frequency_response: FrequencyResponseData) -> Self {
+        let viewport = InteractiveViewport::new(0..frequency_response.graph.len() as i64);
 
-        let responses = vec![response];
+        let responses = vec![frequency_response];
 
         Self {
             responses,
@@ -902,11 +906,13 @@ impl FrequencyResponseChart {
         }
     }
 
-    pub fn update_data(
-        &mut self,
-        responses: impl Iterator<Item = raumklang_core::FrequencyResponse>,
-    ) {
-        self.responses = responses.map(FrequencyResponseData::new).collect();
+    pub fn update_data(&mut self, responses: impl Iterator<Item = FrequencyResponseData>) {
+        self.responses = responses.collect();
+
+        if let Some(smoothing) = self.smoothing {
+            self.responses.iter_mut().for_each(|r| r.smooth(smoothing))
+        }
+
         self.cache.clear();
     }
 }
@@ -964,7 +970,7 @@ impl Chart<FrequencyResponseChartMessage> for FrequencyResponseChart {
                         .iter()
                         .enumerate()
                         .map(|(i, s)| (i as i64, *s)),
-                    &style::RGBColor(2, 125, 66),
+                    response.color,
                 ))
                 .unwrap();
 

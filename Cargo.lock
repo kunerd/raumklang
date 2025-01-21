@@ -1689,6 +1689,7 @@ dependencies = [
  "plotters",
  "plotters-backend",
  "plotters-iced",
+ "rand",
  "raumklang-core",
  "rfd",
  "rustfft",
