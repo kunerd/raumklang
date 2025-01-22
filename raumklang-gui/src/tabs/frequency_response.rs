@@ -7,10 +7,7 @@ use crate::{
 };
 
 use iced::{
-    widget::{column, container, horizontal_space, row, text, toggler},
-    Alignment, Color, Element,
-    Length::{self, FillPortion},
-    Task,
+    widget::{column, container, horizontal_space, row, stack, text, toggler}, Alignment, Border, Color, Element, Length::{self, FillPortion}, Task
 };
 use plotters::style::{Color as _, Palette, Palette99, RGBAColor};
 use rand::Rng;
@@ -36,15 +33,22 @@ pub enum ListEntryMessage {
 }
 
 pub struct FrequencyResponse {
-    entries: Vec<ListEntry>,
+    entries: HashMap<usize, EntryState>,
     chart: Option<FrequencyResponseChart>,
 }
 
-struct ListEntry {
-    name: String,
-    show_in_graph: bool,
-    color: RGBAColor,
-    frequency_response_id: usize,
+enum EntryState {
+    Loading {
+        name: String,
+        show_in_graph: bool,
+        color: RGBAColor,
+    },
+    Loaded {
+        name: String,
+        show_in_graph: bool,
+        color: RGBAColor,
+        frequency_response_id: usize,
+    },
 }
 
 impl FrequencyResponse {
@@ -56,18 +60,34 @@ impl FrequencyResponse {
     ) -> (Self, Task<Message>) {
         let (_, size_hint) = measurements.size_hint();
 
-        let mut entries = Vec::with_capacity(size_hint.unwrap_or(10));
+        let mut entries = HashMap::with_capacity(size_hint.unwrap_or(10));
         let mut tasks = vec![];
 
         for (id, measurement) in measurements.enumerate() {
             if let Some(_fr) = frequency_responses.get(&id) {
-                entries.push(ListEntry::new(measurement.name.clone(), id));
+                entries.insert(
+                    id,
+                    EntryState::Loaded {
+                        name: measurement.name.clone(),
+                        show_in_graph: true,
+                        color: random_color(),
+                        frequency_response_id: id,
+                    },
+                );
             } else {
                 let window = raumklang_core::WindowBuilder::default().build();
 
+                entries.insert(
+                    id,
+                    EntryState::Loading {
+                        name: measurement.name.clone(),
+                        show_in_graph: true,
+                        color: random_color(),
+                    },
+                );
+
                 let loopback = loopback.0.data.clone();
                 let measurement = measurement.data.clone();
-
                 if let Some(ir) = impulse_responses.get(&id) {
                     tasks.push(Task::perform(
                         compute_frequency_response(id, ir.clone(), window),
@@ -83,29 +103,29 @@ impl FrequencyResponse {
         }
 
         let responses = entries
-            .iter()
-            .filter(|e| e.show_in_graph)
-            .map(|e| (e.frequency_response_id, e.color))
+            .values()
+            .filter_map(|e| match *e {
+                EntryState::Loaded {
+                    show_in_graph: true,
+                    frequency_response_id,
+                    color,
+                    ..
+                } => Some((frequency_response_id, color)),
+                _ => None,
+            })
             .flat_map(|(id, color)| frequency_responses.get(&id).map(|fr| (fr.clone(), color)))
             .map(|(fr, color)| FrequencyResponseData::new(fr, color));
 
         let chart = FrequencyResponseChart::from_iter(responses);
 
-        (
-            Self {
-                entries,
-                chart
-            },
-            Task::batch(tasks),
-        )
+        (Self { entries, chart }, Task::batch(tasks))
     }
 
     pub fn view(&self) -> Element<'_, Message> {
         let entries = self
             .entries
             .iter()
-            .enumerate()
-            .map(|(i, e)| e.view().map(move |msg| Message::ListEntry(i, msg)));
+            .map(|(i, e)| e.view().map(move |msg| Message::ListEntry(*i, msg)));
 
         let list = container(column(entries).spacing(10).padding(8).width(FillPortion(1)))
             .style(container::rounded_box);
@@ -115,10 +135,10 @@ impl FrequencyResponse {
         } else {
             container(text("Please select a frequency respone.")).center(Length::FillPortion(4))
         }
-        .padding(10)
+        .padding(8)
         .width(Length::FillPortion(4));
 
-        row![list, content].padding(10).into()
+        row![list, content].into()
     }
 
     pub fn update(
@@ -128,7 +148,7 @@ impl FrequencyResponse {
     ) -> (Task<Message>, Option<Event>) {
         match message {
             Message::ListEntry(id, message) => {
-                let Some(entry) = self.entries.get_mut(id) else {
+                let Some(entry) = self.entries.get_mut(&id) else {
                     return (Task::none(), None);
                 };
 
@@ -137,9 +157,16 @@ impl FrequencyResponse {
                 if let Some(chart) = &mut self.chart {
                     let responses = self
                         .entries
-                        .iter()
-                        .filter(|e| e.show_in_graph)
-                        .map(|e| (e.frequency_response_id, e.color))
+                        .values()
+                        .filter_map(|e| match *e {
+                            EntryState::Loaded {
+                                show_in_graph: true,
+                                frequency_response_id,
+                                color,
+                                ..
+                            } => Some((frequency_response_id, color)),
+                            _ => None,
+                        })
                         .flat_map(|(id, color)| {
                             frequency_responses.get(&id).map(|fr| (fr.clone(), color))
                         })
@@ -169,28 +196,53 @@ impl FrequencyResponse {
                 (task, Some(Event::ImpulseResponseComputed(id, ir)))
             }
             Message::FrequencyResponseComputed((id, fr)) => {
-                let entry = ListEntry::new("Fixme".to_string(), id);
+                let Some(entry) = self.entries.get_mut(&id) else {
+                    return (Task::none(), None);
+                };
+
+                let cur_color = match entry {
+                    EntryState::Loading {
+                        name,
+                        show_in_graph,
+                        color,
+                    } => {
+                        let color = *color;
+
+                        *entry = EntryState::Loaded {
+                            name: name.clone(),
+                            show_in_graph: *show_in_graph,
+                            color,
+                            frequency_response_id: id,
+                        };
+
+                        color
+                    }
+                    EntryState::Loaded { color, .. } => *color,
+                };
+
+                let responses = self
+                    .entries
+                    .values()
+                    .filter_map(|e| match *e {
+                        EntryState::Loaded {
+                            show_in_graph: true,
+                            frequency_response_id,
+                            color,
+                            ..
+                        } => Some((frequency_response_id, color)),
+                        _ => None,
+                    })
+                    .flat_map(|(id, color)| {
+                        frequency_responses.get(&id).map(|fr| (fr.clone(), color))
+                    })
+                    .chain(iter::once((fr.clone(), cur_color)))
+                    .map(|(fr, color)| FrequencyResponseData::new(fr, color));
 
                 if let Some(chart) = &mut self.chart {
-                    let responses = self
-                        .entries
-                        .iter()
-                        .filter(|e| e.show_in_graph)
-                        .map(|e| (e.frequency_response_id, e.color))
-                        .flat_map(|(id, color)| {
-                            frequency_responses.get(&id).map(|fr| (fr.clone(), color))
-                        })
-                        .chain(iter::once((fr.clone(), entry.color)))
-                        .map(|(fr, color)| FrequencyResponseData::new(fr, color));
-
                     chart.update_data(responses);
                 } else {
-                    self.chart = Some(FrequencyResponseChart::new(
-                        chart::FrequencyResponseData::new(fr.clone(), entry.color),
-                    ));
+                    self.chart = FrequencyResponseChart::from_iter(responses);
                 }
-
-                self.entries.push(entry);
 
                 (Task::none(), Some(Event::FrequencyResponseComputed(id, fr)))
             }
@@ -198,48 +250,83 @@ impl FrequencyResponse {
     }
 }
 
-impl ListEntry {
-    fn new(name: String, frequency_response_id: usize) -> Self {
-        let max = Palette99::COLORS.len();
-        let index = rand::thread_rng().gen_range(0..max);
-        let color = Palette99::pick(index).to_rgba();
-
-        Self {
-            name,
-            show_in_graph: true,
-            color,
-            frequency_response_id,
-        }
-    }
-
+impl EntryState {
     fn view(&self) -> Element<'_, ListEntryMessage> {
-        let color = Color::from_rgba8(
-            self.color.0,
-            self.color.1,
-            self.color.2,
-            self.color.3 as f32,
-        );
-        let content = column![
-            text(&self.name),
-            row![
-                toggler(self.show_in_graph)
-                    .on_toggle(ListEntryMessage::ShowInGraphToggled)
-                    .width(Length::Shrink),
-                horizontal_space(),
-                colored_circle(10.0, color),
-            ]
-            .align_y(Alignment::Center)
-        ]
-        .spacing(5);
+        match self {
+            EntryState::Loading {
+                name,
+                show_in_graph,
+                color,
+            } => {
+                let color = Color::from_rgba8(color.0, color.1, color.2, color.3 as f32);
+                let content = column![
+                    text(name),
+                    row![
+                        toggler(*show_in_graph)
+                            //.on_toggle(ListEntryMessage::ShowInGraphToggled)
+                            .width(Length::Shrink),
+                        horizontal_space(),
+                        colored_circle(10.0, color),
+                    ]
+                    .align_y(Alignment::Center)
+                ]
+                .spacing(5)
+                .padding(5);
 
-        container(content).style(container::rounded_box).into()
-    }
+                stack([
+                    container(content).style(container::bordered_box).into(),
+                    container(text("Computing..."))
+                        .center(Length::Fill)
+                        .style(|theme| container::Style {
+                            border: container::rounded_box(theme).border,
+                            background: Some(iced::Background::Color(Color::from_rgba(
+                                0.0, 0.0, 0.0, 0.8,
+                            ))),
+                            ..Default::default()
+                        })
+                        .into(),
+                ])
+                .into()
+            }
+            EntryState::Loaded {
+                name,
+                show_in_graph,
+                color,
+                frequency_response_id: _,
+            } => {
+                let color = Color::from_rgba8(color.0, color.1, color.2, color.3 as f32);
+                let content = column![
+                    text(name),
+                    row![
+                        toggler(*show_in_graph)
+                            .on_toggle(ListEntryMessage::ShowInGraphToggled)
+                            .width(Length::Shrink),
+                        horizontal_space(),
+                        colored_circle(10.0, color),
+                    ]
+                    .align_y(Alignment::Center)
+                ]
+                .spacing(5)
+                .padding(5);
 
-    fn update(&mut self, message: ListEntryMessage) {
-        match message {
-            ListEntryMessage::ShowInGraphToggled(state) => self.show_in_graph = state,
+                container(content).style(container::rounded_box).into()
+            }
         }
     }
+    fn update(&mut self, message: ListEntryMessage) {
+        match self {
+            EntryState::Loading { show_in_graph, .. }
+            | EntryState::Loaded { show_in_graph, .. } => match message {
+                ListEntryMessage::ShowInGraphToggled(state) => *show_in_graph = state,
+            },
+        }
+    }
+}
+
+fn random_color() -> RGBAColor {
+    let max = Palette99::COLORS.len();
+    let index = rand::thread_rng().gen_range(0..max);
+    Palette99::pick(index).to_rgba()
 }
 
 async fn compute_impulse_response(
