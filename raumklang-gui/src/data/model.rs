@@ -1,8 +1,8 @@
+use raumklang_core::WavLoadError;
 use std::{
     collections::{vec_deque, VecDeque},
     path::{Path, PathBuf},
 };
-use raumklang_core::WavLoadError;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RecentProjects {
@@ -80,7 +80,7 @@ impl FromFile for Loopback {
             .and_then(|n| n.to_os_string().into_string().ok())
             .unwrap_or("Unknown".to_string());
 
-        let data = raumklang_core::Loopback::from_file(path).unwrap();
+        let data = raumklang_core::Loopback::from_file(path)?;
 
         let path = path.to_path_buf();
         Ok(Self(Measurement { name, path, data }))
@@ -101,7 +101,7 @@ impl FromFile for Measurement {
             .and_then(|n| n.to_os_string().into_string().ok())
             .unwrap_or("Unknown".to_string());
 
-        let data = raumklang_core::Measurement::from_file(path).unwrap();
+        let data = raumklang_core::Measurement::from_file(path)?;
 
         Ok(Self {
             name,

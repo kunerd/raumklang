@@ -787,7 +787,7 @@ where
     let path = path.as_ref().to_owned();
     tokio::task::spawn_blocking(move || T::from_file(path))
         .await
-        .unwrap()
+        .map_err(|_err| WavLoadError::Other)?
 }
 
 fn get_app_data_dir() -> PathBuf {
