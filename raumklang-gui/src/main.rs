@@ -366,7 +366,9 @@ impl Raumklang {
                     active_tab,
                     loopback,
                     measurements,
-                    ..
+                    impulse_responses,
+                    frequency_responses,
+                        ..
                 } = self
                 else {
                     return Task::none();
@@ -391,6 +393,8 @@ impl Raumklang {
                     ),
                     Some(measurements::Event::RemoveLoopbackMeasurement) => {
                         *loopback = None;
+                        impulse_responses.clear();
+                        frequency_responses.clear();
                         Task::none()
                     }
                     Some(measurements::Event::LoadMeasurement) => Task::perform(
@@ -399,6 +403,8 @@ impl Raumklang {
                     ),
                     Some(measurements::Event::RemoveMeasurement(id)) => {
                         measurements.remove(id);
+                        impulse_responses.remove(&id);
+                        frequency_responses.remove(&id);
                         Task::none()
                     }
                     None => Task::none(),
@@ -740,7 +746,6 @@ async fn pick_file_and_load() -> Result<(data::Project, PathBuf), PickAndLoadErr
 async fn load_project_from_file<P: AsRef<Path>>(
     path: P,
 ) -> Result<(data::Project, PathBuf), PickAndLoadError> {
-    //let store = load_from_file(handle.path()).await?;
     let path = path.as_ref();
     let content = tokio::fs::read(path)
         .await
