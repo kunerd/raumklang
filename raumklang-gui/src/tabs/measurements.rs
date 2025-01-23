@@ -50,7 +50,7 @@ pub enum Error {
 }
 
 impl Measurements {
-    pub fn update<'a>(
+    pub fn update(
         &mut self,
         msg: Message,
         loopback: Option<&data::Loopback>,
@@ -147,7 +147,9 @@ fn collecting_list<'a>(
     let loopback_entry = {
         let content: Element<_> = match &loopback {
             Some(data::MeasurementState::Loaded(signal)) => loopback_list_entry(selected, signal),
-            Some(data::MeasurementState::NotLoaded(signal)) => offline_signal_list_entry(signal),
+            Some(data::MeasurementState::NotLoaded(signal)) => {
+                offline_signal_list_entry(signal, Message::RemoveLoopbackMeasurement)
+            }
             None => text("Please load a loopback signal.").into(),
         };
 
@@ -171,7 +173,7 @@ fn collecting_list<'a>(
                             measurement_list_entry(selected, signal, index)
                         }
                         data::MeasurementState::NotLoaded(signal) => {
-                            offline_signal_list_entry(signal)
+                            offline_signal_list_entry(signal, Message::RemoveMeasurement(index))
                         }
                     })
                     .collect();
@@ -207,8 +209,18 @@ fn signal_list_category<'a>(
         .into()
 }
 
-fn offline_signal_list_entry(signal: &crate::OfflineMeasurement) -> Element<'_, Message> {
-    column!(text(&signal.name), button("Reload")).into()
+fn offline_signal_list_entry(
+    signal: &crate::OfflineMeasurement,
+    delete_msg: Message,
+) -> Element<'_, Message> {
+    column!(row![
+        text(&signal.name),
+        horizontal_space(),
+        button(delete_icon())
+            .on_press(delete_msg)
+            .style(button::danger)
+    ],)
+    .into()
 }
 
 fn loopback_list_entry<'a>(
