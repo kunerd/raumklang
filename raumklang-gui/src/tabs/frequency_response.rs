@@ -7,7 +7,10 @@ use crate::{
 };
 
 use iced::{
-    widget::{column, container, horizontal_space, row, stack, text, toggler}, Alignment, Border, Color, Element, Length::{self, FillPortion}, Task
+    widget::{column, container, horizontal_space, row, stack, text, toggler},
+    Alignment, Color, Element,
+    Length::{self, FillPortion},
+    Task,
 };
 use plotters::style::{Color as _, Palette, Palette99, RGBAColor};
 use rand::Rng;
@@ -16,15 +19,15 @@ use std::{collections::HashMap, iter};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    ListEntry(usize, ListEntryMessage),
+    ListEntry(data::MeasurementId, ListEntryMessage),
     Chart(chart::FrequencyResponseChartMessage),
-    FrequencyResponseComputed((usize, raumklang_core::FrequencyResponse)),
-    ImpulseResponseComputed((usize, raumklang_core::ImpulseResponse)),
+    FrequencyResponseComputed((data::MeasurementId, raumklang_core::FrequencyResponse)),
+    ImpulseResponseComputed((data::MeasurementId, raumklang_core::ImpulseResponse)),
 }
 
 pub enum Event {
-    ImpulseResponseComputed(usize, raumklang_core::ImpulseResponse),
-    FrequencyResponseComputed(usize, raumklang_core::FrequencyResponse),
+    ImpulseResponseComputed(data::MeasurementId, raumklang_core::ImpulseResponse),
+    FrequencyResponseComputed(data::MeasurementId, raumklang_core::FrequencyResponse),
 }
 
 #[derive(Debug, Clone)]
@@ -33,7 +36,7 @@ pub enum ListEntryMessage {
 }
 
 pub struct FrequencyResponse {
-    entries: HashMap<usize, EntryState>,
+    entries: HashMap<data::MeasurementId, EntryState>,
     chart: Option<FrequencyResponseChart>,
 }
 
@@ -47,38 +50,38 @@ enum EntryState {
         name: String,
         show_in_graph: bool,
         color: RGBAColor,
-        frequency_response_id: usize,
+        frequency_response_id: data::MeasurementId,
     },
 }
 
 impl FrequencyResponse {
     pub fn new<'a>(
         loopback: &'a data::Loopback,
-        measurements: impl Iterator<Item = &'a data::Measurement>,
-        impulse_responses: &'a HashMap<usize, raumklang_core::ImpulseResponse>,
-        frequency_responses: &'a HashMap<usize, raumklang_core::FrequencyResponse>,
+        measurements: impl Iterator<Item = (&'a data::MeasurementId, &'a data::Measurement)>,
+        impulse_responses: &'a HashMap<data::MeasurementId, raumklang_core::ImpulseResponse>,
+        frequency_responses: &'a HashMap<data::MeasurementId, raumklang_core::FrequencyResponse>,
     ) -> (Self, Task<Message>) {
         let (_, size_hint) = measurements.size_hint();
 
         let mut entries = HashMap::with_capacity(size_hint.unwrap_or(10));
         let mut tasks = vec![];
 
-        for (id, measurement) in measurements.enumerate() {
+        for (id, measurement) in measurements {
             if let Some(_fr) = frequency_responses.get(&id) {
                 entries.insert(
-                    id,
+                    *id,
                     EntryState::Loaded {
                         name: measurement.name.clone(),
                         show_in_graph: true,
                         color: random_color(),
-                        frequency_response_id: id,
+                        frequency_response_id: *id,
                     },
                 );
             } else {
                 let window = raumklang_core::WindowBuilder::default().build();
 
                 entries.insert(
-                    id,
+                    *id,
                     EntryState::Loading {
                         name: measurement.name.clone(),
                         show_in_graph: true,
@@ -90,12 +93,12 @@ impl FrequencyResponse {
                 let measurement = measurement.data.clone();
                 if let Some(ir) = impulse_responses.get(&id) {
                     tasks.push(Task::perform(
-                        compute_frequency_response(id, ir.clone(), window),
+                        compute_frequency_response(*id, ir.clone(), window),
                         Message::FrequencyResponseComputed,
                     ));
                 } else {
                     tasks.push(Task::perform(
-                        compute_impulse_response(id, loopback, measurement),
+                        compute_impulse_response(*id, loopback, measurement),
                         Message::ImpulseResponseComputed,
                     ));
                 };
@@ -144,7 +147,7 @@ impl FrequencyResponse {
     pub fn update(
         &mut self,
         message: Message,
-        frequency_responses: &HashMap<usize, raumklang_core::FrequencyResponse>,
+        frequency_responses: &HashMap<data::MeasurementId, raumklang_core::FrequencyResponse>,
     ) -> (Task<Message>, Option<Event>) {
         match message {
             Message::ListEntry(id, message) => {
@@ -330,10 +333,10 @@ fn random_color() -> RGBAColor {
 }
 
 async fn compute_impulse_response(
-    id: usize,
+    id: data::MeasurementId,
     loopback: raumklang_core::Loopback,
     measurement: raumklang_core::Measurement,
-) -> (usize, raumklang_core::ImpulseResponse) {
+) -> (data::MeasurementId, raumklang_core::ImpulseResponse) {
     let impulse_response = tokio::task::spawn_blocking(move || {
         raumklang_core::ImpulseResponse::from_signals(&loopback, &measurement).unwrap()
     })
@@ -344,10 +347,10 @@ async fn compute_impulse_response(
 }
 
 async fn compute_frequency_response(
-    id: usize,
+    id: data::MeasurementId,
     impulse_response: raumklang_core::ImpulseResponse,
     window: Vec<f32>,
-) -> (usize, raumklang_core::FrequencyResponse) {
+) -> (data::MeasurementId, raumklang_core::FrequencyResponse) {
     let frequency_response = tokio::task::spawn_blocking(move || {
         raumklang_core::FrequencyResponse::new(impulse_response, &window)
     })

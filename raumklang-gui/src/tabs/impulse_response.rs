@@ -15,8 +15,8 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    MeasurementSelected(usize),
-    ImpulseResponseComputed((usize, raumklang_core::ImpulseResponse)),
+    MeasurementSelected(data::MeasurementId),
+    ImpulseResponseComputed((data::MeasurementId, raumklang_core::ImpulseResponse)),
     Chart(chart::Message),
     //    ImpulseResponseComputed((Arc<raumklang_core::ImpulseResponse>, u32)),
     //    TimeSeriesChart(chart::Message),
@@ -27,12 +27,12 @@ pub enum Message {
 }
 
 pub enum Event {
-    ImpulseResponseComputed(usize, raumklang_core::ImpulseResponse),
+    ImpulseResponseComputed(data::MeasurementId, raumklang_core::ImpulseResponse),
 }
 
 #[derive(Default)]
 pub struct ImpulseResponseTab {
-    selected: Option<usize>,
+    selected: Option<data::MeasurementId>,
     chart: Option<ImpulseResponseChart>,
     //    active_tab: TabId,
     //    loopback_signal: Option<Measurement>,
@@ -49,7 +49,7 @@ impl ImpulseResponseTab {
         message: Message,
         loopback: &data::Loopback,
         measurements: &data::Store<data::Measurement, OfflineMeasurement>,
-        impulse_response: &HashMap<usize, raumklang_core::ImpulseResponse>,
+        impulse_response: &HashMap<data::MeasurementId, raumklang_core::ImpulseResponse>,
     ) -> (Task<Message>, Option<Event>) {
         match message {
             Message::MeasurementSelected(id) => {
@@ -58,7 +58,7 @@ impl ImpulseResponseTab {
                     self.update_chart(ir);
                     (Task::none(), None)
                 } else {
-                    let measurement = measurements.get_loaded(&id);
+                    let measurement = measurements.get_loaded_by_id(&id);
                     if let Some(measurement) = measurement {
                         (
                             Task::perform(
@@ -91,20 +91,21 @@ impl ImpulseResponseTab {
         }
     }
 
-    pub fn view<'a>(&'a self, measurements: &[&'a data::Measurement]) -> Element<'a, Message> {
+    pub fn view<'a>(
+        &'a self,
+        measurements: impl Iterator<Item = (&'a data::MeasurementId, &'a data::Measurement)>,
+    ) -> Element<'a, Message> {
         let list = {
             let entries: Vec<Element<_>> = measurements
-                .iter()
-                .enumerate()
                 .map(|(i, m)| {
-                    let style = if self.selected == Some(i) {
+                    let style = if self.selected == Some(*i) {
                         button::primary
                     } else {
                         button::secondary
                     };
 
                     button(m.name.as_str())
-                        .on_press(Message::MeasurementSelected(i))
+                        .on_press(Message::MeasurementSelected(*i))
                         .style(style)
                         .width(Length::Fill)
                         .into()
@@ -150,10 +151,10 @@ fn list_category<'a>(name: &'a str, content: Element<'a, Message>) -> Element<'a
 }
 
 async fn compute_impulse_response(
-    id: usize,
+    id: data::MeasurementId,
     loopback: raumklang_core::Loopback,
     measurement: raumklang_core::Measurement,
-) -> (usize, raumklang_core::ImpulseResponse) {
+) -> (data::MeasurementId, raumklang_core::ImpulseResponse) {
     (
         id,
         raumklang_core::ImpulseResponse::from_signals(&loopback, &measurement).unwrap(),

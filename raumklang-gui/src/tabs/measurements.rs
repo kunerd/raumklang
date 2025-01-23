@@ -38,7 +38,7 @@ pub enum Message {
 #[derive(Debug, Clone)]
 pub enum Event {
     LoadMeasurement,
-    RemoveMeasurement(usize),
+    RemoveMeasurement(usize, data::MeasurementId),
     LoadLoopbackMeasurement,
     RemoveLoopbackMeasurement,
 }
@@ -50,11 +50,11 @@ pub enum Error {
 }
 
 impl Measurements {
-    pub fn update(
+    pub fn update<'a>(
         &mut self,
         msg: Message,
         loopback: Option<&data::Loopback>,
-        measurements: &[&data::Measurement],
+        measurements: &data::Store<data::Measurement, OfflineMeasurement>,
     ) -> (Task<Message>, Option<Event>) {
         match msg {
             Message::LoadLoopbackMeasurement => {
@@ -64,14 +64,23 @@ impl Measurements {
                 (Task::none(), Some(Event::RemoveLoopbackMeasurement))
             }
             Message::LoadMeasurement => (Task::none(), Some(Event::LoadMeasurement)),
-            Message::RemoveMeasurement(id) => (Task::none(), Some(Event::RemoveMeasurement(id))),
+            Message::RemoveMeasurement(index) => {
+                let event = measurements
+                    .get_loaded_id(index)
+                    .map(|id| Event::RemoveMeasurement(index, id));
+
+                (Task::none(), event)
+            }
             Message::MeasurementSelected(selected) => {
                 let signal = match selected {
                     SelectedMeasurement::Loopback => {
                         loopback.map(|l| raumklang_core::Measurement::from(l.0.data.clone()))
                     }
                     SelectedMeasurement::Measurement(id) => {
-                        measurements.get(id).map(|m| m.data.clone())
+                        measurements.get(id).and_then(|m| match m {
+                            data::MeasurementState::Loaded(m) => Some(m.data.clone()),
+                            data::MeasurementState::NotLoaded(_) => None,
+                        })
                     }
                 };
                 self.selected = Some(selected);
@@ -94,7 +103,12 @@ impl Measurements {
     pub fn view<'a>(
         &'a self,
         loopback: Option<&'a data::MeasurementState<data::Loopback, OfflineMeasurement>>,
-        measurements: Vec<data::MeasurementState<&'a data::Measurement, &'a OfflineMeasurement>>,
+        measurements: impl Iterator<
+            Item = (
+                usize,
+                data::MeasurementState<&'a data::Measurement, &'a OfflineMeasurement>,
+            ),
+        >,
     ) -> Element<'a, Message> {
         let measurements_list = collecting_list(self.selected.as_ref(), loopback, measurements);
 
@@ -123,7 +137,12 @@ impl Measurements {
 fn collecting_list<'a>(
     selected: Option<&SelectedMeasurement>,
     loopback: Option<&'a data::MeasurementState<data::Loopback, OfflineMeasurement>>,
-    measurements: Vec<data::MeasurementState<&'a data::Measurement, &'a OfflineMeasurement>>,
+    measurements: impl Iterator<
+        Item = (
+            usize,
+            data::MeasurementState<&'a data::Measurement, &'a OfflineMeasurement>,
+        ),
+    >,
 ) -> Element<'a, Message> {
     let loopback_entry = {
         let content: Element<_> = match &loopback {
@@ -139,14 +158,14 @@ fn collecting_list<'a>(
         signal_list_category("Loopback", add_msg, content)
     };
 
+    let measurements: Vec<_> = measurements.collect();
     let measurement_entries = {
         let content: Element<_> = {
             if measurements.is_empty() {
                 text("Please load a measurement.").into()
             } else {
                 let entries: Vec<Element<_>> = measurements
-                    .iter()
-                    .enumerate()
+                    .into_iter()
                     .map(|(index, state)| match state {
                         data::MeasurementState::Loaded(signal) => {
                             measurement_list_entry(selected, signal, index)
@@ -243,7 +262,7 @@ fn measurement_list_entry<'a>(
     );
 
     let style = match selected {
-        Some(SelectedMeasurement::Measurement(i)) if *i == index => button::primary,
+        Some(SelectedMeasurement::Measurement(selected)) if *selected == index => button::primary,
         Some(_) => button::secondary,
         None => button::secondary,
     };

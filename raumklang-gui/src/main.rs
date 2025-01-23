@@ -71,8 +71,8 @@ enum Raumklang {
         active_tab: Tab,
         loopback: Option<data::MeasurementState<data::Loopback, OfflineMeasurement>>,
         measurements: data::Store<data::Measurement, OfflineMeasurement>,
-        impulse_responses: HashMap<usize, raumklang_core::ImpulseResponse>,
-        frequency_responses: HashMap<usize, raumklang_core::FrequencyResponse>,
+        impulse_responses: HashMap<data::MeasurementId, raumklang_core::ImpulseResponse>,
+        frequency_responses: HashMap<data::MeasurementId, raumklang_core::FrequencyResponse>,
         recent_projects: data::RecentProjects,
     },
 }
@@ -368,7 +368,7 @@ impl Raumklang {
                     measurements,
                     impulse_responses,
                     frequency_responses,
-                        ..
+                    ..
                 } = self
                 else {
                     return Task::none();
@@ -383,8 +383,7 @@ impl Raumklang {
                     Some(data::MeasurementState::NotLoaded(_)) => None,
                     None => None,
                 };
-                let measurement_refs: Vec<_> = measurements.loaded().collect();
-                let (task, event) = active_tab.update(message, loopback_ref, &measurement_refs);
+                let (task, event) = active_tab.update(message, loopback_ref, measurements);
 
                 let event_task = match event {
                     Some(measurements::Event::LoadLoopbackMeasurement) => Task::perform(
@@ -401,8 +400,8 @@ impl Raumklang {
                         pick_file_and_load_signal("measurement"),
                         Message::MeasurementLoaded,
                     ),
-                    Some(measurements::Event::RemoveMeasurement(id)) => {
-                        measurements.remove(id);
+                    Some(measurements::Event::RemoveMeasurement(index, id)) => {
+                        measurements.remove(index);
                         impulse_responses.remove(&id);
                         frequency_responses.remove(&id);
                         Task::none()
@@ -645,15 +644,12 @@ impl Raumklang {
                     .spacing(5);
 
                     let tab_content = match &active_tab {
-                        Tab::Measurements(tab) => {
-                            let measurements: Vec<_> = measurements.iter().collect();
-                            tab.view(loopback.as_ref(), measurements)
-                                .map(Message::MeasurementsTab)
-                        }
-                        Tab::Analysis(tab) => {
-                            let measurements: Vec<_> = measurements.loaded().collect();
-                            tab.view(&measurements).map(Message::ImpulseResponseTab)
-                        }
+                        Tab::Measurements(tab) => tab
+                            .view(loopback.as_ref(), measurements.iter().enumerate())
+                            .map(Message::MeasurementsTab),
+                        Tab::Analysis(tab) => tab
+                            .view(measurements.loaded())
+                            .map(Message::ImpulseResponseTab),
                         Tab::FrequencyResponse(tab) => {
                             tab.view().map(Message::FrequencyResponseTab)
                         }
