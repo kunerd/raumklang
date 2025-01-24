@@ -9,7 +9,7 @@ use iced::{
 
 use crate::{
     data,
-    widgets::chart::{self, ImpulseResponseChart, TimeSeriesUnit},
+    widgets::charts::{impulse_response, TimeSeriesUnit},
     OfflineMeasurement,
 };
 
@@ -17,7 +17,7 @@ use crate::{
 pub enum Message {
     MeasurementSelected(data::MeasurementId),
     ImpulseResponseComputed((data::MeasurementId, raumklang_core::ImpulseResponse)),
-    Chart(chart::Message),
+    Chart(impulse_response::Message),
     //    ImpulseResponseComputed((Arc<raumklang_core::ImpulseResponse>, u32)),
     //    TimeSeriesChart(chart::Message),
     //    TabSelected(TabId),
@@ -32,8 +32,8 @@ pub enum Event {
 
 #[derive(Default)]
 pub struct ImpulseResponseTab {
+    chart: Option<impulse_response::ImpulseResponseChart>,
     selected: Option<data::MeasurementId>,
-    chart: Option<ImpulseResponseChart>,
     //    active_tab: TabId,
     //    loopback_signal: Option<Measurement>,
     //    measurement_signal: Option<Measurement>,
@@ -137,7 +137,10 @@ impl ImpulseResponseTab {
     }
 
     fn update_chart(&mut self, ir: &raumklang_core::ImpulseResponse) {
-        self.chart = Some(ImpulseResponseChart::new(ir.clone(), TimeSeriesUnit::Time));
+        self.chart = Some(impulse_response::ImpulseResponseChart::new(
+            ir.clone(),
+            TimeSeriesUnit::Time,
+        ));
     }
 }
 

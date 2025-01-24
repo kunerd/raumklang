@@ -1,7 +1,10 @@
 use std::{path::PathBuf, sync::Arc};
 
 use iced::{
-    widget::{button, column, container, horizontal_rule, horizontal_space, row, scrollable, text},
+    widget::{
+        button, column, container, horizontal_rule, horizontal_space, row, scrollable, text,
+        text::Wrapping,
+    },
     Alignment, Element, Length, Task,
 };
 use raumklang_core::WavLoadError;
@@ -9,14 +12,14 @@ use raumklang_core::WavLoadError;
 use crate::{
     data::{self},
     delete_icon,
-    widgets::chart::{self, SignalChart},
+    widgets::charts::{self, measurement},
     OfflineMeasurement,
 };
 
 #[derive(Default)]
 pub struct Measurements {
     selected: Option<SelectedMeasurement>,
-    chart: Option<SignalChart>,
+    chart: Option<measurement::SignalChart>,
 }
 
 #[derive(Debug, Clone)]
@@ -32,7 +35,7 @@ pub enum Message {
     LoadLoopbackMeasurement,
     RemoveLoopbackMeasurement,
     MeasurementSelected(SelectedMeasurement),
-    TimeSeriesChart(chart::SignalChartMessage),
+    TimeSeriesChart(measurement::SignalChartMessage),
 }
 
 #[derive(Debug, Clone)]
@@ -57,12 +60,8 @@ impl Measurements {
         measurements: &data::Store<data::Measurement, OfflineMeasurement>,
     ) -> (Task<Message>, Option<Event>) {
         match msg {
-            Message::LoadLoopbackMeasurement => {
-                (Task::none(), Some(Event::LoadLoopback))
-            }
-            Message::RemoveLoopbackMeasurement => {
-                (Task::none(), Some(Event::RemoveLoopback))
-            }
+            Message::LoadLoopbackMeasurement => (Task::none(), Some(Event::LoadLoopback)),
+            Message::RemoveLoopbackMeasurement => (Task::none(), Some(Event::RemoveLoopback)),
             Message::LoadMeasurement => (Task::none(), Some(Event::Load)),
             Message::RemoveMeasurement(index) => {
                 let event = measurements
@@ -87,7 +86,7 @@ impl Measurements {
 
                 self.chart = signal
                     .as_ref()
-                    .map(|signal| chart::SignalChart::new(signal, chart::TimeSeriesUnit::Time));
+                    .map(|signal| measurement::SignalChart::new(signal, charts::TimeSeriesUnit::Time));
 
                 (Task::none(), None)
             }
@@ -263,7 +262,7 @@ fn measurement_list_entry<'a>(
     let sample_rate = signal.data.sample_rate() as f32;
     let content = column!(
         row![
-            text(&signal.name),
+            text(&signal.name).wrapping(Wrapping::Glyph),
             horizontal_space(),
             button(delete_icon())
                 .on_press(Message::RemoveMeasurement(index))

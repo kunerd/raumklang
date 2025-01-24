@@ -1,7 +1,7 @@
 use crate::{
     data,
     widgets::{
-        chart::{self, FrequencyResponseChart, FrequencyResponseData},
+        charts::frequency_response,
         colored_circle,
     },
 };
@@ -20,7 +20,7 @@ use std::{collections::HashMap, iter};
 #[derive(Debug, Clone)]
 pub enum Message {
     ListEntry(data::MeasurementId, ListEntryMessage),
-    Chart(chart::FrequencyResponseChartMessage),
+    Chart(frequency_response::FrequencyResponseChartMessage),
     FrequencyResponseComputed((data::MeasurementId, raumklang_core::FrequencyResponse)),
     ImpulseResponseComputed((data::MeasurementId, raumklang_core::ImpulseResponse)),
 }
@@ -37,7 +37,7 @@ pub enum ListEntryMessage {
 
 pub struct FrequencyResponse {
     entries: HashMap<data::MeasurementId, EntryState>,
-    chart: Option<FrequencyResponseChart>,
+    chart: Option<frequency_response::FrequencyResponseChart>,
 }
 
 enum EntryState {
@@ -117,9 +117,9 @@ impl FrequencyResponse {
                 _ => None,
             })
             .flat_map(|(id, color)| frequency_responses.get(&id).map(|fr| (fr.clone(), color)))
-            .map(|(fr, color)| FrequencyResponseData::new(fr, color));
+            .map(|(fr, color)| frequency_response::FrequencyResponseData::new(fr, color));
 
-        let chart = FrequencyResponseChart::from_iter(responses);
+        let chart = frequency_response::FrequencyResponseChart::from_iter(responses);
 
         (Self { entries, chart }, Task::batch(tasks))
     }
@@ -173,7 +173,9 @@ impl FrequencyResponse {
                         .flat_map(|(id, color)| {
                             frequency_responses.get(&id).map(|fr| (fr.clone(), color))
                         })
-                        .map(|(fr, color)| FrequencyResponseData::new(fr, color));
+                        .map(|(fr, color)| {
+                            frequency_response::FrequencyResponseData::new(fr, color)
+                        });
 
                     chart.update_data(responses);
                 }
@@ -239,12 +241,12 @@ impl FrequencyResponse {
                         frequency_responses.get(&id).map(|fr| (fr.clone(), color))
                     })
                     .chain(iter::once((fr.clone(), cur_color)))
-                    .map(|(fr, color)| FrequencyResponseData::new(fr, color));
+                    .map(|(fr, color)| frequency_response::FrequencyResponseData::new(fr, color));
 
                 if let Some(chart) = &mut self.chart {
                     chart.update_data(responses);
                 } else {
-                    self.chart = FrequencyResponseChart::from_iter(responses);
+                    self.chart = frequency_response::FrequencyResponseChart::from_iter(responses);
                 }
 
                 (Task::none(), Some(Event::FrequencyResponseComputed(id, fr)))
