@@ -52,8 +52,8 @@ enum Message {
 
 enum Tab {
     Measurements(tabs::Measurements),
-    Analysis(tabs::ImpulseResponseTab),
-    FrequencyResponse(tabs::FrequencyResponse),
+    ImpulseResponses(tabs::ImpulseResponseTab),
+    FrequencyResponses(tabs::FrequencyResponse),
 }
 
 impl Default for Tab {
@@ -337,7 +337,7 @@ impl Raumklang {
                         Task::none(),
                     ),
                     TabId::ImpulseResponse => (
-                        Tab::Analysis(tabs::ImpulseResponseTab::default()),
+                        Tab::ImpulseResponses(tabs::ImpulseResponseTab::default()),
                         Task::none(),
                     ),
                     TabId::FrequencyResponse => {
@@ -349,7 +349,7 @@ impl Raumklang {
                                 frequency_responses,
                             );
                             (
-                                Tab::FrequencyResponse(tab),
+                                Tab::FrequencyResponses(tab),
                                 tasks.map(Message::FrequencyResponseTab),
                             )
                         } else {
@@ -413,7 +413,7 @@ impl Raumklang {
             }
             Message::ImpulseResponseTab(message) => {
                 let Raumklang::Loaded {
-                    active_tab: Tab::Analysis(tab),
+                    active_tab: Tab::ImpulseResponses(tab),
                     loopback: Some(data::MeasurementState::Loaded(loopback)),
                     measurements,
                     impulse_responses,
@@ -436,7 +436,7 @@ impl Raumklang {
             }
             Message::FrequencyResponseTab(message) => {
                 let Raumklang::Loaded {
-                    active_tab: Tab::FrequencyResponse(tab),
+                    active_tab: Tab::FrequencyResponses(tab),
                     impulse_responses,
                     frequency_responses,
                     ..
@@ -632,12 +632,12 @@ impl Raumklang {
                         ),
                         tab_button(
                             "Impulse Response",
-                            matches!(active_tab, Tab::Analysis(_)),
+                            matches!(active_tab, Tab::ImpulseResponses(_)),
                             ir_button_msg
                         ),
                         tab_button(
                             "Frequency Responses",
-                            matches!(active_tab, Tab::FrequencyResponse(_)),
+                            matches!(active_tab, Tab::FrequencyResponses(_)),
                             fr_button_msg
                         )
                     ]
@@ -647,10 +647,10 @@ impl Raumklang {
                         Tab::Measurements(tab) => tab
                             .view(loopback.as_ref(), measurements.iter().enumerate())
                             .map(Message::MeasurementsTab),
-                        Tab::Analysis(tab) => tab
+                        Tab::ImpulseResponses(tab) => tab
                             .view(measurements.loaded())
                             .map(Message::ImpulseResponseTab),
-                        Tab::FrequencyResponse(tab) => {
+                        Tab::FrequencyResponses(tab) => {
                             tab.view().map(Message::FrequencyResponseTab)
                         }
                     };
