@@ -67,7 +67,7 @@ impl FrequencyResponse {
         let mut tasks = vec![];
 
         for (id, measurement) in measurements {
-            if let Some(_fr) = frequency_responses.get(&id) {
+            if let Some(_fr) = frequency_responses.get(id) {
                 entries.insert(
                     *id,
                     EntryState::Loaded {
@@ -91,7 +91,7 @@ impl FrequencyResponse {
 
                 let loopback = loopback.0.data.clone();
                 let measurement = measurement.data.clone();
-                if let Some(ir) = impulse_responses.get(&id) {
+                if let Some(ir) = impulse_responses.get(id) {
                     tasks.push(Task::perform(
                         compute_frequency_response(*id, ir.clone(), window),
                         Message::FrequencyResponseComputed,

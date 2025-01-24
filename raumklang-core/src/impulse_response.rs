@@ -87,10 +87,6 @@ impl ImpulseResponse {
 
         Self::from_signals(&loopback, &measurement)
     }
-
-    pub fn len(&self) -> usize {
-        self.data.len()
-    }
 }
 
 impl FrequencyResponse {

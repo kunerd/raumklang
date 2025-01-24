@@ -37,7 +37,6 @@ use rustfft::{
 pub enum Message {
     TimeUnitChanged(TimeSeriesUnit),
     AmplitudeUnitChanged(AmplitudeUnit),
-    NoiseFloorUpdated((f32, usize)),
     InteractiveViewport(InteractiveViewportMessage),
 }
 
@@ -58,7 +57,6 @@ pub struct ImpulseResponseChart {
     impulse_response: raumklang_core::ImpulseResponse,
     window: Option<Vec<f32>>,
     noise_floor: Option<f32>,
-    noise_floor_crossing: Option<usize>,
     amplitude_unit: AmplitudeUnit,
     time_unit: TimeSeriesUnit,
     viewport: InteractiveViewport<TimeSeriesRange>,
@@ -231,7 +229,7 @@ impl std::fmt::Display for AmplitudeUnit {
 
 impl SignalChart {
     pub fn new(signal: &raumklang_core::Measurement, time_unit: TimeSeriesUnit) -> Self {
-        let length = signal.len() as i64;
+        let length = signal.duration() as i64;
         let viewport = InteractiveViewport::new(0..length);
         Self {
             signal: Arc::new(signal.clone()),
@@ -302,21 +300,9 @@ impl Chart<SignalChartMessage> for SignalChart {
             TimeSeriesUnit::Time => TimeSeriesRange::Time(self.signal.sample_rate(), range),
         };
 
-        let min = self
-            .signal
-            .iter()
-            .cloned()
-            .into_iter()
-            .reduce(f32::min)
-            .unwrap();
+        let min = self.signal.iter().cloned().reduce(f32::min).unwrap();
 
-        let max = self
-            .signal
-            .iter()
-            .cloned()
-            .into_iter()
-            .reduce(f32::max)
-            .unwrap();
+        let max = self.signal.iter().cloned().reduce(f32::max).unwrap();
 
         let mut chart = builder
             .margin(5)
@@ -656,13 +642,12 @@ impl ImpulseResponseChart {
         impulse_response: raumklang_core::ImpulseResponse,
         time_unit: TimeSeriesUnit,
     ) -> Self {
-        let length = impulse_response.len() as i64;
+        let length = impulse_response.data.len() as i64;
         let viewport = InteractiveViewport::new(0..length);
         Self {
             impulse_response,
             window: None,
             noise_floor: None,
-            noise_floor_crossing: None,
             amplitude_unit: AmplitudeUnit::DezibelFullScale,
             time_unit,
             viewport,
@@ -714,22 +699,11 @@ impl ImpulseResponseChart {
                 self.amplitude_unit = u;
                 self.cache.clear();
             }
-            Message::NoiseFloorUpdated((nf, nfc)) => {
-                self.noise_floor = Some(nf);
-                self.noise_floor_crossing = Some(nfc);
-                self.cache.clear();
-            }
             Message::InteractiveViewport(msg) => {
                 self.viewport.update(msg);
                 self.cache.clear()
             }
         }
-    }
-
-    pub fn update_window(&mut self, window: Vec<f32>) {
-        let dbfs_window = window.into_iter().map(dbfs).collect();
-        self.window = Some(dbfs_window);
-        self.cache.clear();
     }
 }
 
@@ -916,7 +890,9 @@ impl FrequencyResponseChart {
         self.cache.clear();
     }
 
-    pub fn from_iter(mut iter: impl Iterator<Item = FrequencyResponseData>) -> Option<FrequencyResponseChart> {
+    pub fn from_iter(
+        mut iter: impl Iterator<Item = FrequencyResponseData>,
+    ) -> Option<FrequencyResponseChart> {
         if let Some(response) = iter.next() {
             let mut chart = FrequencyResponseChart::new(response);
             chart.responses.extend(iter);

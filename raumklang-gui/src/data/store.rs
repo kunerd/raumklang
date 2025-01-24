@@ -185,10 +185,7 @@ impl<T> Hash for Id<T> {
 
 impl<T> Clone for Id<T> {
     fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            phantom: PhantomData,
-        }
+        *self
     }
 }
 

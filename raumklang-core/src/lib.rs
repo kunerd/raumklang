@@ -78,7 +78,7 @@ impl Measurement {
         self.data.iter()
     }
 
-    pub fn len(&self) -> usize {
+    pub fn duration(&self) -> usize {
         self.data.len()
     }
 }

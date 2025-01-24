@@ -37,10 +37,10 @@ pub enum Message {
 
 #[derive(Debug, Clone)]
 pub enum Event {
-    LoadMeasurement,
-    RemoveMeasurement(usize, data::MeasurementId),
-    LoadLoopbackMeasurement,
-    RemoveLoopbackMeasurement,
+    Load,
+    Remove(usize, data::MeasurementId),
+    LoadLoopback,
+    RemoveLoopback,
 }
 
 #[derive(Debug, Clone)]
@@ -58,16 +58,16 @@ impl Measurements {
     ) -> (Task<Message>, Option<Event>) {
         match msg {
             Message::LoadLoopbackMeasurement => {
-                (Task::none(), Some(Event::LoadLoopbackMeasurement))
+                (Task::none(), Some(Event::LoadLoopback))
             }
             Message::RemoveLoopbackMeasurement => {
-                (Task::none(), Some(Event::RemoveLoopbackMeasurement))
+                (Task::none(), Some(Event::RemoveLoopback))
             }
-            Message::LoadMeasurement => (Task::none(), Some(Event::LoadMeasurement)),
+            Message::LoadMeasurement => (Task::none(), Some(Event::Load)),
             Message::RemoveMeasurement(index) => {
                 let event = measurements
                     .get_loaded_id(index)
-                    .map(|id| Event::RemoveMeasurement(index, id));
+                    .map(|id| Event::Remove(index, id));
 
                 (Task::none(), event)
             }
@@ -227,7 +227,7 @@ fn loopback_list_entry<'a>(
     selected: Option<&SelectedMeasurement>,
     signal: &'a data::Loopback,
 ) -> Element<'a, Message> {
-    let samples = signal.0.data.0.len();
+    let samples = signal.0.data.0.duration();
     let sample_rate = signal.0.data.0.sample_rate() as f32;
     let content = column!(
         row![
@@ -259,7 +259,7 @@ fn measurement_list_entry<'a>(
     signal: &'a data::Measurement,
     index: usize,
 ) -> Element<'a, Message> {
-    let samples = signal.data.len();
+    let samples = signal.data.duration();
     let sample_rate = signal.data.sample_rate() as f32;
     let content = column!(
         row![

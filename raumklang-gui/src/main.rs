@@ -386,21 +386,21 @@ impl Raumklang {
                 let (task, event) = active_tab.update(message, loopback_ref, measurements);
 
                 let event_task = match event {
-                    Some(measurements::Event::LoadLoopbackMeasurement) => Task::perform(
+                    Some(measurements::Event::LoadLoopback) => Task::perform(
                         pick_file_and_load_signal("loopback"),
                         Message::LoopbackMeasurementLoaded,
                     ),
-                    Some(measurements::Event::RemoveLoopbackMeasurement) => {
+                    Some(measurements::Event::RemoveLoopback) => {
                         *loopback = None;
                         impulse_responses.clear();
                         frequency_responses.clear();
                         Task::none()
                     }
-                    Some(measurements::Event::LoadMeasurement) => Task::perform(
+                    Some(measurements::Event::Load) => Task::perform(
                         pick_file_and_load_signal("measurement"),
                         Message::MeasurementLoaded,
                     ),
-                    Some(measurements::Event::RemoveMeasurement(index, id)) => {
+                    Some(measurements::Event::Remove(index, id)) => {
                         measurements.remove(index);
                         impulse_responses.remove(&id);
                         frequency_responses.remove(&id);
