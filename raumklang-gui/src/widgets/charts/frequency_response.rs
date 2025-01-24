@@ -27,7 +27,7 @@ use rustfft::num_complex::{Complex, ComplexFloat};
 use std::{fmt::Display, ops::Range};
 
 #[derive(Debug, Clone)]
-pub enum FrequencyResponseChartMessage {
+pub enum Message {
     UnitChanged(FrequencyResponseUnit),
     SmoothingChanged(SmoothingType),
     InteractiveViewport(InteractiveViewportMessage),
@@ -95,18 +95,18 @@ impl FrequencyResponseChart {
         }
     }
 
-    pub fn view(&self) -> Element<FrequencyResponseChartMessage> {
+    pub fn view(&self) -> Element<Message> {
         let header = {
             let unit_picker = pick_list(
                 &FrequencyResponseUnit::ALL[..],
                 Some(self.unit.clone()),
-                FrequencyResponseChartMessage::UnitChanged,
+                Message::UnitChanged,
             );
 
             let smoothing_picker = pick_list(
                 &SmoothingType::ALL[..],
                 self.smoothing,
-                FrequencyResponseChartMessage::SmoothingChanged,
+                Message::SmoothingChanged,
             );
 
             widget::row!(unit_picker, smoothing_picker)
@@ -131,14 +131,14 @@ impl FrequencyResponseChart {
         .into()
     }
 
-    pub fn update(&mut self, msg: FrequencyResponseChartMessage) {
+    pub fn update(&mut self, msg: Message) {
         match msg {
-            FrequencyResponseChartMessage::UnitChanged(unit) => self.unit = unit,
-            FrequencyResponseChartMessage::SmoothingChanged(smoothing) => {
+            Message::UnitChanged(unit) => self.unit = unit,
+            Message::SmoothingChanged(smoothing) => {
                 self.smoothing = Some(smoothing);
                 self.responses.iter_mut().for_each(|r| r.smooth(smoothing));
             }
-            FrequencyResponseChartMessage::InteractiveViewport(msg) => {
+            Message::InteractiveViewport(msg) => {
                 self.viewport.update(msg);
                 self.cache.clear();
             }
@@ -168,7 +168,7 @@ impl FrequencyResponseChart {
     }
 }
 
-impl Chart<FrequencyResponseChartMessage> for FrequencyResponseChart {
+impl Chart<Message> for FrequencyResponseChart {
     type State = ();
 
     #[inline]
@@ -248,11 +248,11 @@ impl Chart<FrequencyResponseChartMessage> for FrequencyResponseChart {
         event: canvas::Event,
         bounds: iced::Rectangle,
         cursor: mouse::Cursor,
-    ) -> (event::Status, Option<FrequencyResponseChartMessage>) {
+    ) -> (event::Status, Option<Message>) {
         let (event, msg) = self.viewport.handle_event(event, bounds, cursor);
         (
             event,
-            msg.map(FrequencyResponseChartMessage::InteractiveViewport),
+            msg.map(Message::InteractiveViewport),
         )
     }
 }

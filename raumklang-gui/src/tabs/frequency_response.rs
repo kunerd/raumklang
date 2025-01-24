@@ -1,9 +1,6 @@
 use crate::{
     data,
-    widgets::{
-        charts::frequency_response,
-        colored_circle,
-    },
+    widgets::{charts::frequency_response, colored_circle},
 };
 
 use iced::{
@@ -20,7 +17,7 @@ use std::{collections::HashMap, iter};
 #[derive(Debug, Clone)]
 pub enum Message {
     ListEntry(data::MeasurementId, ListEntryMessage),
-    Chart(frequency_response::FrequencyResponseChartMessage),
+    Chart(frequency_response::Message),
     FrequencyResponseComputed((data::MeasurementId, raumklang_core::FrequencyResponse)),
     ImpulseResponseComputed((data::MeasurementId, raumklang_core::ImpulseResponse)),
 }

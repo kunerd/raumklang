@@ -17,7 +17,7 @@ use plotters_iced::{Chart, ChartBuilder, ChartWidget, Renderer};
 use super::{InteractiveViewport, InteractiveViewportMessage, TimeSeriesRange, TimeSeriesUnit};
 
 #[derive(Debug, Clone)]
-pub enum SignalChartMessage {
+pub enum Message {
     TimeUnitChanged(TimeSeriesUnit),
     InteractiveViewport(InteractiveViewportMessage),
 }
@@ -41,11 +41,11 @@ impl SignalChart {
         }
     }
 
-    pub fn view(&self) -> Element<SignalChartMessage> {
+    pub fn view(&self) -> Element<Message> {
         let header = widget::row!(widget::pick_list(
             &TimeSeriesUnit::ALL[..],
             Some(self.time_unit.clone()),
-            SignalChartMessage::TimeUnitChanged
+            Message::TimeUnitChanged
         ));
         Container::new(
             Column::new()
@@ -66,13 +66,13 @@ impl SignalChart {
         .into()
     }
 
-    pub fn update_msg(&mut self, msg: SignalChartMessage) {
+    pub fn update_msg(&mut self, msg: Message) {
         match msg {
-            SignalChartMessage::TimeUnitChanged(u) => {
+            Message::TimeUnitChanged(u) => {
                 self.time_unit = u;
                 self.cache.clear();
             }
-            SignalChartMessage::InteractiveViewport(msg) => {
+            Message::InteractiveViewport(msg) => {
                 self.viewport.update(msg);
                 self.cache.clear()
             }
@@ -80,7 +80,7 @@ impl SignalChart {
     }
 }
 
-impl Chart<SignalChartMessage> for SignalChart {
+impl Chart<Message> for SignalChart {
     type State = ();
 
     #[inline]
@@ -140,8 +140,8 @@ impl Chart<SignalChartMessage> for SignalChart {
         event: canvas::Event,
         bounds: iced::Rectangle,
         cursor: mouse::Cursor,
-    ) -> (event::Status, Option<SignalChartMessage>) {
+    ) -> (event::Status, Option<Message>) {
         let (event, msg) = self.viewport.handle_event(event, bounds, cursor);
-        (event, msg.map(SignalChartMessage::InteractiveViewport))
+        (event, msg.map(Message::InteractiveViewport))
     }
 }

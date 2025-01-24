@@ -35,7 +35,7 @@ pub enum Message {
     LoadLoopbackMeasurement,
     RemoveLoopbackMeasurement,
     MeasurementSelected(SelectedMeasurement),
-    TimeSeriesChart(measurement::SignalChartMessage),
+    TimeSeriesChart(measurement::Message),
 }
 
 #[derive(Debug, Clone)]
