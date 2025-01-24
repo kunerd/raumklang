@@ -79,7 +79,10 @@ impl<L, O> Store<L, O> {
     }
 
     pub fn loaded(&self) -> impl Iterator<Item = (&Id<L>, &L)> {
-        self.loaded.iter()
+        self.all.iter().filter_map(|state| match state {
+            MeasurementState::Loaded(id) => self.loaded.get(id).map(|m| (id, m)),
+            MeasurementState::NotLoaded(_) => None,
+        })
     }
 
     pub fn is_loaded_empty(&self) -> bool {
@@ -147,10 +150,6 @@ impl<T> IdMap<T> {
         self.data.get(key)
     }
 
-    fn iter(&self) -> impl Iterator<Item = (&Id<T>, &T)> {
-        self.data.iter()
-    }
-
     fn remove(&mut self, id: &Id<T>) -> Option<T> {
         self.data.remove(id)
     }
@@ -199,6 +198,18 @@ impl<T> AddAssign<usize> for Id<T> {
 
 #[cfg(test)]
 mod test {
+    use super::{MeasurementState, Store};
+
     #[test]
-    fn loaded_is_not_mixed_up_with_not_loaded() {}
+    fn loaded_returns_items_in_correct_order() {
+        let mut store: Store<&str, ()> = Store::new();
+
+        store.insert(MeasurementState::Loaded("a"));
+        store.insert(MeasurementState::Loaded("c"));
+        store.insert(MeasurementState::Loaded("b"));
+
+        let items: Vec<_> = store.loaded().map(|(_, i)| *i).collect();
+
+        assert_eq!(items, vec!["a", "c", "b"])
+    }
 }
