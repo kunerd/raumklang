@@ -13,6 +13,8 @@ use crate::{
     OfflineMeasurement,
 };
 
+use super::compute_impulse_response;
+
 #[derive(Debug, Clone)]
 pub enum Message {
     MeasurementSelected(data::MeasurementId),
@@ -151,17 +153,6 @@ fn list_category<'a>(name: &'a str, content: Element<'a, Message>) -> Element<'a
         .width(Length::Fill)
         .spacing(5)
         .into()
-}
-
-async fn compute_impulse_response(
-    id: data::MeasurementId,
-    loopback: raumklang_core::Loopback,
-    measurement: raumklang_core::Measurement,
-) -> (data::MeasurementId, raumklang_core::ImpulseResponse) {
-    (
-        id,
-        raumklang_core::ImpulseResponse::from_signals(&loopback, &measurement).unwrap(),
-    )
 }
 
 //

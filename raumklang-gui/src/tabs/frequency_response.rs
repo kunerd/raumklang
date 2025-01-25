@@ -14,6 +14,8 @@ use rand::Rng;
 
 use std::{collections::HashMap, iter};
 
+use super::compute_impulse_response;
+
 #[derive(Debug, Clone)]
 pub enum Message {
     ListEntry(data::MeasurementId, ListEntryMessage),
@@ -329,20 +331,6 @@ fn random_color() -> RGBAColor {
     let max = Palette99::COLORS.len();
     let index = rand::thread_rng().gen_range(0..max);
     Palette99::pick(index).to_rgba()
-}
-
-async fn compute_impulse_response(
-    id: data::MeasurementId,
-    loopback: raumklang_core::Loopback,
-    measurement: raumklang_core::Measurement,
-) -> (data::MeasurementId, raumklang_core::ImpulseResponse) {
-    let impulse_response = tokio::task::spawn_blocking(move || {
-        raumklang_core::ImpulseResponse::from_signals(&loopback, &measurement).unwrap()
-    })
-    .await
-    .unwrap();
-
-    (id, impulse_response)
 }
 
 async fn compute_frequency_response(
