@@ -15,6 +15,7 @@ use iced::{
 use plotters::style::{self};
 use plotters_backend::DrawingBackend;
 use plotters_iced::{Chart, ChartBuilder, ChartWidget, Renderer};
+use rustfft::num_complex::ComplexFloat;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -25,8 +26,8 @@ pub enum Message {
 
 pub struct ImpulseResponseChart {
     impulse_response: raumklang_core::ImpulseResponse,
+    data: Vec<f32>,
     window: Option<Vec<f32>>,
-    noise_floor: Option<f32>,
     amplitude_unit: AmplitudeUnit,
     time_unit: TimeSeriesUnit,
     viewport: InteractiveViewport<TimeSeriesRange>,
@@ -38,13 +39,18 @@ impl ImpulseResponseChart {
         impulse_response: raumklang_core::ImpulseResponse,
         time_unit: TimeSeriesUnit,
     ) -> Self {
+        let amplitude_unit = AmplitudeUnit::DezibelFullScale;
+        let data: Vec<_> = impulse_response.data.iter().map(|s| s.re().abs()).collect();
+        let data = process_data(&data, amplitude_unit);
+
         let length = impulse_response.data.len() as i64;
         let viewport = InteractiveViewport::new(0..length);
+
         Self {
             impulse_response,
+            data,
             window: None,
-            noise_floor: None,
-            amplitude_unit: AmplitudeUnit::DezibelFullScale,
+            amplitude_unit,
             time_unit,
             viewport,
             cache: Cache::new(),
@@ -101,6 +107,28 @@ impl ImpulseResponseChart {
             }
         }
     }
+
+    pub fn set_window(&mut self, window: Option<Vec<f32>>) {
+        self.window = window
+            .as_ref()
+            .map(|window| process_data(window, self.amplitude_unit));
+        self.cache.clear();
+    }
+}
+
+fn process_data(data: &[f32], amplitude: AmplitudeUnit) -> Vec<f32> {
+    let max = data
+        .iter()
+        .map(|s| s.powi(2).sqrt())
+        .fold(f32::NEG_INFINITY, |a, b| a.max(b));
+
+    match amplitude {
+        AmplitudeUnit::PercentFullScale => data.iter().map(|s| *s / max * 100f32).collect(),
+        AmplitudeUnit::DezibelFullScale => data
+            .iter()
+            .map(|s| 20f32 * f32::log10(s.abs() / max))
+            .collect(),
+    }
 }
 
 impl Chart<Message> for ImpulseResponseChart {
@@ -125,30 +153,8 @@ impl Chart<Message> for ImpulseResponseChart {
             TimeSeriesUnit::Time => TimeSeriesRange::Time(self.impulse_response.sample_rate, range),
         };
 
-        let data: Vec<_> = self
-            .impulse_response
-            .data
-            .iter()
-            .map(|s| s.re.abs())
-            .collect();
-
-        let max = data
-            .iter()
-            .map(|s| s.powi(2).sqrt())
-            .fold(f32::NEG_INFINITY, |a, b| a.max(b));
-
-        // FIXME: precompute on amplitude change
-        let processed_data: Vec<_> = match &self.amplitude_unit {
-            AmplitudeUnit::PercentFullScale => data.iter().map(|s| *s / max * 100f32).collect(),
-            AmplitudeUnit::DezibelFullScale => data
-                .iter()
-                .map(|s| 20f32 * f32::log10(s.abs() / max))
-                .collect(),
-        };
-
-        let min = processed_data.iter().cloned().reduce(f32::min).unwrap();
-
-        let max = processed_data.iter().cloned().reduce(f32::max).unwrap();
+        let min = self.data.iter().cloned().reduce(f32::min).unwrap();
+        let max = self.data.iter().cloned().reduce(f32::max).unwrap();
 
         let mut chart = builder
             .margin(5)
@@ -159,22 +165,14 @@ impl Chart<Message> for ImpulseResponseChart {
 
         chart
             .draw_series(LineSeries::new(
-                processed_data
-                    .into_iter()
+                self.data
+                    .iter()
+                    .cloned()
                     .enumerate()
                     .map(|(i, s)| (i as i64, s)),
                 &style::RGBColor(2, 125, 66),
             ))
             .unwrap();
-
-        if let Some(nf) = self.noise_floor {
-            chart
-                .draw_series(LineSeries::new(
-                    (0..data.len()).map(|i| (i as i64, nf)),
-                    &style::RGBColor(0, 0, 128),
-                ))
-                .unwrap();
-        }
 
         if let Some(window) = &self.window {
             chart

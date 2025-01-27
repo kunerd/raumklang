@@ -1,11 +1,15 @@
 use std::collections::HashMap;
 
 use iced::{
-    widget::{button, column, container, horizontal_rule, horizontal_space, row, scrollable, text},
+    widget::{
+        button, checkbox, column, container, horizontal_rule, horizontal_space, row, scrollable,
+        text,
+    },
     Alignment, Element,
     Length::{self, FillPortion},
     Task,
 };
+use raumklang_core::WindowBuilder;
 
 use crate::{
     data,
@@ -20,6 +24,7 @@ pub enum Message {
     MeasurementSelected(data::MeasurementId),
     ImpulseResponseComputed((data::MeasurementId, raumklang_core::ImpulseResponse)),
     Chart(impulse_response::Message),
+    ShowWindowToggled(bool),
 }
 
 pub enum Event {
@@ -30,6 +35,8 @@ pub enum Event {
 pub struct ImpulseResponseTab {
     chart: Option<impulse_response::ImpulseResponseChart>,
     selected: Option<data::MeasurementId>,
+    show_window: bool,
+    window_builder: Option<WindowBuilder>,
 }
 
 impl ImpulseResponseTab {
@@ -43,6 +50,8 @@ impl ImpulseResponseTab {
         match message {
             Message::MeasurementSelected(id) => {
                 self.selected = Some(id);
+                self.window_builder = Some(WindowBuilder::default());
+
                 if let Some(ir) = impulse_response.get(&id) {
                     self.update_chart(ir);
                     (Task::none(), None)
@@ -64,6 +73,22 @@ impl ImpulseResponseTab {
                         (Task::none(), None)
                     }
                 }
+            }
+            Message::ShowWindowToggled(state) => {
+                self.show_window = state;
+
+                if let (Some(chart), Some(window_builder)) =
+                    (&mut self.chart, &mut self.window_builder)
+                {
+                    let maybe_window = if self.show_window {
+                        Some(window_builder.build())
+                    } else {
+                        None
+                    };
+                    chart.set_window(maybe_window);
+                }
+
+                (Task::none(), None)
             }
             Message::ImpulseResponseComputed((id, ir)) => {
                 self.update_chart(&ir);
@@ -102,6 +127,7 @@ impl ImpulseResponseTab {
                 .collect();
 
             let content = scrollable(column(entries).spacing(5)).into();
+
             container(list_category("Measurements", content))
                 .style(container::rounded_box)
                 .height(Length::Fill)
@@ -109,7 +135,10 @@ impl ImpulseResponseTab {
         };
 
         let content = if let Some(chart) = &self.chart {
-            container(chart.view().map(Message::Chart))
+            container(column![
+                checkbox("Show Window", self.show_window).on_toggle(Message::ShowWindowToggled),
+                chart.view().map(Message::Chart),
+            ])
         } else {
             container(text(
                 "Please select a measurement to compute the corresponding impulse response.",
