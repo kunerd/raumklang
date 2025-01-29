@@ -12,6 +12,7 @@ use iced::{
 use raumklang_core::WindowBuilder;
 
 use crate::{
+    components::window_settings::{self, WindowSettings},
     data,
     widgets::charts::{impulse_response, TimeSeriesUnit},
     OfflineMeasurement,
@@ -25,6 +26,7 @@ pub enum Message {
     ImpulseResponseComputed((data::MeasurementId, raumklang_core::ImpulseResponse)),
     Chart(impulse_response::Message),
     ShowWindowToggled(bool),
+    WindowSettings(window_settings::Message),
 }
 
 pub enum Event {
@@ -36,7 +38,7 @@ pub struct ImpulseResponseTab {
     chart: Option<impulse_response::ImpulseResponseChart>,
     selected: Option<data::MeasurementId>,
     show_window: bool,
-    window_builder: Option<WindowBuilder>,
+    window_settings: Option<WindowSettings>,
 }
 
 impl ImpulseResponseTab {
@@ -50,10 +52,12 @@ impl ImpulseResponseTab {
         match message {
             Message::MeasurementSelected(id) => {
                 self.selected = Some(id);
-                self.window_builder = Some(WindowBuilder::default());
 
                 if let Some(ir) = impulse_response.get(&id) {
                     self.update_chart(ir);
+                    self.window_settings =
+                        Some(WindowSettings::new(WindowBuilder::default(), ir.data.len()));
+
                     (Task::none(), None)
                 } else {
                     let measurement = measurements.get_loaded_by_id(&id);
@@ -77,11 +81,11 @@ impl ImpulseResponseTab {
             Message::ShowWindowToggled(state) => {
                 self.show_window = state;
 
-                if let (Some(chart), Some(window_builder)) =
-                    (&mut self.chart, &mut self.window_builder)
+                if let (Some(chart), Some(window_settings)) =
+                    (&mut self.chart, &mut self.window_settings)
                 {
                     let maybe_window = if self.show_window {
-                        Some(window_builder.build())
+                        Some(window_settings.window_builder.build())
                     } else {
                         None
                     };
@@ -100,6 +104,19 @@ impl ImpulseResponseTab {
                 };
 
                 chart.update_msg(message);
+                (Task::none(), None)
+            }
+            Message::WindowSettings(msg) => {
+                let Some(window_settings) = &mut self.window_settings else {
+                    return (Task::none(), None);
+                };
+
+                window_settings.update(msg);
+
+                if let Some(chart) = &mut self.chart {
+                    chart.set_window(Some(window_settings.window_builder.build()));
+                }
+
                 (Task::none(), None)
             }
         }
@@ -135,10 +152,17 @@ impl ImpulseResponseTab {
         };
 
         let content = if let Some(chart) = &self.chart {
-            container(column![
-                checkbox("Show Window", self.show_window).on_toggle(Message::ShowWindowToggled),
-                chart.view().map(Message::Chart),
-            ])
+            container(
+                column![
+                    checkbox("Show Window", self.show_window).on_toggle(Message::ShowWindowToggled),
+                    chart.view().map(Message::Chart),
+                ]
+                .push_maybe(
+                    self.window_settings
+                        .as_ref()
+                        .map(|s| s.view().map(Message::WindowSettings)),
+                ),
+            )
         } else {
             container(text(
                 "Please select a measurement to compute the corresponding impulse response.",
@@ -170,6 +194,7 @@ fn list_category<'a>(name: &'a str, content: Element<'a, Message>) -> Element<'a
         .spacing(5)
         .into()
 }
+
 //async fn windowed_median(data: &mut [f32]) -> f32 {
 //    const WINDOW_SIZE: usize = 512;
 //
