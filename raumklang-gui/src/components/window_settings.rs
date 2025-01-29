@@ -4,7 +4,7 @@ use iced::{
 };
 use iced_aw::number_input;
 
-use crate::window::{Window, WindowBuilder};
+use raumklang_core::{Window, WindowBuilder};
 
 #[derive(Debug, Clone)]
 pub enum Message {

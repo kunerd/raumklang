@@ -165,7 +165,6 @@ impl WindowBuilder {
 
 impl Default for WindowBuilder {
     fn default() -> Self {
-
         // FIXME: depends on sample rate of impulse response
         let left_side_width = 5512;
         let right_side_width = 22050;
@@ -183,5 +182,33 @@ fn create_window(window_type: &Window, width: usize) -> Vec<f32> {
     match window_type {
         Window::Hann => HannWindow::new(width).data,
         Window::Tukey(a) => TukeyWindow::new(width, *a).data,
+    }
+}
+
+#[cfg(test)]
+mod test {
+    macro_rules! assert_eq_delta {
+        ($a:expr, $b:expr, $d:expr) => {
+            assert!(($a - $b).abs() < $d)
+        };
+    }
+
+    macro_rules! assert_ne_delta {
+        ($a:expr, $b:expr, $d:expr) => {
+            assert!(($a - $b).abs() > $d)
+        };
+    }
+
+    use super::{Window, WindowBuilder};
+
+    #[test]
+    fn left_and_right_side_should_be_equally_sized() {
+        let builder = WindowBuilder::new(Window::Hann, Window::Hann, 100);
+
+        let window = builder.build();
+        let len = window.len();
+        assert_eq_delta!(window[len / 2], 1.0, f32::EPSILON);
+        assert_ne_delta!(window[len / 2 - 1], 1.0, f32::EPSILON);
+        assert_ne_delta!(window[len / 2 + 1], 1.0, f32::EPSILON);
     }
 }
