@@ -1,4 +1,4 @@
-use std::{ops::Range, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 use iced::{
     widget::{
@@ -12,15 +12,12 @@ use raumklang_core::WavLoadError;
 
 use crate::{
     data::{self},
-    delete_icon,
-    widgets::charts::{self, measurement},
-    OfflineMeasurement,
+    delete_icon, OfflineMeasurement,
 };
 
 #[derive(Default)]
 pub struct Measurements {
     selected: Option<SelectedMeasurement>,
-    chart: Option<measurement::SignalChart>,
 }
 
 #[derive(Debug, Clone)]
@@ -36,7 +33,6 @@ pub enum Message {
     LoadLoopbackMeasurement,
     RemoveLoopbackMeasurement,
     MeasurementSelected(SelectedMeasurement),
-    TimeSeriesChart(measurement::Message),
 }
 
 #[derive(Debug, Clone)]
@@ -85,16 +81,6 @@ impl Measurements {
                 };
                 self.selected = Some(selected);
 
-                self.chart = signal.as_ref().map(|signal| {
-                    measurement::SignalChart::new(signal, charts::TimeSeriesUnit::Time)
-                });
-
-                (Task::none(), None)
-            }
-            Message::TimeSeriesChart(msg) => {
-                if let Some(chart) = &mut self.chart {
-                    chart.update_msg(msg);
-                }
                 (Task::none(), None)
             }
         }

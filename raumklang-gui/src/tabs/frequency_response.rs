@@ -1,7 +1,4 @@
-use crate::{
-    data,
-    widgets::{charts::frequency_response, colored_circle},
-};
+use crate::{data, widgets::colored_circle};
 
 use iced::{
     widget::{column, container, horizontal_space, row, stack, text, toggler},
@@ -14,14 +11,13 @@ use plotters::style::{Color as _, Palette, Palette99, RGBAColor};
 use rand::Rng;
 use raumklang_core::dbfs;
 
-use std::{collections::HashMap, iter};
+use std::collections::HashMap;
 
 use super::compute_impulse_response;
 
 #[derive(Debug, Clone)]
 pub enum Message {
     ListEntry(data::MeasurementId, ListEntryMessage),
-    Chart(frequency_response::Message),
     FrequencyResponseComputed((data::MeasurementId, raumklang_core::FrequencyResponse)),
     ImpulseResponseComputed((data::MeasurementId, raumklang_core::ImpulseResponse)),
 }
@@ -38,7 +34,6 @@ pub enum ListEntryMessage {
 
 pub struct FrequencyResponse {
     entries: HashMap<data::MeasurementId, EntryState>,
-    chart: Option<frequency_response::FrequencyResponseChart>,
 }
 
 enum EntryState {
@@ -106,28 +101,7 @@ impl FrequencyResponse {
             };
         }
 
-        //let responses = entries
-        //    .values()
-        //    .filter_map(|e| match *e {
-        //        EntryState::Loaded {
-        //            show_in_graph: true,
-        //            frequency_response_id,
-        //            color,
-        //            ..
-        //        } => Some((frequency_response_id, color)),
-        //        _ => None,
-        //    })
-        //    .flat_map(|(id, color)| frequency_responses.get(&id).map(|fr| (fr.clone(), color)))
-        //    .map(|(fr, color)| frequency_response::FrequencyResponseData::new(fr, color));
-
-        //let chart = frequency_response::FrequencyResponseChart::from_iter(responses);
-        (
-            Self {
-                entries,
-                chart: None,
-            },
-            Task::batch(tasks),
-        )
+        (Self { entries }, Task::batch(tasks))
     }
 
     pub fn view(
@@ -142,19 +116,15 @@ impl FrequencyResponse {
         let list = container(column(entries).spacing(10).padding(8).width(FillPortion(1)))
             .style(container::rounded_box);
 
-        let content = if self
-            .entries
-            .values()
-            .any(|e| {
-                matches!(
-                    e,
-                    EntryState::Loaded {
-                        show_in_graph: true,
-                        ..
-                    }
-                )
-            })
-        {
+        let content = if self.entries.values().any(|e| {
+            matches!(
+                e,
+                EntryState::Loaded {
+                    show_in_graph: true,
+                    ..
+                }
+            )
+        }) {
             let series_list = self
                 .entries
                 .values()
@@ -207,37 +177,6 @@ impl FrequencyResponse {
 
                 entry.update(message);
 
-                if let Some(chart) = &mut self.chart {
-                    let responses = self
-                        .entries
-                        .values()
-                        .filter_map(|e| match *e {
-                            EntryState::Loaded {
-                                show_in_graph: true,
-                                frequency_response_id,
-                                color,
-                                ..
-                            } => Some((frequency_response_id, color)),
-                            _ => None,
-                        })
-                        .flat_map(|(id, color)| {
-                            frequency_responses.get(&id).map(|fr| (fr.clone(), color))
-                        })
-                        .map(|(fr, color)| {
-                            frequency_response::FrequencyResponseData::new(fr, color)
-                        });
-
-                    chart.update_data(responses);
-                }
-
-                (Task::none(), None)
-            }
-            Message::Chart(message) => {
-                let Some(chart) = &mut self.chart else {
-                    return (Task::none(), None);
-                };
-
-                chart.update(message);
                 (Task::none(), None)
             }
             Message::ImpulseResponseComputed((id, ir)) => {
@@ -274,30 +213,6 @@ impl FrequencyResponse {
                     }
                     EntryState::Loaded { color, .. } => *color,
                 };
-
-                let responses = self
-                    .entries
-                    .values()
-                    .filter_map(|e| match *e {
-                        EntryState::Loaded {
-                            show_in_graph: true,
-                            frequency_response_id,
-                            color,
-                            ..
-                        } => Some((frequency_response_id, color)),
-                        _ => None,
-                    })
-                    .flat_map(|(id, color)| {
-                        frequency_responses.get(&id).map(|fr| (fr.clone(), color))
-                    })
-                    .chain(iter::once((fr.clone(), cur_color)))
-                    .map(|(fr, color)| frequency_response::FrequencyResponseData::new(fr, color));
-
-                if let Some(chart) = &mut self.chart {
-                    chart.update_data(responses);
-                } else {
-                    self.chart = frequency_response::FrequencyResponseChart::from_iter(responses);
-                }
 
                 (Task::none(), Some(Event::FrequencyResponseComputed(id, fr)))
             }
