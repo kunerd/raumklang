@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use iced::{
-    advanced::graphics::geometry,
     widget::{
         button, canvas, checkbox, column, container, horizontal_rule, horizontal_space, pick_list,
         row, scrollable, text,
@@ -11,14 +10,12 @@ use iced::{
     Task,
 };
 use pliced::widget::line_series;
-use plotters_iced::Renderer;
 use raumklang_core::WindowBuilder;
 
 use crate::{
     components::window_settings::{self, WindowSettings},
     data,
     widgets::charts::{
-        impulse_response::{self, ImpulseResponseChart},
         AmplitudeUnit, TimeSeriesUnit,
     },
     OfflineMeasurement,
@@ -33,7 +30,6 @@ pub enum Message {
     ShowWindowToggled(bool),
     WindowSettings(window_settings::Message),
     Chart(Operation),
-    RawChart(impulse_response::Message),
 }
 
 pub enum Event {
@@ -130,7 +126,6 @@ impl ImpulseResponseTab {
 
                 (Task::none(), None)
             }
-            Message::RawChart(_message) => (Task::none(), None),
         }
     }
 
