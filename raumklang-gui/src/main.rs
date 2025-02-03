@@ -519,6 +519,8 @@ impl Raumklang {
                 measurements,
                 active_tab,
                 recent_projects,
+                impulse_responses,
+                frequency_responses,
                 ..
             } => {
                 let menu = {
@@ -618,12 +620,14 @@ impl Raumklang {
                         }
                         _ => None,
                     };
+
                     let fr_button_msg = match (loopback, measurements.is_loaded_empty()) {
                         (Some(data::MeasurementState::Loaded(_)), false) => {
                             Some(Message::TabSelected(TabId::FrequencyResponse))
                         }
                         _ => None,
                     };
+
                     let tab_bar = row![
                         tab_button(
                             "Measurements",
@@ -648,11 +652,11 @@ impl Raumklang {
                             .view(loopback.as_ref(), measurements.iter().enumerate())
                             .map(Message::MeasurementsTab),
                         Tab::ImpulseResponses(tab) => tab
-                            .view(measurements.loaded())
+                            .view(measurements.loaded(), impulse_responses)
                             .map(Message::ImpulseResponseTab),
-                        Tab::FrequencyResponses(tab) => {
-                            tab.view().map(Message::FrequencyResponseTab)
-                        }
+                        Tab::FrequencyResponses(tab) => tab
+                            .view(frequency_responses)
+                            .map(Message::FrequencyResponseTab),
                     };
 
                     container(column!(tab_bar, tab_content).spacing(5))

@@ -8,6 +8,7 @@ raumklang-core = { workspace = true }
 
 iced = { version = "0.13", features = ["canvas", "tokio", "lazy"] }
 iced_aw = { version = "0.11.0", default-features = false, features = ["tabs", "menu", "number_input"] }
+pliced = { path = "../../pliced" }
 tokio = { version = "1.35", features = [ "fs" ] }
 rfd = "0.13"
 plotters-iced = "0.11"

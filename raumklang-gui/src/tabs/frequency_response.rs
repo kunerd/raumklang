@@ -9,8 +9,10 @@ use iced::{
     Length::{self, FillPortion},
     Task,
 };
+use pliced::widget::line_series;
 use plotters::style::{Color as _, Palette, Palette99, RGBAColor};
 use rand::Rng;
+use raumklang_core::dbfs;
 
 use std::{collections::HashMap, iter};
 
@@ -104,26 +106,34 @@ impl FrequencyResponse {
             };
         }
 
-        let responses = entries
-            .values()
-            .filter_map(|e| match *e {
-                EntryState::Loaded {
-                    show_in_graph: true,
-                    frequency_response_id,
-                    color,
-                    ..
-                } => Some((frequency_response_id, color)),
-                _ => None,
-            })
-            .flat_map(|(id, color)| frequency_responses.get(&id).map(|fr| (fr.clone(), color)))
-            .map(|(fr, color)| frequency_response::FrequencyResponseData::new(fr, color));
+        //let responses = entries
+        //    .values()
+        //    .filter_map(|e| match *e {
+        //        EntryState::Loaded {
+        //            show_in_graph: true,
+        //            frequency_response_id,
+        //            color,
+        //            ..
+        //        } => Some((frequency_response_id, color)),
+        //        _ => None,
+        //    })
+        //    .flat_map(|(id, color)| frequency_responses.get(&id).map(|fr| (fr.clone(), color)))
+        //    .map(|(fr, color)| frequency_response::FrequencyResponseData::new(fr, color));
 
-        let chart = frequency_response::FrequencyResponseChart::from_iter(responses);
-
-        (Self { entries, chart }, Task::batch(tasks))
+        //let chart = frequency_response::FrequencyResponseChart::from_iter(responses);
+        (
+            Self {
+                entries,
+                chart: None,
+            },
+            Task::batch(tasks),
+        )
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
+    pub fn view(
+        &self,
+        frequency_responses: &HashMap<data::MeasurementId, raumklang_core::FrequencyResponse>,
+    ) -> Element<'_, Message> {
         let entries = self
             .entries
             .iter()
@@ -132,8 +142,49 @@ impl FrequencyResponse {
         let list = container(column(entries).spacing(10).padding(8).width(FillPortion(1)))
             .style(container::rounded_box);
 
-        let content = if let Some(chart) = &self.chart {
-            container(chart.view().map(Message::Chart))
+        let content = if self
+            .entries
+            .values()
+            .any(|e| {
+                matches!(
+                    e,
+                    EntryState::Loaded {
+                        show_in_graph: true,
+                        ..
+                    }
+                )
+            })
+        {
+            let series_list = self
+                .entries
+                .values()
+                .filter_map(|e| match *e {
+                    EntryState::Loaded {
+                        show_in_graph: true,
+                        frequency_response_id,
+                        color,
+                        ..
+                    } => Some((frequency_response_id, color)),
+                    _ => None,
+                })
+                .flat_map(|(id, color)| frequency_responses.get(&id).map(|fr| (fr.clone(), color)))
+                .map(|(fr, color)| {
+                    line_series(
+                        fr.data
+                            .iter()
+                            .enumerate()
+                            .map(|(i, s)| (i as f32, dbfs(s.re.abs()))),
+                    )
+                    .color(Color::from_rgba8(color.0, color.1, color.2, color.3 as f32).into())
+                });
+
+            let chart = pliced::widget::Chart::new()
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .x_range(0.0..1000.0)
+                .extend_series(series_list);
+
+            container(chart)
         } else {
             container(text("Please select a frequency respone.")).center(Length::FillPortion(4))
         }
