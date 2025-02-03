@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{ops::Range, path::PathBuf, sync::Arc};
 
 use iced::{
     widget::{
@@ -7,6 +7,7 @@ use iced::{
     },
     Alignment, Element, Length, Task,
 };
+use pliced::widget::line_series;
 use raumklang_core::WavLoadError;
 
 use crate::{
@@ -84,9 +85,9 @@ impl Measurements {
                 };
                 self.selected = Some(selected);
 
-                self.chart = signal
-                    .as_ref()
-                    .map(|signal| measurement::SignalChart::new(signal, charts::TimeSeriesUnit::Time));
+                self.chart = signal.as_ref().map(|signal| {
+                    measurement::SignalChart::new(signal, charts::TimeSeriesUnit::Time)
+                });
 
                 (Task::none(), None)
             }
@@ -110,16 +111,30 @@ impl Measurements {
         >,
     ) -> Element<'a, Message> {
         let measurements_list = collecting_list(self.selected.as_ref(), loopback, measurements);
-
-        let content = if let Some(chart) = &self.chart {
-            chart.view().map(Message::TimeSeriesChart)
-        } else {
-            text("Please select a measurement.").into()
-        };
-
         let side_menu =
             container(container(scrollable(measurements_list).height(Length::Fill)).padding(8))
                 .style(container::rounded_box);
+
+        let signal = match self.selected {
+            Some(SelectedMeasurement::Loopback) => loopback.and_then(|l| match l {
+                data::MeasurementState::Loaded(m) => Some(m.0.data.0.iter()),
+                data::MeasurementState::NotLoaded(_) => None,
+            }),
+            Some(SelectedMeasurement::Measurement(_id)) => None,
+            None => None,
+        };
+        let content: Element<_> = if let Some(signal) = signal {
+            pliced::widget::Chart::new()
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .push_series(
+                    line_series(signal.enumerate().map(|(i, s)| (i as f32, *s)))
+                        .color(iced::Color::from_rgba(100.0, 150.0, 0.0, 0.8).into()),
+                )
+                .into()
+        } else {
+            text("Please select a measurement.").into()
+        };
 
         row!(
             side_menu.width(Length::FillPortion(1)),
