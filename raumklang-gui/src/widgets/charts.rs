@@ -19,10 +19,11 @@ use std::{
     ops::{Range, Sub},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum TimeSeriesUnit {
-    Samples,
+    #[default]
     Time,
+    Samples,
 }
 
 #[derive(Clone)]
@@ -46,7 +47,7 @@ pub enum AmplitudeUnit {
 }
 
 impl AmplitudeUnit {
-    const ALL: [AmplitudeUnit; 2] = [
+    pub const ALL: [AmplitudeUnit; 2] = [
         AmplitudeUnit::PercentFullScale,
         AmplitudeUnit::DezibelFullScale,
     ];
@@ -272,8 +273,9 @@ where
         }
     }
 }
+
 impl TimeSeriesUnit {
-    const ALL: [Self; 2] = [TimeSeriesUnit::Samples, TimeSeriesUnit::Time];
+    pub const ALL: [Self; 2] = [TimeSeriesUnit::Samples, TimeSeriesUnit::Time];
 }
 
 impl std::fmt::Display for TimeSeriesUnit {
