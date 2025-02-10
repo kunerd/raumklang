@@ -1,13 +1,15 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{fmt::Debug, ops::Range, path::PathBuf, sync::Arc};
 
 use iced::{
+    keyboard,
+    mouse::ScrollDelta,
     widget::{
-        button, column, container, horizontal_rule, horizontal_space, row, scrollable, text,
-        text::Wrapping,
+        self, button, canvas, column, container, horizontal_rule, horizontal_space, row,
+        scrollable, text::Wrapping,
     },
-    Alignment, Element, Length, Task,
+    Alignment, Element, Length, Point, Subscription, Task,
 };
-use pliced::widget::line_series;
+use pliced::{cartesian::Cartesian, widget::line_series};
 use raumklang_core::WavLoadError;
 
 use crate::{
@@ -18,6 +20,10 @@ use crate::{
 #[derive(Default)]
 pub struct Measurements {
     selected: Option<SelectedMeasurement>,
+
+    shift_key_pressed: bool,
+    x_range: Range<f32>,
+    cache: canvas::Cache,
 }
 
 #[derive(Debug, Clone)]
@@ -26,13 +32,39 @@ pub enum SelectedMeasurement {
     Measurement(usize),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Message {
     LoadMeasurement,
     RemoveMeasurement(usize),
     LoadLoopbackMeasurement,
     RemoveLoopbackMeasurement,
     MeasurementSelected(SelectedMeasurement),
+    ChartScroll(Point, ScrollDelta, Cartesian),
+    ShiftKeyPressed,
+    ShiftKeyReleased,
+}
+
+impl Debug for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::LoadMeasurement => write!(f, "LoadMeasurement"),
+            Self::RemoveMeasurement(arg0) => {
+                f.debug_tuple("RemoveMeasurement").field(arg0).finish()
+            }
+            Self::LoadLoopbackMeasurement => write!(f, "LoadLoopbackMeasurement"),
+            Self::RemoveLoopbackMeasurement => write!(f, "RemoveLoopbackMeasurement"),
+            Self::MeasurementSelected(arg0) => {
+                f.debug_tuple("MeasurementSelected").field(arg0).finish()
+            }
+            Self::ChartScroll(arg0, arg1, _arg2) => f
+                .debug_tuple("ChartScroll")
+                .field(arg0)
+                .field(arg1)
+                .finish(),
+            Message::ShiftKeyPressed => write!(f, "ShiftKeyPressed"),
+            Message::ShiftKeyReleased => write!(f, "ShiftKeyReleased"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -79,11 +111,120 @@ impl Measurements {
                         })
                     }
                 };
+
+                self.x_range = signal.map_or(0.0..10.0, |s| 0.0..s.duration() as f32);
                 self.selected = Some(selected);
 
                 (Task::none(), None)
             }
+            Message::ChartScroll(pos, scroll_delta, spec) => {
+                let ScrollDelta::Lines { y, .. } = scroll_delta else {
+                    return (Task::none(), None);
+                };
+
+                match (self.shift_key_pressed, y.is_sign_positive()) {
+                    (true, true) => self.scroll_right(),
+                    (true, false) => self.scroll_left(),
+                    (false, true) => self.zoom_in(pos, spec),
+                    (false, false) => self.zoom_out(pos, spec),
+                }
+
+                (Task::none(), None)
+            }
+            Message::ShiftKeyPressed => {
+                self.shift_key_pressed = true;
+                (Task::none(), None)
+            }
+            Message::ShiftKeyReleased => {
+                self.shift_key_pressed = false;
+                (Task::none(), None)
+            }
         }
+    }
+
+    fn scroll_right(&mut self) {
+        let old_viewport = self.x_range.clone();
+        let length = old_viewport.end - old_viewport.start;
+
+        const SCROLL_FACTOR: f32 = 0.2;
+        let offset = length * SCROLL_FACTOR;
+
+        //let mut new_end = old_viewport.end.saturating_add(offset);
+        let new_end = old_viewport.end + offset;
+        //let viewport_max = self.max_len + (length / 2.0);
+        //if new_end > viewport_max {
+        //    new_end = viewport_max;
+        //}
+
+        let new_start = new_end - length;
+
+        self.x_range = new_start..new_end;
+        self.cache.clear();
+    }
+
+    fn scroll_left(&mut self) {
+        let old_viewport = self.x_range.clone();
+        let length = old_viewport.end - old_viewport.start;
+
+        const SCROLL_FACTOR: f32 = 0.2;
+        let offset = length * SCROLL_FACTOR;
+
+        let mut new_start = old_viewport.start - offset;
+        let viewport_min = -(length / 2.0);
+        if new_start < viewport_min {
+            new_start = viewport_min;
+        }
+        let new_end = new_start + length;
+
+        self.x_range = new_start..new_end;
+        self.cache.clear();
+    }
+
+    fn zoom_in(&mut self, position: iced::Point, cartesian: Cartesian) {
+        let Some(pos) = cartesian.get_coords(position) else {
+            return;
+        };
+
+        let old_viewport = self.x_range.clone();
+        let old_len = old_viewport.end - old_viewport.start;
+
+        let center_scale: f32 = (pos.x - old_viewport.start) / old_len;
+
+        // FIXME make configurable
+        const ZOOM_FACTOR: f32 = 0.8;
+        const LOWER_BOUND: f32 = 50.0;
+        let mut new_len = old_len * ZOOM_FACTOR;
+        if new_len < LOWER_BOUND {
+            new_len = LOWER_BOUND;
+        }
+
+        let new_start = pos.x - (new_len * center_scale);
+        let new_end = new_start + new_len;
+        self.x_range = new_start..new_end;
+        self.cache.clear();
+    }
+
+    fn zoom_out(&mut self, position: iced::Point, cartesian: Cartesian) {
+        let Some(pos) = cartesian.get_coords(position) else {
+            return;
+        };
+
+        let old_viewport = self.x_range.clone();
+        let old_len = old_viewport.end - old_viewport.start;
+
+        let center_scale = (pos.x - old_viewport.start) / old_len;
+
+        // FIXME make configurable
+        const ZOOM_FACTOR: f32 = 1.2;
+        let new_len = old_len * ZOOM_FACTOR;
+        //if new_len >= self.max_len {
+        //    new_len = self.max_len;
+        //}
+
+        let new_start = pos.x - (new_len * center_scale);
+        let new_end = new_start + new_len;
+        self.x_range = new_start..new_end;
+        self.cache.clear();
     }
 
     pub fn view<'a>(
@@ -97,6 +238,7 @@ impl Measurements {
         >,
     ) -> Element<'a, Message> {
         let measurements_list = collecting_list(self.selected.as_ref(), loopback, measurements);
+
         let side_menu =
             container(container(scrollable(measurements_list).height(Length::Fill)).padding(8))
                 .style(container::rounded_box);
@@ -109,17 +251,21 @@ impl Measurements {
             Some(SelectedMeasurement::Measurement(_id)) => None,
             None => None,
         };
+
         let content: Element<_> = if let Some(signal) = signal {
             pliced::widget::Chart::new()
                 .width(Length::Fill)
                 .height(Length::Fill)
+                .x_range(self.x_range.clone())
+                .with_cache(&self.cache)
                 .push_series(
                     line_series(signal.enumerate().map(|(i, s)| (i as f32, *s)))
-                        .color(iced::Color::from_rgba(100.0, 150.0, 0.0, 0.8).into()),
+                        .color(iced::Color::from_rgba(100.0, 150.0, 0.0, 0.8)),
                 )
+                .on_scroll(Message::ChartScroll)
                 .into()
         } else {
-            text("Please select a measurement.").into()
+            widget::text("Please select a measurement.").into()
         };
 
         row!(
@@ -131,6 +277,21 @@ impl Measurements {
         .height(Length::Fill)
         .spacing(5)
         .into()
+    }
+
+    pub fn subscription(&self) -> Subscription<Message> {
+        Subscription::batch(vec![
+            keyboard::on_key_press(|key, _modifiers| match key {
+                keyboard::Key::Named(keyboard::key::Named::Shift) => Some(Message::ShiftKeyPressed),
+                _ => None,
+            }),
+            keyboard::on_key_release(|key, _modifiers| match key {
+                keyboard::Key::Named(keyboard::key::Named::Shift) => {
+                    Some(Message::ShiftKeyReleased)
+                }
+                _ => None,
+            }),
+        ])
     }
 }
 
@@ -150,7 +311,7 @@ fn collecting_list<'a>(
             Some(data::MeasurementState::NotLoaded(signal)) => {
                 offline_signal_list_entry(signal, Message::RemoveLoopbackMeasurement)
             }
-            None => text("Please load a loopback signal.").into(),
+            None => widget::text("Please load a loopback signal.").into(),
         };
 
         let add_msg = loopback
@@ -164,7 +325,7 @@ fn collecting_list<'a>(
     let measurement_entries = {
         let content: Element<_> = {
             if measurements.is_empty() {
-                text("Please load a measurement.").into()
+                widget::text("Please load a measurement.").into()
             } else {
                 let entries: Vec<Element<_>> = measurements
                     .into_iter()
@@ -195,7 +356,7 @@ fn signal_list_category<'a>(
     add_msg: Option<Message>,
     content: Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let header = row!(text(name), horizontal_space()).align_y(Alignment::Center);
+    let header = row!(widget::text(name), horizontal_space()).align_y(Alignment::Center);
 
     let header = if let Some(msg) = add_msg {
         header.push(button("+").on_press(msg))
@@ -214,7 +375,7 @@ fn offline_signal_list_entry(
     delete_msg: Message,
 ) -> Element<'_, Message> {
     column!(row![
-        text(&signal.name),
+        widget::text(&signal.name),
         horizontal_space(),
         button(delete_icon())
             .on_press(delete_msg)
@@ -231,14 +392,14 @@ fn loopback_list_entry<'a>(
     let sample_rate = signal.0.data.0.sample_rate() as f32;
     let content = column!(
         row![
-            text(&signal.0.name),
+            widget::text(&signal.0.name),
             horizontal_space(),
             button(delete_icon())
                 .on_press(Message::RemoveLoopbackMeasurement)
                 .style(button::danger)
         ],
-        text(format!("Samples: {}", samples)),
-        text(format!("Duration: {} s", samples as f32 / sample_rate)),
+        widget::text(format!("Samples: {}", samples)),
+        widget::text(format!("Duration: {} s", samples as f32 / sample_rate)),
     );
 
     let style = if let Some(SelectedMeasurement::Loopback) = selected {
@@ -263,14 +424,14 @@ fn measurement_list_entry<'a>(
     let sample_rate = signal.data.sample_rate() as f32;
     let content = column!(
         row![
-            text(&signal.name).wrapping(Wrapping::Glyph),
+            widget::text(&signal.name).wrapping(Wrapping::Glyph),
             horizontal_space(),
             button(delete_icon())
                 .on_press(Message::RemoveMeasurement(index))
                 .style(button::danger)
         ],
-        text(format!("Samples: {}", samples)),
-        text(format!("Duration: {} s", samples as f32 / sample_rate)),
+        widget::text(format!("Samples: {}", samples)),
+        widget::text(format!("Duration: {} s", samples as f32 / sample_rate)),
     );
 
     let style = match selected {
