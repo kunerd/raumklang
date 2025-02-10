@@ -215,20 +215,22 @@ fn chart_view<'a>(
         .fold(f32::NEG_INFINITY, |a, b| a.max(b));
 
     let series = impulse_response.data.iter().map(|s| s.re.powi(2).sqrt());
-
     let series: &mut dyn Iterator<Item = f32> = match chart_data.amplitude_unit {
         AmplitudeUnit::PercentFullScale => &mut series.map(|s| s / max * 100f32),
         AmplitudeUnit::DezibelFullScale => &mut series.map(|s| 20f32 * f32::log10(s.abs() / max)),
+    };
+    let series: &mut dyn Iterator<Item = (f32, f32)> = match chart_data.time_unit {
+        TimeSeriesUnit::Samples => &mut series.enumerate().map(|(i, s)| (i as f32, s)),
+        TimeSeriesUnit::Time => &mut series
+            .enumerate()
+            .map(|(i, s)| (i as f32 / impulse_response.sample_rate as f32 * 1000.0, s)),
     };
 
     pliced::widget::Chart::new()
         .width(Length::Fill)
         .height(Length::Fill)
         .with_cache(&chart_data.cache)
-        .push_series(
-            line_series(series.enumerate().map(|(i, s)| (i as f32, s)))
-                .color(iced::Color::from_rgb8(2, 125, 66)),
-        )
+        .push_series(line_series(series).color(iced::Color::from_rgb8(2, 125, 66)))
         .into()
 }
 
