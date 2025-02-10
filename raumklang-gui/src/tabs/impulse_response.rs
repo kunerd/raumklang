@@ -15,9 +15,7 @@ use raumklang_core::WindowBuilder;
 use crate::{
     components::window_settings::{self, WindowSettings},
     data,
-    widgets::charts::{
-        AmplitudeUnit, TimeSeriesUnit,
-    },
+    widgets::charts::{AmplitudeUnit, TimeSeriesUnit},
     OfflineMeasurement,
 };
 
@@ -193,7 +191,7 @@ impl ImpulseResponseTab {
                             .enumerate()
                             .map(|(i, s)| (i as f32, s.re.abs())),
                     )
-                    .color(iced::Color::from_rgb8(2, 125, 66).into()),
+                    .color(iced::Color::from_rgb8(2, 125, 66)),
                 );
 
             container(

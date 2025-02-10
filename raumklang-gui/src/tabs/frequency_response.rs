@@ -145,7 +145,7 @@ impl FrequencyResponse {
                             .enumerate()
                             .map(|(i, s)| (i as f32, dbfs(s.re.abs()))),
                     )
-                    .color(Color::from_rgba8(color.0, color.1, color.2, color.3 as f32).into())
+                    .color(Color::from_rgba8(color.0, color.1, color.2, color.3 as f32))
                 });
 
             let chart = pliced::widget::Chart::new()
