@@ -145,7 +145,12 @@ impl FrequencyResponse {
                             .enumerate()
                             .map(|(i, s)| (i as f32, dbfs(s.re.abs()))),
                     )
-                    .color(Color::from_rgba8(color.0, color.1, color.2, color.3 as f32))
+                    .color(Color::from_rgba8(
+                        color.0,
+                        color.1,
+                        color.2,
+                        color.3 as f32,
+                    ))
                 });
 
             let chart = pliced::widget::Chart::new()
@@ -164,10 +169,7 @@ impl FrequencyResponse {
         row![list, content].into()
     }
 
-    pub fn update(
-        &mut self,
-        message: Message,
-    ) -> (Task<Message>, Option<Event>) {
+    pub fn update(&mut self, message: Message) -> (Task<Message>, Option<Event>) {
         match message {
             Message::ListEntry(id, message) => {
                 let Some(entry) = self.entries.get_mut(&id) else {
