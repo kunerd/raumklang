@@ -3131,6 +3131,7 @@ checksum = "953ec861398dccce10c670dfeaf3ec4911ca479e9c02154b3a215178c5f566f2"
 [[package]]
 name = "pliced"
 version = "0.1.0"
+source = "git+https://github.com/kunerd/pliced.git?branch=mouse_interaction#4a7543cdebb053ee419f063ad1ca5eed6e9705ac"
 dependencies = [
  "iced",
  "once_cell",
