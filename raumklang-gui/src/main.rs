@@ -11,10 +11,7 @@ use tabs::{
 };
 
 use iced::{
-    alignment::Vertical,
-    border::Radius,
-    widget::{button, column, container, row, text},
-    Border, Element, Font, Length, Settings, Task, Theme,
+    alignment::Vertical, border::Radius, widget::{button, column, container, row, text}, Border, Element, Font, Length, Settings, Subscription, Task, Theme
 };
 use iced_aw::{
     menu::{self, primary, Item},
@@ -117,6 +114,7 @@ pub enum PickAndSaveError {
 
 fn main() -> iced::Result {
     iced::application(Raumklang::title, Raumklang::update, Raumklang::view)
+        .subscription(Raumklang::subscription)
         .theme(Raumklang::theme)
         .settings(Settings {
             fonts: vec![include_bytes!("../fonts/raumklang-icons.ttf")
@@ -670,6 +668,18 @@ impl Raumklang {
                 back.into()
             }
         }
+    }
+
+    pub fn subscription(&self) -> Subscription<Message> {
+        let Raumklang::Loaded { active_tab, ..} = self else {
+            return Subscription::none();
+        };
+
+        let Tab::Measurements(tab) = active_tab else {
+            return Subscription::none();
+        };
+        
+        tab.subscription().map(Message::MeasurementsTab)
     }
 }
 
