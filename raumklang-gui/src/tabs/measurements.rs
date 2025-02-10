@@ -19,6 +19,7 @@ pub struct Measurements {
     selected: Option<SelectedMeasurement>,
 
     shift_key_pressed: bool,
+    x_max: Option<f32>,
     x_range: Range<f32>,
     cache: canvas::Cache,
 }
@@ -87,6 +88,7 @@ impl Measurements {
                 };
 
                 self.x_range = signal.map_or(0.0..10.0, |s| 0.0..s.duration() as f32);
+                self.x_max = Some(self.x_range.end);
                 self.selected = Some(selected);
                 self.cache.clear();
 
@@ -191,12 +193,13 @@ impl Measurements {
         const SCROLL_FACTOR: f32 = 0.2;
         let offset = length * SCROLL_FACTOR;
 
-        //let mut new_end = old_viewport.end.saturating_add(offset);
-        let new_end = old_viewport.end + offset;
-        //let viewport_max = self.max_len + (length / 2.0);
-        //if new_end > viewport_max {
-        //    new_end = viewport_max;
-        //}
+        let mut new_end = old_viewport.end + offset;
+        if let Some(x_max) = self.x_max {
+            let viewport_max = x_max + length / 2.0;
+            if new_end > viewport_max {
+                new_end = viewport_max;
+            }
+        }
 
         let new_start = new_end - length;
 
