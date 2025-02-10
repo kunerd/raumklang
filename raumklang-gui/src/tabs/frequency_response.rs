@@ -191,6 +191,25 @@ impl FrequencyResponse {
                 (task, Some(Event::ImpulseResponseComputed(id, ir)))
             }
             Message::FrequencyResponseComputed((id, fr)) => {
+                let Some(EntryState::Loading {
+                    name,
+                    show_in_graph,
+                    color,
+                }) = self.entries.remove(&id)
+                else {
+                    return (Task::none(), None);
+                };
+
+                self.entries.insert(
+                    id,
+                    EntryState::Loaded {
+                        name,
+                        show_in_graph,
+                        color,
+                        frequency_response_id: id,
+                    },
+                );
+
                 (Task::none(), Some(Event::FrequencyResponseComputed(id, fr)))
             }
         }
