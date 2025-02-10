@@ -99,6 +99,10 @@ impl<L, O> Store<L, O> {
             }
         }
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.all.is_empty()
+    }
 }
 
 impl<'a, L, O> From<MeasurementState<&'a L, &O>> for Option<&'a L> {

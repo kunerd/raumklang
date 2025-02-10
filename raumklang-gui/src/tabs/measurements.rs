@@ -12,10 +12,7 @@ use iced::{
 use pliced::{cartesian::Cartesian, widget::line_series};
 use raumklang_core::WavLoadError;
 
-use crate::{
-    data::{self},
-    delete_icon, OfflineMeasurement,
-};
+use crate::{data, delete_icon, OfflineMeasurement};
 
 #[derive(Default)]
 pub struct Measurements {
@@ -32,7 +29,7 @@ pub enum SelectedMeasurement {
     Measurement(usize),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Message {
     LoadMeasurement,
     RemoveMeasurement(usize),
@@ -42,29 +39,6 @@ pub enum Message {
     ChartScroll(Point, ScrollDelta, Cartesian),
     ShiftKeyPressed,
     ShiftKeyReleased,
-}
-
-impl Debug for Message {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::LoadMeasurement => write!(f, "LoadMeasurement"),
-            Self::RemoveMeasurement(arg0) => {
-                f.debug_tuple("RemoveMeasurement").field(arg0).finish()
-            }
-            Self::LoadLoopbackMeasurement => write!(f, "LoadLoopbackMeasurement"),
-            Self::RemoveLoopbackMeasurement => write!(f, "RemoveLoopbackMeasurement"),
-            Self::MeasurementSelected(arg0) => {
-                f.debug_tuple("MeasurementSelected").field(arg0).finish()
-            }
-            Self::ChartScroll(arg0, arg1, _arg2) => f
-                .debug_tuple("ChartScroll")
-                .field(arg0)
-                .field(arg1)
-                .finish(),
-            Message::ShiftKeyPressed => write!(f, "ShiftKeyPressed"),
-            Message::ShiftKeyReleased => write!(f, "ShiftKeyReleased"),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -114,6 +88,7 @@ impl Measurements {
 
                 self.x_range = signal.map_or(0.0..10.0, |s| 0.0..s.duration() as f32);
                 self.selected = Some(selected);
+                self.cache.clear();
 
                 (Task::none(), None)
             }
@@ -140,6 +115,73 @@ impl Measurements {
                 (Task::none(), None)
             }
         }
+    }
+
+    pub fn view<'a>(
+        &'a self,
+        loopback: Option<&'a data::MeasurementState<data::Loopback, OfflineMeasurement>>,
+        measurements: &'a data::Store<data::Measurement, OfflineMeasurement>,
+    ) -> Element<'a, Message> {
+        let measurements_list = collecting_list(self.selected.as_ref(), loopback, measurements);
+
+        let side_menu =
+            container(container(scrollable(measurements_list).height(Length::Fill)).padding(8))
+                .style(container::rounded_box);
+
+        let signal = match self.selected {
+            Some(SelectedMeasurement::Loopback) => loopback.and_then(|l| match l {
+                data::MeasurementState::Loaded(m) => Some(m.0.data.0.iter()),
+                data::MeasurementState::NotLoaded(_) => None,
+            }),
+            Some(SelectedMeasurement::Measurement(id)) => {
+                measurements.get(id).and_then(|m| match m {
+                    data::MeasurementState::Loaded(signal) => Some(signal.data.iter()),
+                    data::MeasurementState::NotLoaded(_) => None,
+                })
+            }
+            None => None,
+        };
+
+        let content: Element<_> = if let Some(signal) = signal {
+            pliced::widget::Chart::new()
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .x_range(self.x_range.clone())
+                .with_cache(&self.cache)
+                .push_series(
+                    line_series(signal.enumerate().map(|(i, s)| (i as f32, *s)))
+                        .color(iced::Color::from_rgb8(2, 125, 66)),
+                )
+                .on_scroll(Message::ChartScroll)
+                .into()
+        } else {
+            widget::text("Please select a measurement.").into()
+        };
+
+        row!(
+            side_menu.width(Length::FillPortion(1)),
+            container(content)
+                .center(Length::FillPortion(4))
+                .width(Length::FillPortion(4))
+        )
+        .height(Length::Fill)
+        .spacing(5)
+        .into()
+    }
+
+    pub fn subscription(&self) -> Subscription<Message> {
+        Subscription::batch(vec![
+            keyboard::on_key_press(|key, _modifiers| match key {
+                keyboard::Key::Named(keyboard::key::Named::Shift) => Some(Message::ShiftKeyPressed),
+                _ => None,
+            }),
+            keyboard::on_key_release(|key, _modifiers| match key {
+                keyboard::Key::Named(keyboard::key::Named::Shift) => {
+                    Some(Message::ShiftKeyReleased)
+                }
+                _ => None,
+            }),
+        ])
     }
 
     fn scroll_right(&mut self) {
@@ -226,84 +268,12 @@ impl Measurements {
         self.x_range = new_start..new_end;
         self.cache.clear();
     }
-
-    pub fn view<'a>(
-        &'a self,
-        loopback: Option<&'a data::MeasurementState<data::Loopback, OfflineMeasurement>>,
-        measurements: impl Iterator<
-            Item = (
-                usize,
-                data::MeasurementState<&'a data::Measurement, &'a OfflineMeasurement>,
-            ),
-        >,
-    ) -> Element<'a, Message> {
-        let measurements_list = collecting_list(self.selected.as_ref(), loopback, measurements);
-
-        let side_menu =
-            container(container(scrollable(measurements_list).height(Length::Fill)).padding(8))
-                .style(container::rounded_box);
-
-        let signal = match self.selected {
-            Some(SelectedMeasurement::Loopback) => loopback.and_then(|l| match l {
-                data::MeasurementState::Loaded(m) => Some(m.0.data.0.iter()),
-                data::MeasurementState::NotLoaded(_) => None,
-            }),
-            Some(SelectedMeasurement::Measurement(_id)) => None,
-            None => None,
-        };
-
-        let content: Element<_> = if let Some(signal) = signal {
-            pliced::widget::Chart::new()
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .x_range(self.x_range.clone())
-                .with_cache(&self.cache)
-                .push_series(
-                    line_series(signal.enumerate().map(|(i, s)| (i as f32, *s)))
-                        .color(iced::Color::from_rgba(100.0, 150.0, 0.0, 0.8)),
-                )
-                .on_scroll(Message::ChartScroll)
-                .into()
-        } else {
-            widget::text("Please select a measurement.").into()
-        };
-
-        row!(
-            side_menu.width(Length::FillPortion(1)),
-            container(content)
-                .center(Length::FillPortion(4))
-                .width(Length::FillPortion(4))
-        )
-        .height(Length::Fill)
-        .spacing(5)
-        .into()
-    }
-
-    pub fn subscription(&self) -> Subscription<Message> {
-        Subscription::batch(vec![
-            keyboard::on_key_press(|key, _modifiers| match key {
-                keyboard::Key::Named(keyboard::key::Named::Shift) => Some(Message::ShiftKeyPressed),
-                _ => None,
-            }),
-            keyboard::on_key_release(|key, _modifiers| match key {
-                keyboard::Key::Named(keyboard::key::Named::Shift) => {
-                    Some(Message::ShiftKeyReleased)
-                }
-                _ => None,
-            }),
-        ])
-    }
 }
 
 fn collecting_list<'a>(
     selected: Option<&SelectedMeasurement>,
     loopback: Option<&'a data::MeasurementState<data::Loopback, OfflineMeasurement>>,
-    measurements: impl Iterator<
-        Item = (
-            usize,
-            data::MeasurementState<&'a data::Measurement, &'a OfflineMeasurement>,
-        ),
-    >,
+    measurements: &'a data::Store<data::Measurement, OfflineMeasurement>,
 ) -> Element<'a, Message> {
     let loopback_entry = {
         let content: Element<_> = match &loopback {
@@ -321,14 +291,14 @@ fn collecting_list<'a>(
         signal_list_category("Loopback", add_msg, content)
     };
 
-    let measurements: Vec<_> = measurements.collect();
     let measurement_entries = {
         let content: Element<_> = {
             if measurements.is_empty() {
                 widget::text("Please load a measurement.").into()
             } else {
                 let entries: Vec<Element<_>> = measurements
-                    .into_iter()
+                    .iter()
+                    .enumerate()
                     .map(|(index, state)| match state {
                         data::MeasurementState::Loaded(signal) => {
                             measurement_list_entry(selected, signal, index)
