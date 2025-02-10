@@ -443,7 +443,7 @@ impl Raumklang {
                     return Task::none();
                 };
 
-                let (task, event) = tab.update(message, frequency_responses);
+                let (task, event) = tab.update(message);
                 match event {
                     Some(frequency_response::Event::ImpulseResponseComputed(id, ir)) => {
                         impulse_responses.insert(id, ir);
@@ -647,7 +647,7 @@ impl Raumklang {
 
                     let tab_content = match &active_tab {
                         Tab::Measurements(tab) => tab
-                            .view(loopback.as_ref(), measurements.iter().enumerate())
+                            .view(loopback.as_ref(), measurements)
                             .map(Message::MeasurementsTab),
                         Tab::ImpulseResponses(tab) => tab
                             .view(measurements.loaded(), impulse_responses)

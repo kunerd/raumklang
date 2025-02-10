@@ -167,7 +167,6 @@ impl FrequencyResponse {
     pub fn update(
         &mut self,
         message: Message,
-        frequency_responses: &HashMap<data::MeasurementId, raumklang_core::FrequencyResponse>,
     ) -> (Task<Message>, Option<Event>) {
         match message {
             Message::ListEntry(id, message) => {
@@ -190,30 +189,6 @@ impl FrequencyResponse {
                 (task, Some(Event::ImpulseResponseComputed(id, ir)))
             }
             Message::FrequencyResponseComputed((id, fr)) => {
-                let Some(entry) = self.entries.get_mut(&id) else {
-                    return (Task::none(), None);
-                };
-
-                let cur_color = match entry {
-                    EntryState::Loading {
-                        name,
-                        show_in_graph,
-                        color,
-                    } => {
-                        let color = *color;
-
-                        *entry = EntryState::Loaded {
-                            name: name.clone(),
-                            show_in_graph: *show_in_graph,
-                            color,
-                            frequency_response_id: id,
-                        };
-
-                        color
-                    }
-                    EntryState::Loaded { color, .. } => *color,
-                };
-
                 (Task::none(), Some(Event::FrequencyResponseComputed(id, fr)))
             }
         }
