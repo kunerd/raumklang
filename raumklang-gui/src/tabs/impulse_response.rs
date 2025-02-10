@@ -180,20 +180,7 @@ impl ImpulseResponseTab {
             .align_y(Alignment::Center)
             .spacing(10);
 
-            let chart = pliced::widget::Chart::new()
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .push_series(
-                    line_series(
-                        impulse_response
-                            .data
-                            .iter()
-                            .enumerate()
-                            .map(|(i, s)| (i as f32, s.re.abs())),
-                    )
-                    .color(iced::Color::from_rgb8(2, 125, 66)),
-                );
-
+            let chart = chart_view(impulse_response, &self.chart_data);
             container(
                 column![chart_menu, chart].push_maybe(
                     self.window_settings
@@ -215,6 +202,34 @@ impl ImpulseResponseTab {
         .spacing(10)
         .into()
     }
+}
+
+fn chart_view<'a>(
+    impulse_response: &'a raumklang_core::ImpulseResponse,
+    chart_data: &'a ChartData,
+) -> Element<'a, Message> {
+    let max = impulse_response
+        .data
+        .iter()
+        .map(|s| s.re.powi(2).sqrt())
+        .fold(f32::NEG_INFINITY, |a, b| a.max(b));
+
+    let series = impulse_response.data.iter().map(|s| s.re.powi(2).sqrt());
+
+    let series: &mut dyn Iterator<Item = f32> = match chart_data.amplitude_unit {
+        AmplitudeUnit::PercentFullScale => &mut series.map(|s| s / max * 100f32),
+        AmplitudeUnit::DezibelFullScale => &mut series.map(|s| 20f32 * f32::log10(s.abs() / max)),
+    };
+
+    pliced::widget::Chart::new()
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .with_cache(&chart_data.cache)
+        .push_series(
+            line_series(series.enumerate().map(|(i, s)| (i as f32, s)))
+                .color(iced::Color::from_rgb8(2, 125, 66)),
+        )
+        .into()
 }
 
 fn list_category<'a>(name: &'a str, content: Element<'a, Message>) -> Element<'a, Message> {
