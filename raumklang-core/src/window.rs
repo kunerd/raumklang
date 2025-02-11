@@ -5,8 +5,7 @@ struct HannWindow {
 impl HannWindow {
     pub fn new(width: usize) -> Self {
         let data = (0..width)
-            .enumerate()
-            .map(|(n, _)| f32::sin((std::f32::consts::PI * n as f32) / width as f32).powi(2))
+            .map(|n| f32::sin((std::f32::consts::PI * n as f32) / width as f32).powi(2))
             .collect();
 
         Self { data }
@@ -71,93 +70,48 @@ pub struct WindowBuilder {
     left_side_width: usize,
     right_side: Window,
     right_side_width: usize,
-    width: usize,
+    offset_width: usize,
 }
 
 impl WindowBuilder {
-    pub fn new(left_side: Window, right_side: Window, width: usize) -> Self {
+    pub fn new(
+        left_side: Window,
+        left_side_width: usize,
+        right_side: Window,
+        right_side_width: usize,
+    ) -> Self {
         Self {
             left_side,
-            left_side_width: width / 2,
+            left_side_width,
             right_side,
-            right_side_width: width / 2,
-            width,
+            right_side_width,
+            offset_width: 0,
         }
     }
 
     pub fn build(&self) -> Vec<f32> {
-        let left = create_window(&self.left_side, self.left_side_width * 2);
-        let right = create_window(&self.right_side, self.right_side_width * 2);
+        let left_window =
+            create_window(&self.left_side, self.left_side_width.saturating_sub(1) * 2);
+        let left_half_window = left_window.into_iter().take(self.left_side_width);
 
-        let mut left: Vec<_> = left.into_iter().take(self.left_side_width).collect();
-        let mut right: Vec<_> = right.into_iter().skip(self.right_side_width).collect();
+        let right_window = create_window(
+            &self.right_side,
+            (self.right_side_width.saturating_sub(1)) * 2,
+        );
+        let right_half_window = right_window.into_iter().take(self.right_side_width).rev();
 
-        let mut window = Vec::with_capacity(self.width);
-        window.append(&mut left);
-        window.append(&mut vec![
-            1.0;
-            (self.width.saturating_sub(self.left_side_width))
-                .saturating_sub(self.right_side_width)
-        ]);
-        window.append(&mut right);
+        let offset_window = (0..self.offset_width).map(|_| 1.0f32);
+
+        let mut window = Vec::with_capacity(self.left_side_width + self.right_side_width);
+        window.extend(left_half_window);
+        window.extend(offset_window);
+        window.extend(right_half_window);
 
         window
     }
 
-    pub fn left_side(&self) -> Window {
-        self.left_side
-    }
-
-    pub fn left_side_width(&self) -> usize {
-        self.left_side_width
-    }
-
-    pub fn max_left_side_width(&self) -> usize {
-        self.width.saturating_sub(self.right_side_width)
-    }
-
-    pub fn set_left_side(&mut self, window: Window) -> &mut Self {
-        self.left_side = window;
-
-        self
-    }
-
-    pub fn set_left_side_width(&mut self, width: usize) -> &mut Self {
-        self.left_side_width = width;
-
-        self
-    }
-
-    pub fn right_side(&self) -> Window {
-        self.right_side
-    }
-
-    pub fn right_side_width(&self) -> usize {
-        self.right_side_width
-    }
-
-    pub fn max_right_side_width(&self) -> usize {
-        self.width.saturating_sub(self.left_side_width)
-    }
-
-    pub fn set_right_side(&mut self, window: Window) -> &mut Self {
-        self.right_side = window;
-
-        self
-    }
-
-    pub fn set_right_side_width(&mut self, width: usize) -> &mut Self {
-        self.right_side_width = width;
-
-        self
-    }
-
-    pub fn width(&self) -> usize {
-        self.width
-    }
-
-    pub fn set_width(&mut self, width: usize) -> &mut Self {
-        self.width = width;
+    pub fn set_offset(&mut self, offset_width: usize) -> &mut Self {
+        self.offset_width = offset_width;
 
         self
     }
@@ -173,7 +127,7 @@ impl Default for WindowBuilder {
             left_side_width,
             right_side: Window::Tukey(0.25),
             right_side_width,
-            width: left_side_width + right_side_width,
+            offset_width: 0,
         }
     }
 }
@@ -187,28 +141,143 @@ fn create_window(window_type: &Window, width: usize) -> Vec<f32> {
 
 #[cfg(test)]
 mod test {
-    macro_rules! assert_eq_delta {
-        ($a:expr, $b:expr, $d:expr) => {
-            assert!(($a - $b).abs() < $d)
-        };
-    }
-
-    macro_rules! assert_ne_delta {
-        ($a:expr, $b:expr, $d:expr) => {
-            assert!(($a - $b).abs() > $d)
-        };
-    }
-
     use super::{Window, WindowBuilder};
 
+    macro_rules! assert_eq_delta {
+        ($a:expr, $b:expr, $d:expr) => {
+            let left = ($a - $b).abs();
+            assert!(
+                left <= $d,
+                "assert failed: {} == {}, left {} <= delta {}",
+                $a,
+                $b,
+                left,
+                $d
+            )
+        };
+    }
+
     #[test]
-    fn left_and_right_side_should_be_equally_sized() {
-        let builder = WindowBuilder::new(Window::Hann, Window::Hann, 100);
+    fn no_window() {
+        let left_side_width = 0;
+        let right_side_width = 0;
+
+        let builder = WindowBuilder::new(
+            Window::Hann,
+            left_side_width,
+            Window::Hann,
+            right_side_width,
+        );
 
         let window = builder.build();
         let len = window.len();
-        assert_eq_delta!(window[len / 2], 1.0, f32::EPSILON);
-        assert_ne_delta!(window[len / 2 - 1], 1.0, f32::EPSILON);
-        assert_ne_delta!(window[len / 2 + 1], 1.0, f32::EPSILON);
+
+        assert_eq!(0, len);
+    }
+
+    #[test]
+    fn left_side_window_only() {
+        let left_side_width = 100;
+        let right_side_width = 0;
+
+        let builder = WindowBuilder::new(
+            Window::Hann,
+            left_side_width,
+            Window::Hann,
+            right_side_width,
+        );
+        let window = builder.build();
+
+        assert_eq_delta!(window.first().unwrap(), 0.0, f32::EPSILON);
+        assert_eq_delta!(window.last().unwrap(), 1.0, f32::EPSILON);
+        assert_eq!(left_side_width, window.len());
+    }
+
+    #[test]
+    fn right_side_window_only() {
+        let left_side_width = 0;
+        let right_side_width = 50;
+
+        let builder = WindowBuilder::new(
+            Window::Hann,
+            left_side_width,
+            Window::Hann,
+            right_side_width,
+        );
+        let window = builder.build();
+
+        assert_eq_delta!(window.first().unwrap(), 1.0, f32::EPSILON);
+        assert_eq_delta!(window.last().unwrap(), 0.0, f32::EPSILON);
+        assert_eq!(right_side_width, window.len());
+    }
+
+    #[test]
+    fn left_and_right_side() {
+        let left_side_width = 50;
+        let right_side_width = 50;
+
+        let builder = WindowBuilder::new(
+            Window::Hann,
+            left_side_width,
+            Window::Hann,
+            right_side_width,
+        );
+
+        let window = builder.build();
+        assert_eq_delta!(window[0], 0.0, f32::EPSILON);
+        assert_eq_delta!(window[left_side_width], 1.0, f32::EPSILON);
+        assert_eq_delta!(window[right_side_width], 1.0, f32::EPSILON);
+        assert_eq_delta!(window.last().unwrap(), 0.0, f32::EPSILON);
+
+        let len = window.len();
+        assert_eq!(len, left_side_width + right_side_width);
+    }
+
+    #[test]
+    fn offset_only() {
+        let left_side_width = 0;
+        let right_side_width = 0;
+        let offset_width = 50;
+
+        let mut builder = WindowBuilder::new(
+            Window::Hann,
+            left_side_width,
+            Window::Hann,
+            right_side_width,
+        );
+        builder.set_offset(offset_width);
+
+        let window = builder.build();
+        assert_eq_delta!(window[0], 1.0, f32::EPSILON);
+        assert_eq_delta!(window[offset_width / 2], 1.0, f32::EPSILON);
+        assert_eq_delta!(window.last().unwrap(), 1.0, f32::EPSILON);
+
+        let len = window.len();
+        assert_eq!(len, offset_width);
+    }
+
+    #[test]
+    fn full_window() {
+        let left_side_width = 50;
+        let right_side_width = 50;
+        let offset_width = 50;
+
+        let mut builder = WindowBuilder::new(
+            Window::Hann,
+            left_side_width,
+            Window::Hann,
+            right_side_width,
+        );
+        builder.set_offset(offset_width);
+
+        let window = builder.build();
+        assert_eq_delta!(window[0], 0.0, f32::EPSILON);
+        assert_eq_delta!(window[left_side_width], 1.0, f32::EPSILON);
+        assert_eq_delta!(window[window.len() / 2], 1.0, f32::EPSILON);
+        assert_eq_delta!(window[right_side_width], 1.0, f32::EPSILON);
+        assert_eq_delta!(window.last().unwrap(), 0.0, f32::EPSILON);
+
+        let len = window.len();
+        assert_eq!(len, left_side_width + offset_width + right_side_width);
     }
 }
