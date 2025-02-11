@@ -10,7 +10,7 @@ use iced::{
     Task,
 };
 use pliced::widget::line_series;
-use raumklang_core::WindowBuilder;
+use raumklang_core::{dbfs, WindowBuilder};
 
 use crate::{
     components::window_settings::{self, WindowSettings},
@@ -25,7 +25,6 @@ use super::compute_impulse_response;
 pub enum Message {
     MeasurementSelected(data::MeasurementId),
     ImpulseResponseComputed((data::MeasurementId, raumklang_core::ImpulseResponse)),
-    ShowWindowToggled(bool),
     WindowSettings(window_settings::Message),
     Chart(Operation),
 }
@@ -37,13 +36,13 @@ pub enum Event {
 #[derive(Default)]
 pub struct ImpulseResponseTab {
     selected: Option<data::MeasurementId>,
-    show_window: bool,
     window_settings: Option<WindowSettings>,
     chart_data: ChartData,
 }
 
 #[derive(Default)]
 pub struct ChartData {
+    show_window: bool,
     amplitude_unit: AmplitudeUnit,
     time_unit: TimeSeriesUnit,
     cache: canvas::Cache,
@@ -54,6 +53,7 @@ impl ChartData {
         match operation {
             Operation::TimeUnitChanged(time_unit) => self.time_unit = time_unit,
             Operation::AmplitudeUnitChanged(amplitude_unit) => self.amplitude_unit = amplitude_unit,
+            Operation::ShowWindowToggled(state) => self.show_window = state,
         }
 
         self.cache.clear();
@@ -64,6 +64,7 @@ impl ChartData {
 pub enum Operation {
     TimeUnitChanged(TimeSeriesUnit),
     AmplitudeUnitChanged(AmplitudeUnit),
+    ShowWindowToggled(bool),
 }
 
 impl ImpulseResponseTab {
@@ -102,12 +103,10 @@ impl ImpulseResponseTab {
                     }
                 }
             }
-            Message::ShowWindowToggled(state) => {
-                self.show_window = state;
-
-                (Task::none(), None)
-            }
             Message::ImpulseResponseComputed((id, ir)) => {
+                self.window_settings =
+                    Some(WindowSettings::new(WindowBuilder::default(), ir.data.len()));
+
                 (Task::none(), Some(Event::ImpulseResponseComputed(id, ir)))
             }
             Message::Chart(operation) => {
@@ -121,6 +120,10 @@ impl ImpulseResponseTab {
                 };
 
                 window_settings.update(msg);
+
+                if self.chart_data.show_window {
+                    self.chart_data.cache.clear();
+                }
 
                 (Task::none(), None)
             }
@@ -175,19 +178,25 @@ impl ImpulseResponseTab {
                     Some(&self.chart_data.time_unit),
                     |unit| { Message::Chart(Operation::TimeUnitChanged(unit)) }
                 ),
-                checkbox("Show Window", self.show_window).on_toggle(Message::ShowWindowToggled),
+                checkbox("Show Window", self.chart_data.show_window)
+                    .on_toggle(|state| Message::Chart(Operation::ShowWindowToggled(state))),
             ]
             .align_y(Alignment::Center)
             .spacing(10);
 
-            let chart = chart_view(impulse_response, &self.chart_data);
-            container(
-                column![chart_menu, chart].push_maybe(
-                    self.window_settings
-                        .as_ref()
-                        .map(|s| s.view().map(Message::WindowSettings)),
-                ),
-            )
+            let window = self
+                .window_settings
+                .as_ref()
+                .map_or(WindowBuilder::default().build(), |s| s.window_builder.build());
+            let chart = chart_view(&self.chart_data, impulse_response, window);
+            let window_settings = if self.chart_data.show_window {
+                self.window_settings
+                    .as_ref()
+                    .map(|s| s.view().map(Message::WindowSettings))
+            } else {
+                None
+            };
+            container(column![chart_menu, chart].push_maybe(window_settings))
         } else {
             container(text(
                 "Please select a measurement to compute the corresponding impulse response.",
@@ -205,8 +214,9 @@ impl ImpulseResponseTab {
 }
 
 fn chart_view<'a>(
-    impulse_response: &'a raumklang_core::ImpulseResponse,
     chart_data: &'a ChartData,
+    impulse_response: &'a raumklang_core::ImpulseResponse,
+    window: impl IntoIterator<Item = f32>,
 ) -> Element<'a, Message> {
     let max = impulse_response
         .data
@@ -214,24 +224,62 @@ fn chart_view<'a>(
         .map(|s| s.re.powi(2).sqrt())
         .fold(f32::NEG_INFINITY, |a, b| a.max(b));
 
-    let series = impulse_response.data.iter().map(|s| s.re.powi(2).sqrt());
-    let series: &mut dyn Iterator<Item = f32> = match chart_data.amplitude_unit {
-        AmplitudeUnit::PercentFullScale => &mut series.map(|s| s / max * 100f32),
-        AmplitudeUnit::DezibelFullScale => &mut series.map(|s| 20f32 * f32::log10(s.abs() / max)),
-    };
-    let series: &mut dyn Iterator<Item = (f32, f32)> = match chart_data.time_unit {
-        TimeSeriesUnit::Samples => &mut series.enumerate().map(|(i, s)| (i as f32, s)),
-        TimeSeriesUnit::Time => &mut series
-            .enumerate()
-            .map(|(i, s)| (i as f32 / impulse_response.sample_rate as f32 * 1000.0, s)),
+    fn percent_full_scale(s: f32, max: f32) -> f32 {
+        s / max * 100f32
+    }
+
+    fn db_full_scale(s: f32, max: f32) -> f32 {
+        let y = 20f32 * f32::log10(s.abs() / max);
+        y.clamp(-100.0, 3.0)
+    }
+
+    let y_scale_fn: fn(f32, f32) -> f32 = match chart_data.amplitude_unit {
+        AmplitudeUnit::PercentFullScale => percent_full_scale,
+        AmplitudeUnit::DezibelFullScale => db_full_scale,
     };
 
-    pliced::widget::Chart::new()
+    fn sample_scale(index: usize, _sample_rate: f32) -> f32 {
+        index as f32
+    }
+
+    fn time_scale(index: usize, sample_rate: f32) -> f32 {
+        index as f32 / sample_rate * 1000.0
+    }
+
+    let x_scale_fn = match chart_data.time_unit {
+        TimeSeriesUnit::Samples => sample_scale,
+        TimeSeriesUnit::Time => time_scale,
+    };
+
+    let sample_rate = impulse_response.sample_rate as f32;
+    let series = impulse_response
+        .data
+        .iter()
+        .map(|s| s.re.powi(2).sqrt())
+        .enumerate()
+        .map(|(i, s)| (x_scale_fn(i, sample_rate), y_scale_fn(s, max)));
+
+    let chart = pliced::widget::Chart::new()
         .width(Length::Fill)
         .height(Length::Fill)
         .with_cache(&chart_data.cache)
-        .push_series(line_series(series).color(iced::Color::from_rgb8(2, 125, 66)))
-        .into()
+        .push_series(line_series(series).color(iced::Color::from_rgb8(2, 125, 66)));
+
+    let chart = if chart_data.show_window {
+        chart.push_series(
+            line_series(
+                window
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, s)| (x_scale_fn(i, sample_rate), y_scale_fn(s, max))),
+            )
+            .color(iced::Color::from_rgb8(255, 0, 0)),
+        )
+    } else {
+        chart
+    };
+
+    chart.into()
 }
 
 fn list_category<'a>(name: &'a str, content: Element<'a, Message>) -> Element<'a, Message> {

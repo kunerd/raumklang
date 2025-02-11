@@ -116,12 +116,12 @@ impl pliced::Program<Message> for ImpulseResponseChart<'_> {
                 .unwrap();
         }
 
-        chart
-            .configure_mesh()
-            .disable_mesh()
-            //.disable_axes()
-            .draw()
-            .unwrap();
+        //chart
+        //    .configure_mesh()
+        //    .disable_mesh()
+        //    //.disable_axes()
+        //    .draw()
+        //    .unwrap();
 
         self.viewport.set_spec(chart.as_coord_spec().clone());
     }

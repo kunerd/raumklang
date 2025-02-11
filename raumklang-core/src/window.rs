@@ -96,8 +96,8 @@ impl WindowBuilder {
         window.append(&mut left);
         window.append(&mut vec![
             1.0;
-            (self.width - self.left_side_width)
-                - self.right_side_width
+            (self.width.saturating_sub(self.left_side_width))
+                .saturating_sub(self.right_side_width)
         ]);
         window.append(&mut right);
 
@@ -113,7 +113,7 @@ impl WindowBuilder {
     }
 
     pub fn max_left_side_width(&self) -> usize {
-        self.width - self.right_side_width
+        self.width.saturating_sub(self.right_side_width)
     }
 
     pub fn set_left_side(&mut self, window: Window) -> &mut Self {
@@ -137,7 +137,7 @@ impl WindowBuilder {
     }
 
     pub fn max_right_side_width(&self) -> usize {
-        self.width - self.left_side_width
+        self.width.saturating_sub(self.left_side_width)
     }
 
     pub fn set_right_side(&mut self, window: Window) -> &mut Self {
