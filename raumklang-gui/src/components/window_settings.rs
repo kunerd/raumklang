@@ -25,7 +25,7 @@ impl WindowSettings {
     pub fn new(window_builder: WindowBuilder, max_width: usize) -> Self {
         Self {
             window_builder,
-            max_width
+            max_width,
         }
     }
 
@@ -43,8 +43,8 @@ impl WindowSettings {
                 ),
                 text("width:"),
                 number_input(
-                    self.window_builder.left_side_width(),
-                    0..self.window_builder.max_left_side_width(),
+                    &self.window_builder.left_side_width(),
+                    1..self.window_builder.max_left_side_width(),
                     Message::LeftWidthChanged
                 )
             ]
@@ -58,7 +58,7 @@ impl WindowSettings {
                 ),
                 text("width:"),
                 number_input(
-                    self.window_builder.right_side_width(),
+                    &self.window_builder.right_side_width(),
                     0..self.window_builder.max_right_side_width(),
                     Message::RightWidthChanged
                 )
@@ -67,7 +67,7 @@ impl WindowSettings {
             row![
                 text("Window width"),
                 number_input(
-                    self.window_builder.width(),
+                    &self.window_builder.width(),
                     0..self.max_width,
                     Message::MidWidthChanged
                 )
