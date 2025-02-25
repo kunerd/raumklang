@@ -1,27 +1,31 @@
-use std::{fmt::Debug, ops::Range, path::PathBuf, sync::Arc};
+use std::{fmt::Debug, ops::RangeInclusive, path::PathBuf, sync::Arc};
 
 use iced::{
     keyboard,
     mouse::ScrollDelta,
     widget::{
-        self, button, canvas, column, container, horizontal_rule, horizontal_space, row,
-        scrollable, text::Wrapping,
+        self, button, column, container, horizontal_rule, horizontal_space, row, scrollable,
+        text::Wrapping,
     },
     Alignment, Element, Length, Point, Subscription, Task,
 };
-use pliced::{cartesian::Cartesian, widget::line_series};
+//use pliced::{
+//    plotters::line_series,
+//    plotters::{Cartesian, Chart},
+//};
+use pliced::chart::{Axis, Chart, Labels, Margin};
+use pliced::series::line_series;
+
 use raumklang_core::WavLoadError;
 
 use crate::{data, delete_icon, OfflineMeasurement};
 
-#[derive(Default)]
 pub struct Measurements {
     selected: Option<SelectedMeasurement>,
 
     shift_key_pressed: bool,
     x_max: Option<f32>,
-    x_range: Range<f32>,
-    cache: canvas::Cache,
+    x_range: RangeInclusive<f32>,
 }
 
 #[derive(Debug, Clone)]
@@ -37,7 +41,7 @@ pub enum Message {
     LoadLoopbackMeasurement,
     RemoveLoopbackMeasurement,
     MeasurementSelected(SelectedMeasurement),
-    ChartScroll(Point, ScrollDelta, Cartesian),
+    ChartScroll(Option<Point>, Option<ScrollDelta>),
     ShiftKeyPressed,
     ShiftKeyReleased,
 }
@@ -57,6 +61,15 @@ pub enum Error {
 }
 
 impl Measurements {
+    pub fn new() -> Self {
+        Self {
+            selected: None,
+            shift_key_pressed: false,
+            x_max: Some(10.0),
+            x_range: 0.0..=10.0,
+        }
+    }
+
     pub fn update(
         &mut self,
         msg: Message,
@@ -87,23 +100,26 @@ impl Measurements {
                     }
                 };
 
-                self.x_range = signal.map_or(0.0..10.0, |s| 0.0..s.duration() as f32);
-                self.x_max = Some(self.x_range.end);
+                self.x_range = signal.map_or(0.0..=10.0, |s| 0.0..=s.duration() as f32);
+                self.x_max = Some(*self.x_range.end());
                 self.selected = Some(selected);
-                self.cache.clear();
 
                 (Task::none(), None)
             }
-            Message::ChartScroll(pos, scroll_delta, spec) => {
-                let ScrollDelta::Lines { y, .. } = scroll_delta else {
+            Message::ChartScroll(pos, scroll_delta) => {
+                let Some(pos) = pos else {
+                    return (Task::none(), None);
+                };
+
+                let Some(ScrollDelta::Lines { y, .. }) = scroll_delta else {
                     return (Task::none(), None);
                 };
 
                 match (self.shift_key_pressed, y.is_sign_positive()) {
                     (true, true) => self.scroll_right(),
                     (true, false) => self.scroll_left(),
-                    (false, true) => self.zoom_in(pos, spec),
-                    (false, false) => self.zoom_out(pos, spec),
+                    (false, true) => self.zoom_in(pos),
+                    (false, false) => self.zoom_out(pos),
                 }
 
                 (Task::none(), None)
@@ -145,16 +161,26 @@ impl Measurements {
         };
 
         let content: Element<_> = if let Some(signal) = signal {
-            pliced::widget::Chart::new()
+            Chart::new()
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .x_range(self.x_range.clone())
-                .with_cache(&self.cache)
+                .x_labels(Labels::default().format(&|v| format!("{v:.0}")))
+                //.y_labels(Labels::default().format(&|_| "".to_string()))
+                .margin(Margin {
+                    left: 20.0,
+                    ..Default::default()
+                })
                 .push_series(
                     line_series(signal.enumerate().map(|(i, s)| (i as f32, *s)))
                         .color(iced::Color::from_rgb8(2, 125, 66)),
                 )
-                .on_scroll(Message::ChartScroll)
+                .on_scroll(|state| {
+                    let pos = state.get_coords();
+                    let delta = state.scroll_delta();
+
+                    Message::ChartScroll(pos, delta)
+                })
                 .into()
         } else {
             widget::text("Please select a measurement.").into()
@@ -188,12 +214,12 @@ impl Measurements {
 
     fn scroll_right(&mut self) {
         let old_viewport = self.x_range.clone();
-        let length = old_viewport.end - old_viewport.start;
+        let length = old_viewport.end() - old_viewport.start();
 
         const SCROLL_FACTOR: f32 = 0.2;
         let offset = length * SCROLL_FACTOR;
 
-        let mut new_end = old_viewport.end + offset;
+        let mut new_end = old_viewport.end() + offset;
         if let Some(x_max) = self.x_max {
             let viewport_max = x_max + length / 2.0;
             if new_end > viewport_max {
@@ -203,37 +229,31 @@ impl Measurements {
 
         let new_start = new_end - length;
 
-        self.x_range = new_start..new_end;
-        self.cache.clear();
+        self.x_range = new_start..=new_end;
     }
 
     fn scroll_left(&mut self) {
         let old_viewport = self.x_range.clone();
-        let length = old_viewport.end - old_viewport.start;
+        let length = old_viewport.end() - old_viewport.start();
 
         const SCROLL_FACTOR: f32 = 0.2;
         let offset = length * SCROLL_FACTOR;
 
-        let mut new_start = old_viewport.start - offset;
+        let mut new_start = old_viewport.start() - offset;
         let viewport_min = -(length / 2.0);
         if new_start < viewport_min {
             new_start = viewport_min;
         }
         let new_end = new_start + length;
 
-        self.x_range = new_start..new_end;
-        self.cache.clear();
+        self.x_range = new_start..=new_end;
     }
 
-    fn zoom_in(&mut self, position: iced::Point, cartesian: Cartesian) {
-        let Some(pos) = cartesian.get_coords(position) else {
-            return;
-        };
-
+    fn zoom_in(&mut self, position: iced::Point) {
         let old_viewport = self.x_range.clone();
-        let old_len = old_viewport.end - old_viewport.start;
+        let old_len = old_viewport.end() - old_viewport.start();
 
-        let center_scale: f32 = (pos.x - old_viewport.start) / old_len;
+        let center_scale: f32 = (position.x - old_viewport.start()) / old_len;
 
         // FIXME make configurable
         const ZOOM_FACTOR: f32 = 0.8;
@@ -243,21 +263,16 @@ impl Measurements {
             new_len = LOWER_BOUND;
         }
 
-        let new_start = pos.x - (new_len * center_scale);
+        let new_start = position.x - (new_len * center_scale);
         let new_end = new_start + new_len;
-        self.x_range = new_start..new_end;
-        self.cache.clear();
+        self.x_range = new_start..=new_end;
     }
 
-    fn zoom_out(&mut self, position: iced::Point, cartesian: Cartesian) {
-        let Some(pos) = cartesian.get_coords(position) else {
-            return;
-        };
-
+    fn zoom_out(&mut self, position: iced::Point) {
         let old_viewport = self.x_range.clone();
-        let old_len = old_viewport.end - old_viewport.start;
+        let old_len = old_viewport.end() - old_viewport.start();
 
-        let center_scale = (pos.x - old_viewport.start) / old_len;
+        let center_scale = (position.x - old_viewport.start()) / old_len;
 
         // FIXME make configurable
         const ZOOM_FACTOR: f32 = 1.2;
@@ -266,10 +281,9 @@ impl Measurements {
         //    new_len = self.max_len;
         //}
 
-        let new_start = pos.x - (new_len * center_scale);
+        let new_start = position.x - (new_len * center_scale);
         let new_end = new_start + new_len;
-        self.x_range = new_start..new_end;
-        self.cache.clear();
+        self.x_range = new_start..=new_end;
     }
 }
 

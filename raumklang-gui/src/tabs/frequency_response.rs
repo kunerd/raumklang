@@ -1,4 +1,8 @@
+use super::compute_impulse_response;
 use crate::{data, widgets::colored_circle};
+
+use pliced::plotters::{line_series, Chart};
+use raumklang_core::dbfs;
 
 use iced::{
     widget::{column, container, horizontal_space, row, stack, text, toggler},
@@ -6,14 +10,10 @@ use iced::{
     Length::{self, FillPortion},
     Task,
 };
-use pliced::widget::line_series;
 use plotters::style::{Color as _, Palette, Palette99, RGBAColor};
 use rand::Rng;
-use raumklang_core::dbfs;
 
 use std::collections::HashMap;
-
-use super::compute_impulse_response;
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -153,7 +153,7 @@ impl FrequencyResponse {
                     ))
                 });
 
-            let chart = pliced::widget::Chart::new()
+            let chart = Chart::new()
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .x_range(0.0..1000.0)
