@@ -66,11 +66,11 @@ impl std::fmt::Display for Window {
 
 #[derive(Debug)]
 pub struct WindowBuilder {
-    left_side: Window,
-    left_side_width: usize,
-    right_side: Window,
-    right_side_width: usize,
-    offset_width: usize,
+    pub left_side: Window,
+    pub left_side_width: usize,
+    pub right_side: Window,
+    pub right_side_width: usize,
+    pub offset: usize,
 }
 
 impl WindowBuilder {
@@ -85,7 +85,7 @@ impl WindowBuilder {
             left_side_width,
             right_side,
             right_side_width,
-            offset_width: 0,
+            offset: 0,
         }
     }
 
@@ -100,7 +100,7 @@ impl WindowBuilder {
         );
         let right_half_window = right_window.into_iter().take(self.right_side_width).rev();
 
-        let offset_window = (0..self.offset_width).map(|_| 1.0f32);
+        let offset_window = (0..self.offset).map(|_| 1.0f32);
 
         let mut window = Vec::with_capacity(self.left_side_width + self.right_side_width);
         window.extend(left_half_window);
@@ -111,7 +111,7 @@ impl WindowBuilder {
     }
 
     pub fn set_offset(&mut self, offset_width: usize) -> &mut Self {
-        self.offset_width = offset_width;
+        self.offset = offset_width;
 
         self
     }
@@ -127,7 +127,7 @@ impl Default for WindowBuilder {
             left_side_width,
             right_side: Window::Tukey(0.25),
             right_side_width,
-            offset_width: 0,
+            offset: 0,
         }
     }
 }

@@ -58,7 +58,7 @@ enum Tab {
 
 impl Default for Tab {
     fn default() -> Self {
-        Self::Measurements(tabs::Measurements::default())
+        Self::Measurements(tabs::Measurements::new())
     }
 }
 
@@ -330,11 +330,11 @@ impl Raumklang {
 
                 let (tab, task) = match tab_id {
                     TabId::Measurements => (
-                        Tab::Measurements(tabs::Measurements::default()),
+                        Tab::Measurements(tabs::Measurements::new()),
                         Task::none(),
                     ),
                     TabId::ImpulseResponse => (
-                        Tab::ImpulseResponses(tabs::ImpulseResponseTab::default()),
+                        Tab::ImpulseResponses(tabs::ImpulseResponseTab::new()),
                         Task::none(),
                     ),
                     TabId::FrequencyResponse => {
