@@ -63,6 +63,7 @@ enum Command {
     ComputeRIR {
         loopback_path: String,
         measurement_path: String,
+        result_path: String,
     },
     Spectrogram {
         file_path: String,
@@ -153,17 +154,25 @@ fn main() -> anyhow::Result<()> {
         Command::ComputeRIR {
             loopback_path,
             measurement_path,
+            result_path,
         } => {
             let impulse_respone = ImpulseResponse::from_files(&loopback_path, &measurement_path)?;
 
-            //let start = impulse_respone
-            //    .impulse_response
-            //    .into_iter()
-            //    .take(22050)
-            //    .collect();
+            let spec = hound::WavSpec {
+                channels: 1,
+                sample_rate: impulse_respone.sample_rate,
+                bits_per_sample: 32,
+                sample_format: hound::SampleFormat::Float,
+            };
 
-            //plot_heatmap(&start)?;
-            plot_heatmap(impulse_respone.data)?;
+            let mut writer = hound::WavWriter::create(&result_path, spec)?;
+            for s in impulse_respone.data.iter().map(|s| s.re) {
+                writer.write_sample(s)?;
+            }
+            writer.finalize()?;
+
+            let duration = impulse_respone.data.len() as f32 / impulse_respone.sample_rate as f32;
+            println!("Impulse response of : {duration}s, written to: {result_path}");
 
             Ok(())
         }
