@@ -249,7 +249,7 @@ fn chart_view<'a>(
         .enumerate()
         .map(|(i, s)| (x_scale_fn(i, sample_rate), y_scale_fn(s, max)));
 
-    let chart = Chart::new()
+    let chart: Chart<'_, _, ()> = Chart::new()
         .width(Length::Fill)
         .height(Length::Fill)
         .y_labels(Labels::default().format(&|v| format!("{v:.2}")))
