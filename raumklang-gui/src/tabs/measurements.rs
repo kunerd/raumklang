@@ -175,7 +175,7 @@ impl Measurements {
                     line_series(signal.enumerate().map(|(i, s)| (i as f32, *s)))
                         .color(iced::Color::from_rgb8(2, 125, 66)),
                 )
-                .on_scroll(|state| {
+                .on_scroll(|state: &pliced::chart::State<()>| {
                     let pos = state.get_coords();
                     let delta = state.scroll_delta();
 
