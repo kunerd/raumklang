@@ -9,12 +9,8 @@ use iced::{
     },
     Alignment, Element, Length, Point, Subscription, Task,
 };
-//use pliced::{
-//    plotters::line_series,
-//    plotters::{Cartesian, Chart},
-//};
-use pliced::chart::{Axis, Chart, Labels, Margin};
-use pliced::series::line_series;
+
+use pliced::chart::{line_series, Chart, Labels, Margin};
 
 use raumklang_core::WavLoadError;
 
@@ -161,18 +157,14 @@ impl Measurements {
         };
 
         let content: Element<_> = if let Some(signal) = signal {
-            Chart::new()
+            Chart::<_, (), _>::new()
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .x_range(self.x_range.clone())
                 .x_labels(Labels::default().format(&|v| format!("{v:.0}")))
-                //.y_labels(Labels::default().format(&|_| "".to_string()))
-                .margin(Margin {
-                    left: 20.0,
-                    ..Default::default()
-                })
+                .y_labels(Labels::default().format(&|v| format!("{v:.1}")))
                 .push_series(
-                    line_series(signal.enumerate().map(|(i, s)| (i as f32, *s)))
+                    line_series(signal.copied().enumerate().map(|(i, s)| (i as f32, s)))
                         .color(iced::Color::from_rgb8(2, 125, 66)),
                 )
                 .on_scroll(|state: &pliced::chart::State<()>| {

@@ -74,7 +74,7 @@ impl Measurement {
         self.sample_rate
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &f32> {
+    pub fn iter(&self) -> impl Iterator<Item = &f32> + Clone {
         self.data.iter()
     }
 
