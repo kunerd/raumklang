@@ -9,7 +9,8 @@ use iced::{
     Length::{self, FillPortion},
     Task,
 };
-use pliced::chart::{line_series, point_series, Chart, Labels};
+use pliced::chart::{line_series, point_series, Chart, Labels, PointStyle};
+use raumklang_core::WindowBuilder;
 
 use crate::{
     components::window_settings::{self, WindowSettings},
@@ -36,7 +37,18 @@ pub struct ImpulseResponseTab {
     selected: Option<data::MeasurementId>,
     window_settings: WindowSettings,
     chart_data: ChartData,
-    window: Vec<f32>,
+    window: Window,
+}
+
+struct Window {
+    curve: Vec<f32>,
+    handles: Vec<WindowHandle>,
+}
+
+struct WindowHandle {
+    x: f32,
+    y: f32,
+    style: PointStyle,
 }
 
 #[derive(Default)]
@@ -63,10 +75,44 @@ pub enum Operation {
     ShowWindowToggled(bool),
 }
 
+impl Window {
+    pub fn new(window_builder: &WindowBuilder) -> Self {
+        let curve = window_builder.build();
+
+        let left_side_left = 0.0;
+        let left_side_right = left_side_left + window_builder.left_side_width as f32;
+        let right_side_left = left_side_right + window_builder.offset as f32;
+        let right_side_right = right_side_left + window_builder.right_side_width as f32;
+
+        let handles = vec![
+            WindowHandle::new(left_side_left, 0.0),
+            WindowHandle::new(left_side_right, 1.0),
+            WindowHandle::new(right_side_left, 1.0),
+            WindowHandle::new(right_side_right, 0.0),
+        ];
+
+        Self { curve, handles }
+    }
+}
+
+impl WindowHandle {
+    pub fn new(x: f32, y: f32) -> Self {
+        Self {
+            x,
+            y,
+            style: PointStyle {
+                border: 3.0,
+                radius: 10.0,
+                color: Some(iced::Color::from_rgb8(0, 255, 0)),
+            },
+        }
+    }
+}
+
 impl ImpulseResponseTab {
     pub fn new() -> Self {
         let window_settings = WindowSettings::new(44_100);
-        let window = window_settings.window_builder.build();
+        let window = Window::new(&window_settings.window_builder);
 
         Self {
             window_settings,
@@ -208,7 +254,7 @@ impl ImpulseResponseTab {
 fn chart_view<'a>(
     chart_data: &'a ChartData,
     impulse_response: &'a raumklang_core::ImpulseResponse,
-    window: &'a Vec<f32>,
+    window: &'a Window,
 ) -> Element<'a, Message> {
     let max = impulse_response
         .data
@@ -230,12 +276,12 @@ fn chart_view<'a>(
         AmplitudeUnit::DezibelFullScale => db_full_scale,
     };
 
-    fn sample_scale(index: usize, _sample_rate: f32) -> f32 {
-        index as f32
+    fn sample_scale(index: f32, _sample_rate: f32) -> f32 {
+        index
     }
 
-    fn time_scale(index: usize, sample_rate: f32) -> f32 {
-        index as f32 / sample_rate * 1000.0
+    fn time_scale(index: f32, sample_rate: f32) -> f32 {
+        index / sample_rate * 1000.0
     }
 
     let x_scale_fn = match chart_data.time_unit {
@@ -249,7 +295,7 @@ fn chart_view<'a>(
         .iter()
         .map(|s| s.re.powi(2).sqrt())
         .enumerate()
-        .map(move |(i, s)| (x_scale_fn(i, sample_rate), y_scale_fn(s, max)));
+        .map(move |(i, s)| (x_scale_fn(i as f32, sample_rate), y_scale_fn(s, max)));
 
     let chart = Chart::<_, usize, _>::new()
         .width(Length::Fill)
@@ -257,20 +303,24 @@ fn chart_view<'a>(
         .y_labels(Labels::default().format(&|v| format!("{v:.2}")))
         .push_series(line_series(series).color(iced::Color::from_rgb8(2, 125, 66)));
 
-    let chart = if chart_data.show_window {
-        chart.push_series(
-            line_series(
-                window
-                    .iter()
-                    .copied()
-                    .enumerate()
-                    .map(move |(i, s)| (x_scale_fn(i, sample_rate), y_scale_fn(s, max))),
-            )
-            .color(iced::Color::from_rgb8(255, 0, 0)),
-        )
-    } else {
-        chart
-    };
+    let chart =
+        if chart_data.show_window {
+            chart
+                .push_series(
+                    line_series(window.curve.iter().copied().enumerate().map(move |(i, s)| {
+                        (x_scale_fn(i as f32, sample_rate), y_scale_fn(s, max))
+                    }))
+                    .color(iced::Color::from_rgb8(255, 0, 0)),
+                )
+                .push_series(
+                    point_series(window.handles.iter().map(move |handle| {
+                        (x_scale_fn(handle.x, sample_rate), y_scale_fn(handle.y, max))
+                    }))
+                    .color(iced::Color::from_rgb8(0, 255, 0)),
+                )
+        } else {
+            chart
+        };
 
     chart.into()
 }
@@ -284,6 +334,11 @@ fn list_category<'a>(name: &'a str, content: Element<'a, Message>) -> Element<'a
         .into()
 }
 
+impl From<&WindowHandle> for (f32, f32) {
+    fn from(handle: &WindowHandle) -> Self {
+        (handle.x, handle.y)
+    }
+}
 //async fn windowed_median(data: &mut [f32]) -> f32 {
 //    const WINDOW_SIZE: usize = 512;
 //
