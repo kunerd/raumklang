@@ -9,9 +9,7 @@ use iced::{
     Length::{self, FillPortion},
     Task,
 };
-//use pliced::plotters::{line_series, Chart};
-use pliced::chart::{Chart, Labels};
-use pliced::series::line_series;
+use pliced::chart::{line_series, point_series, Chart, Labels};
 
 use crate::{
     components::window_settings::{self, WindowSettings},
@@ -38,6 +36,7 @@ pub struct ImpulseResponseTab {
     selected: Option<data::MeasurementId>,
     window_settings: WindowSettings,
     chart_data: ChartData,
+    window: Vec<f32>,
 }
 
 #[derive(Default)]
@@ -66,10 +65,14 @@ pub enum Operation {
 
 impl ImpulseResponseTab {
     pub fn new() -> Self {
+        let window_settings = WindowSettings::new(44_100);
+        let window = window_settings.window_builder.build();
+
         Self {
-            window_settings: WindowSettings::new(44_100),
+            window_settings,
             selected: None,
             chart_data: ChartData::default(),
+            window,
         }
     }
 
@@ -179,8 +182,7 @@ impl ImpulseResponseTab {
             .align_y(Alignment::Center)
             .spacing(10);
 
-            let window = self.window_settings.window_builder.build();
-            let chart = chart_view(&self.chart_data, impulse_response, window);
+            let chart = chart_view(&self.chart_data, impulse_response, &self.window);
             let window_settings = if self.chart_data.show_window {
                 Some(self.window_settings.view().map(Message::WindowSettings))
             } else {
@@ -206,7 +208,7 @@ impl ImpulseResponseTab {
 fn chart_view<'a>(
     chart_data: &'a ChartData,
     impulse_response: &'a raumklang_core::ImpulseResponse,
-    window: impl IntoIterator<Item = f32>,
+    window: &'a Vec<f32>,
 ) -> Element<'a, Message> {
     let max = impulse_response
         .data
@@ -247,9 +249,9 @@ fn chart_view<'a>(
         .iter()
         .map(|s| s.re.powi(2).sqrt())
         .enumerate()
-        .map(|(i, s)| (x_scale_fn(i, sample_rate), y_scale_fn(s, max)));
+        .map(move |(i, s)| (x_scale_fn(i, sample_rate), y_scale_fn(s, max)));
 
-    let chart: Chart<'_, _, ()> = Chart::new()
+    let chart = Chart::<_, usize, _>::new()
         .width(Length::Fill)
         .height(Length::Fill)
         .y_labels(Labels::default().format(&|v| format!("{v:.2}")))
@@ -259,9 +261,10 @@ fn chart_view<'a>(
         chart.push_series(
             line_series(
                 window
-                    .into_iter()
+                    .iter()
+                    .copied()
                     .enumerate()
-                    .map(|(i, s)| (x_scale_fn(i, sample_rate), y_scale_fn(s, max))),
+                    .map(move |(i, s)| (x_scale_fn(i, sample_rate), y_scale_fn(s, max))),
             )
             .color(iced::Color::from_rgb8(255, 0, 0)),
         )
