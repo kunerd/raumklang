@@ -141,18 +141,13 @@ impl Window {
             |id: usize, prev_pos: iced::Point, pos: iced::Point| -> iced::Point {
                 let min = match id {
                     0 => f32::MIN,
-                    1 => self.handles[0].x,
-                    2 => self.handles[1].x,
-                    3 => self.handles[2].x,
-                    _ => panic!("Unknown handle"),
+                    id => self.handles[id - 1].x,
                 };
 
-                let max = match id {
-                    0 => self.handles[1].x,
-                    1 => self.handles[2].x,
-                    2 => self.handles[3].x,
-                    3 => self.max_size,
-                    _ => panic!("Unknown handle"),
+                let max = if let Some(handle) = self.handles.get(id + 1) {
+                    handle.x
+                } else {
+                    self.max_size
                 };
 
                 let Some(handle) = self.handles.get_mut(id) else {
