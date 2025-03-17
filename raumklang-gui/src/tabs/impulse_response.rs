@@ -139,6 +139,14 @@ impl Window {
     fn apply(&mut self, operation: WindowOperation, time_unit: TimeSeriesUnit) {
         let mut update_handle_pos =
             |id: usize, prev_pos: iced::Point, pos: iced::Point| -> iced::Point {
+                let min = match id {
+                    0 => f32::MIN,
+                    1 => self.handles[0].x,
+                    2 => self.handles[1].x,
+                    3 => self.handles[2].x,
+                    _ => panic!("Unknown handle"),
+                };
+
                 let max = match id {
                     0 => self.handles[1].x,
                     1 => self.handles[2].x,
@@ -159,17 +167,29 @@ impl Window {
 
                 let new_pos = handle.x - offset;
 
-                if new_pos < max {
-                    handle.x = new_pos;
-                    pos
+                if new_pos >= min {
+                    if new_pos <= max {
+                        handle.x = new_pos;
+                        pos
+                    } else {
+                        let mut x_clamped = handle.x - max;
+                        if matches!(time_unit, TimeSeriesUnit::Time) {
+                            x_clamped *= 1000.0 / self.sample_rate;
+                        }
+                        x_clamped = prev_pos.x - x_clamped;
+
+                        handle.x = max;
+
+                        iced::Point::new(x_clamped, pos.y)
+                    }
                 } else {
-                    let mut x_clamped = handle.x - max;
+                    let mut x_clamped = handle.x - min;
                     if matches!(time_unit, TimeSeriesUnit::Time) {
                         x_clamped *= 1000.0 / self.sample_rate;
                     }
                     x_clamped = prev_pos.x - x_clamped;
 
-                    handle.x = max;
+                    handle.x = min;
 
                     iced::Point::new(x_clamped, pos.y)
                 }
