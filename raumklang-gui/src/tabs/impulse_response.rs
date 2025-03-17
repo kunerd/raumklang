@@ -277,6 +277,25 @@ impl Window {
             }
         }
     }
+
+    fn curve(&self) -> impl Iterator<Item = (usize, f32)> + Clone {
+        let left_side = raumklang_core::Window::Hann;
+        let right_side = raumklang_core::Window::Hann;
+
+        let left_side_width = (self.handles[1].x - self.handles[0].x).round() as usize;
+        let offset = (self.handles[2].x - self.handles[1].x).round() as usize;
+        let right_side_width = (self.handles[3].x - self.handles[2].x).round() as usize;
+        let window: Vec<_> =
+            WindowBuilder::new(left_side, left_side_width, right_side, right_side_width)
+                .set_offset(offset)
+                .build()
+                .into_iter()
+                .enumerate()
+                .map(|(x, y)| (x + self.handles[0].x.round() as usize, y))
+                .collect();
+
+        window.into_iter()
+    }
 }
 
 impl WindowHandle {
@@ -482,13 +501,15 @@ fn chart_view<'a>(
     }
 
     let chart = if let Some(window) = window {
+        let curve = window.curve();
         chart
-            // .push_series(
-            //     line_series(window.curve.iter().copied().enumerate().map(move |(i, s)| {
-            //         (x_scale_fn(i as f32, sample_rate), y_scale_fn(s, max))
-            //     }))
-            //     .color(iced::Color::from_rgb8(255, 0, 0)),
-            // )
+            .push_series(
+                line_series(
+                    curve
+                        .map(move |(i, s)| (x_scale_fn(i as f32, sample_rate), y_scale_fn(s, max))),
+                )
+                .color(iced::Color::from_rgb8(255, 0, 0)),
+            )
             .push_series(
                 point_series(window.handles.iter().map(move |handle| {
                     let x = x_scale_fn(handle.x, sample_rate);
