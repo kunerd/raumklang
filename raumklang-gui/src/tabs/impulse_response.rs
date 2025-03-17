@@ -1,6 +1,8 @@
+use core::panic;
 use std::collections::HashMap;
 
 use iced::{
+    alignment::Horizontal::Right,
     widget::{
         button, checkbox, column, container, horizontal_rule, horizontal_space, pick_list, row,
         scrollable, text,
@@ -25,7 +27,6 @@ use super::compute_impulse_response;
 pub enum Message {
     MeasurementSelected(data::MeasurementId),
     ImpulseResponseComputed((data::MeasurementId, raumklang_core::ImpulseResponse)),
-    WindowSettings(window_settings::Message),
     Chart(ChartOperation),
     Window(WindowOperation),
 }
@@ -36,13 +37,13 @@ pub enum Event {
 
 pub struct ImpulseResponseTab {
     selected: Option<data::MeasurementId>,
-    window_settings: WindowSettings,
+    window: Option<Window>,
     chart_data: ChartData,
-    window: Window,
 }
 
 struct Window {
-    curve: Vec<f32>,
+    max_size: f32,
+    sample_rate: f32,
     handles: Vec<WindowHandle>,
     dragging: Dragging,
     hovered_item: Option<usize>,
@@ -101,13 +102,23 @@ pub enum WindowOperation {
 }
 
 impl Window {
-    pub fn new(window_builder: &WindowBuilder) -> Self {
-        let curve = window_builder.build();
+    const DEFAULT_LEFT_DURATION: f32 = 125.0; //ms
+    const DEFAULT_RIGTH_DURATION: f32 = 500.0; //ms
+
+    pub fn new(sample_rate: u32, max_size: usize) -> Self {
+        let max_size = max_size as f32;
+        let half_size = max_size as f32 / 2.0;
+
+        let sample_rate = sample_rate as f32;
+        let left_window_size =
+            (sample_rate * (Self::DEFAULT_LEFT_DURATION / 1000.0)).min(half_size);
+        let right_window_size =
+            (sample_rate * (Self::DEFAULT_RIGTH_DURATION / 1000.0)).min(half_size);
 
         let left_side_left = 0.0;
-        let left_side_right = left_side_left + window_builder.left_side_width as f32;
-        let right_side_left = left_side_right + window_builder.offset as f32;
-        let right_side_right = right_side_left + window_builder.right_side_width as f32;
+        let left_side_right = left_side_left + left_window_size as f32;
+        let right_side_left = left_side_right;
+        let right_side_right = right_side_left + right_window_size as f32;
 
         let handles = vec![
             WindowHandle::new(left_side_left, 0.0),
@@ -117,14 +128,53 @@ impl Window {
         ];
 
         Self {
-            curve,
+            max_size,
+            sample_rate,
             handles,
             dragging: Dragging::None,
             hovered_item: None,
         }
     }
 
-    fn apply(&mut self, window_builder: &mut WindowBuilder, operation: WindowOperation) {
+    fn apply(&mut self, operation: WindowOperation, time_unit: TimeSeriesUnit) {
+        let mut update_handle_pos =
+            |id: usize, prev_pos: iced::Point, pos: iced::Point| -> iced::Point {
+                let max = match id {
+                    0 => self.handles[1].x,
+                    1 => self.handles[2].x,
+                    2 => self.handles[3].x,
+                    3 => self.max_size,
+                    _ => panic!("Unknown handle"),
+                };
+
+                let Some(handle) = self.handles.get_mut(id) else {
+                    return prev_pos;
+                };
+
+                let offset = prev_pos.x - pos.x;
+                let offset = match time_unit {
+                    TimeSeriesUnit::Time => offset / 1000.0 * self.sample_rate,
+                    TimeSeriesUnit::Samples => offset,
+                };
+
+                let new_pos = handle.x - offset;
+
+                if new_pos < max {
+                    handle.x = new_pos;
+                    pos
+                } else {
+                    let mut x_clamped = handle.x - max;
+                    if matches!(time_unit, TimeSeriesUnit::Time) {
+                        x_clamped *= 1000.0 / self.sample_rate;
+                    }
+                    x_clamped = prev_pos.x - x_clamped;
+
+                    handle.x = max;
+
+                    iced::Point::new(x_clamped, pos.y)
+                }
+            };
+
         match operation {
             WindowOperation::MouseDown(id, pos) => {
                 let Dragging::None = self.dragging else {
@@ -136,15 +186,6 @@ impl Window {
                 }
             }
             WindowOperation::OnMove(id, pos) => {
-                if id.is_none() {
-                    if let Some(handle) = self.hovered_item.and_then(|id| self.handles.get_mut(id))
-                    {
-                        handle.style = PointStyle::default()
-                    }
-                }
-
-                self.hovered_item = id;
-
                 let Some(pos) = pos else {
                     return;
                 };
@@ -152,19 +193,24 @@ impl Window {
                 match self.dragging {
                     Dragging::CouldStillBeClick(id, prev_pos) => {
                         if prev_pos != pos {
-                            if let Some(handle) = self.handles.get_mut(id) {
-                                handle.x -= prev_pos.x - pos.x;
-                            }
+                            let pos = update_handle_pos(id, prev_pos, pos);
                             self.dragging = Dragging::ForSure(id, pos);
                         }
                     }
                     Dragging::ForSure(id, prev_pos) => {
-                        if let Some(handle) = self.handles.get_mut(id) {
-                            handle.x -= prev_pos.x - pos.x;
-                        }
+                        let pos = update_handle_pos(id, prev_pos, pos);
                         self.dragging = Dragging::ForSure(id, pos);
                     }
-                    Dragging::None => {}
+                    Dragging::None => {
+                        if id.is_none() {
+                            if let Some(handle) =
+                                self.hovered_item.and_then(|id| self.handles.get_mut(id))
+                            {
+                                handle.style = PointStyle::default();
+                            }
+                        }
+                        self.hovered_item = id;
+                    }
                 }
             }
             WindowOperation::MouseUp(pos) => {
@@ -181,8 +227,8 @@ impl Window {
                         self.dragging = Dragging::None;
                     }
                     Dragging::ForSure(id, prev_pos) => {
+                        update_handle_pos(id, prev_pos, pos);
                         if let Some(handle) = self.handles.get_mut(id) {
-                            handle.x -= prev_pos.x - pos.x;
                             handle.style = PointStyle::default();
                         }
                         self.dragging = Dragging::None;
@@ -191,15 +237,6 @@ impl Window {
                 }
             }
         }
-        let left_side_left = 0.0;
-        let left_side_right = left_side_left + window_builder.left_side_width as f32;
-        let right_side_left = left_side_right + window_builder.offset as f32;
-
-        window_builder.left_side_width = self.handles[1].x.round() as usize;
-        window_builder.right_side_width = (self.handles[3].x - left_side_right)
-            .floor()
-            .clamp(1.0, f32::MAX) as usize;
-        self.curve = window_builder.build();
 
         let yellow: iced::Color = iced::Color::from_rgb8(238, 230, 0);
         let green: iced::Color = iced::Color::from_rgb8(50, 205, 50);
@@ -239,14 +276,10 @@ impl WindowHandle {
 
 impl ImpulseResponseTab {
     pub fn new() -> Self {
-        let window_settings = WindowSettings::new(44_100);
-        let window = Window::new(&window_settings.window_builder);
-
         Self {
-            window_settings,
             selected: None,
             chart_data: ChartData::default(),
-            window,
+            window: None,
         }
     }
 
@@ -262,7 +295,7 @@ impl ImpulseResponseTab {
                 self.selected = Some(id);
 
                 if let Some(ir) = impulse_response.get(&id) {
-                    self.window_settings = WindowSettings::new(ir.data.len());
+                    self.window = Some(Window::new(ir.sample_rate, ir.data.len()));
 
                     (Task::none(), None)
                 } else {
@@ -285,7 +318,7 @@ impl ImpulseResponseTab {
                 }
             }
             Message::ImpulseResponseComputed((id, ir)) => {
-                self.window_settings = WindowSettings::new(ir.data.len());
+                self.window = Some(Window::new(ir.sample_rate, ir.data.len()));
 
                 (Task::none(), Some(Event::ImpulseResponseComputed(id, ir)))
             }
@@ -294,14 +327,11 @@ impl ImpulseResponseTab {
 
                 (Task::none(), None)
             }
-            Message::WindowSettings(msg) => {
-                self.window_settings.update(msg);
-
-                (Task::none(), None)
-            }
             Message::Window(operation) => {
-                self.window
-                    .apply(&mut self.window_settings.window_builder, operation);
+                if let Some(window) = self.window.as_mut() {
+                    window.apply(operation, self.chart_data.time_unit);
+                }
+
                 (Task::none(), None)
             }
         }
@@ -361,13 +391,8 @@ impl ImpulseResponseTab {
             .align_y(Alignment::Center)
             .spacing(10);
 
-            let chart = chart_view(&self.chart_data, impulse_response, &self.window);
-            let window_settings = if self.chart_data.show_window {
-                Some(self.window_settings.view().map(Message::WindowSettings))
-            } else {
-                None
-            };
-            container(column![chart_menu, chart].push_maybe(window_settings))
+            let chart = chart_view(&self.chart_data, impulse_response, self.window.as_ref());
+            container(column![chart_menu, chart])
         } else {
             container(text(
                 "Please select a measurement to compute the corresponding impulse response.",
@@ -387,7 +412,7 @@ impl ImpulseResponseTab {
 fn chart_view<'a>(
     chart_data: &'a ChartData,
     impulse_response: &'a raumklang_core::ImpulseResponse,
-    window: &'a Window,
+    window: Option<&'a Window>,
 ) -> Element<'a, Message> {
     let max = impulse_response
         .data
@@ -433,44 +458,48 @@ fn chart_view<'a>(
     let chart = Chart::new()
         .width(Length::Fill)
         .height(Length::Fill)
+        .x_range(0.0..=x_scale_fn(44_100.0, sample_rate))
         .y_labels(Labels::default().format(&|v| format!("{v:.2}")))
         .push_series(line_series(series).color(iced::Color::from_rgb8(2, 125, 66)));
 
-    let chart =
-        if chart_data.show_window {
-            chart
-                .push_series(
-                    line_series(window.curve.iter().copied().enumerate().map(move |(i, s)| {
-                        (x_scale_fn(i as f32, sample_rate), y_scale_fn(s, max))
-                    }))
-                    .color(iced::Color::from_rgb8(255, 0, 0)),
-                )
-                .push_series(
-                    point_series(window.handles.iter().map(move |handle| {
-                        let x = x_scale_fn(handle.x, sample_rate);
-                        let y = y_scale_fn(handle.y, max);
-                        let style = handle.style.clone();
+    if !chart_data.show_window {
+        return chart.into();
+    }
 
-                        WindowHandle { x, y, style }
-                    }))
-                    .with_id(ItemId::PointList)
-                    .color(iced::Color::from_rgb8(0, 255, 0))
-                    .style(|item| item.style.clone()),
-                )
-                .on_press(|state: &pliced::chart::State<ItemId>| {
-                    let id = state.items().and_then(|l| l.first().map(|i| i.1));
-                    Message::Window(WindowOperation::MouseDown(id, state.get_offset()))
-                })
-                .on_move(|state: &pliced::chart::State<ItemId>| {
-                    let id = state.items().and_then(|l| l.first().map(|i| i.1));
-                    Message::Window(WindowOperation::OnMove(id, state.get_offset()))
-                })
-                .on_release(|state: &pliced::chart::State<ItemId>| {
-                    Message::Window(WindowOperation::MouseUp(state.get_offset()))
-                })
-        } else {
-            chart
-        };
+    let chart = if let Some(window) = window {
+        chart
+            // .push_series(
+            //     line_series(window.curve.iter().copied().enumerate().map(move |(i, s)| {
+            //         (x_scale_fn(i as f32, sample_rate), y_scale_fn(s, max))
+            //     }))
+            //     .color(iced::Color::from_rgb8(255, 0, 0)),
+            // )
+            .push_series(
+                point_series(window.handles.iter().map(move |handle| {
+                    let x = x_scale_fn(handle.x, sample_rate);
+                    let y = y_scale_fn(handle.y, max);
+                    let style = handle.style.clone();
+
+                    WindowHandle { x, y, style }
+                }))
+                .with_id(ItemId::PointList)
+                .color(iced::Color::from_rgb8(0, 255, 0))
+                .style(|item| item.style.clone()),
+            )
+            .on_press(|state: &pliced::chart::State<ItemId>| {
+                let id = state.items().and_then(|l| l.first().map(|i| i.1));
+                Message::Window(WindowOperation::MouseDown(id, state.get_offset()))
+            })
+            .on_move(|state: &pliced::chart::State<ItemId>| {
+                let id = state.items().and_then(|l| l.first().map(|i| i.1));
+                Message::Window(WindowOperation::OnMove(id, state.get_offset()))
+            })
+            .on_release(|state: &pliced::chart::State<ItemId>| {
+                Message::Window(WindowOperation::MouseUp(state.get_offset()))
+            })
+    } else {
+        chart
+    };
 
     chart.into()
 }
