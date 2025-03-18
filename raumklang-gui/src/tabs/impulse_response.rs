@@ -278,7 +278,7 @@ impl Window {
         }
     }
 
-    fn curve(&self) -> impl Iterator<Item = (usize, f32)> + Clone {
+    fn curve(&self) -> impl Iterator<Item = (f32, f32)> + Clone {
         let left_side = raumklang_core::Window::Hann;
         let right_side = raumklang_core::Window::Hann;
 
@@ -291,7 +291,7 @@ impl Window {
                 .build()
                 .into_iter()
                 .enumerate()
-                .map(|(x, y)| (x + self.handles[0].x.round() as usize, y))
+                .map(|(x, y)| (x as f32 + self.handles[0].x, y))
                 .collect();
 
         window.into_iter()
@@ -492,7 +492,7 @@ fn chart_view<'a>(
     let chart = Chart::new()
         .width(Length::Fill)
         .height(Length::Fill)
-        .x_range(0.0..=x_scale_fn(44_100.0, sample_rate))
+        .x_range(x_scale_fn(-44_100.0, sample_rate)..=x_scale_fn(44_100.0, sample_rate))
         .y_labels(Labels::default().format(&|v| format!("{v:.2}")))
         .push_series(line_series(series).color(iced::Color::from_rgb8(2, 125, 66)));
 
@@ -505,8 +505,7 @@ fn chart_view<'a>(
         chart
             .push_series(
                 line_series(
-                    curve
-                        .map(move |(i, s)| (x_scale_fn(i as f32, sample_rate), y_scale_fn(s, max))),
+                    curve.map(move |(i, s)| (x_scale_fn(i, sample_rate), y_scale_fn(s, max))),
                 )
                 .color(iced::Color::from_rgb8(255, 0, 0)),
             )
