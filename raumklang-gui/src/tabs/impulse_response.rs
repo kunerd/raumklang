@@ -11,7 +11,7 @@ use iced::{
     Length::{self, FillPortion},
     Task,
 };
-use pliced::chart::{line_series, point_series, Chart, Labels, PointStyle};
+use pliced::chart::{line_series, point_series, Chart, Labels, Margin, PointStyle};
 use raumklang_core::WindowBuilder;
 
 use crate::{
@@ -492,7 +492,11 @@ fn chart_view<'a>(
     let chart = Chart::new()
         .width(Length::Fill)
         .height(Length::Fill)
-        .x_range(x_scale_fn(-44_100.0, sample_rate)..=x_scale_fn(44_100.0, sample_rate))
+        .margin(Margin {
+            bottom: 20.0,
+            ..Default::default()
+        })
+        .x_range(x_scale_fn(-44_10.0, sample_rate)..=x_scale_fn(44_100.0, sample_rate))
         .y_labels(Labels::default().format(&|v| format!("{v:.2}")))
         .push_series(line_series(series).color(iced::Color::from_rgb8(2, 125, 66)));
 
@@ -505,14 +509,14 @@ fn chart_view<'a>(
         chart
             .push_series(
                 line_series(
-                    curve.map(move |(i, s)| (x_scale_fn(i, sample_rate), y_scale_fn(s, max))),
+                    curve.map(move |(i, s)| (x_scale_fn(i, sample_rate), y_scale_fn(s, 1.0))),
                 )
                 .color(iced::Color::from_rgb8(255, 0, 0)),
             )
             .push_series(
                 point_series(window.handles.iter().map(move |handle| {
                     let x = x_scale_fn(handle.x, sample_rate);
-                    let y = y_scale_fn(handle.y, max);
+                    let y = y_scale_fn(handle.y, 1.0);
                     let style = handle.style.clone();
 
                     WindowHandle { x, y, style }
