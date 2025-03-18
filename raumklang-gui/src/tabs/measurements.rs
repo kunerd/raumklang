@@ -10,7 +10,7 @@ use iced::{
     Alignment, Element, Length, Point, Subscription, Task,
 };
 
-use pliced::chart::{line_series, Chart, Labels, Margin};
+use pliced::chart::{line_series, Chart, Labels};
 
 use raumklang_core::WavLoadError;
 

@@ -24,7 +24,8 @@ pub struct WindowSettings {
 impl WindowSettings {
     pub fn new(max_width: usize) -> Self {
         let half_width = max_width / 2;
-        let mut window_builder = WindowBuilder::new(Window::Hann, half_width, Window::Hann, half_width);
+        let mut window_builder =
+            WindowBuilder::new(Window::Hann, half_width, Window::Hann, half_width);
         window_builder.offset = 1;
         Self {
             window_builder,
