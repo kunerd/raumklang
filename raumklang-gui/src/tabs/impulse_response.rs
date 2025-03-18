@@ -1,8 +1,6 @@
-use core::panic;
 use std::collections::HashMap;
 
 use iced::{
-    alignment::Horizontal::Right,
     widget::{
         button, checkbox, column, container, horizontal_rule, horizontal_space, pick_list, row,
         scrollable, text,
@@ -11,11 +9,10 @@ use iced::{
     Length::{self, FillPortion},
     Task,
 };
-use pliced::chart::{line_series, point_series, Chart, Labels, Margin, PointStyle};
+use pliced::chart::{line_series, point_series, Chart, Labels, PointStyle};
 use raumklang_core::WindowBuilder;
 
 use crate::{
-    components::window_settings::{self, WindowSettings},
     data,
     widgets::charts::{AmplitudeUnit, TimeSeriesUnit},
     OfflineMeasurement,
@@ -55,8 +52,8 @@ struct WindowHandle {
     style: PointStyle,
 }
 
-#[derive(Debug, Clone)]
-enum ItemId {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SeriesId {
     PointList,
 }
 
@@ -492,10 +489,6 @@ fn chart_view<'a>(
     let chart = Chart::new()
         .width(Length::Fill)
         .height(Length::Fill)
-        .margin(Margin {
-            bottom: 20.0,
-            ..Default::default()
-        })
         .x_range(x_scale_fn(-44_10.0, sample_rate)..=x_scale_fn(44_100.0, sample_rate))
         .y_labels(Labels::default().format(&|v| format!("{v:.2}")))
         .push_series(line_series(series).color(iced::Color::from_rgb8(2, 125, 66)));
@@ -521,19 +514,19 @@ fn chart_view<'a>(
 
                     WindowHandle { x, y, style }
                 }))
-                .with_id(ItemId::PointList)
+                .with_id(SeriesId::PointList)
                 .color(iced::Color::from_rgb8(0, 255, 0))
-                .style(|item| item.style.clone()),
+                .style_for_each(|item| item.style.clone()),
             )
-            .on_press(|state: &pliced::chart::State<ItemId>| {
+            .on_press(|state: &pliced::chart::State<SeriesId>| {
                 let id = state.items().and_then(|l| l.first().map(|i| i.1));
                 Message::Window(WindowOperation::MouseDown(id, state.get_offset()))
             })
-            .on_move(|state: &pliced::chart::State<ItemId>| {
+            .on_move(|state: &pliced::chart::State<SeriesId>| {
                 let id = state.items().and_then(|l| l.first().map(|i| i.1));
                 Message::Window(WindowOperation::OnMove(id, state.get_offset()))
             })
-            .on_release(|state: &pliced::chart::State<ItemId>| {
+            .on_release(|state: &pliced::chart::State<SeriesId>| {
                 Message::Window(WindowOperation::MouseUp(state.get_offset()))
             })
     } else {
