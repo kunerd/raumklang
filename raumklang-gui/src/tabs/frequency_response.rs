@@ -10,7 +10,6 @@ use iced::{
     Length::{self, FillPortion},
     Task,
 };
-use plotters::style::{Color as _, Palette, Palette99, RGBAColor};
 use rand::Rng;
 
 use std::collections::HashMap;
@@ -40,12 +39,12 @@ enum EntryState {
     Loading {
         name: String,
         show_in_graph: bool,
-        color: RGBAColor,
+        color: iced::Color,
     },
     Loaded {
         name: String,
         show_in_graph: bool,
-        color: RGBAColor,
+        color: iced::Color,
         frequency_response_id: data::MeasurementId,
     },
 }
@@ -145,12 +144,7 @@ impl FrequencyResponse {
                             .enumerate()
                             .map(|(i, s)| (i as f32, dbfs(s.re.abs()))),
                     )
-                    .color(Color::from_rgba8(
-                        color.0,
-                        color.1,
-                        color.2,
-                        color.3 as f32,
-                    ))
+                    .color(color)
                 });
 
             let chart: Chart<_, (), _> = Chart::new()
@@ -222,7 +216,6 @@ impl EntryState {
                 show_in_graph,
                 color,
             } => {
-                let color = Color::from_rgba8(color.0, color.1, color.2, color.3 as f32);
                 let content = column![
                     text(name),
                     row![
@@ -230,7 +223,7 @@ impl EntryState {
                             //.on_toggle(ListEntryMessage::ShowInGraphToggled)
                             .width(Length::Shrink),
                         horizontal_space(),
-                        colored_circle(10.0, color),
+                        colored_circle(10.0, *color),
                     ]
                     .align_y(Alignment::Center)
                 ]
@@ -258,7 +251,6 @@ impl EntryState {
                 color,
                 frequency_response_id: _,
             } => {
-                let color = Color::from_rgba8(color.0, color.1, color.2, color.3 as f32);
                 let content = column![
                     text(name),
                     row![
@@ -266,7 +258,7 @@ impl EntryState {
                             .on_toggle(ListEntryMessage::ShowInGraphToggled)
                             .width(Length::Shrink),
                         horizontal_space(),
-                        colored_circle(10.0, color),
+                        colored_circle(10.0, *color),
                     ]
                     .align_y(Alignment::Center)
                 ]
@@ -287,10 +279,15 @@ impl EntryState {
     }
 }
 
-fn random_color() -> RGBAColor {
-    let max = Palette99::COLORS.len();
-    let index = rand::thread_rng().gen_range(0..max);
-    Palette99::pick(index).to_rgba()
+fn random_color() -> iced::Color {
+    const MAX_COLOR_VALUE: u8 = 255;
+
+    // TODO: replace with color palette
+    let red = rand::thread_rng().gen_range(0..MAX_COLOR_VALUE);
+    let green = rand::thread_rng().gen_range(0..MAX_COLOR_VALUE);
+    let blue = rand::thread_rng().gen_range(0..MAX_COLOR_VALUE);
+
+    iced::Color::from_rgb8(red, green, blue)
 }
 
 async fn compute_frequency_response(

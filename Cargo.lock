@@ -1699,9 +1699,6 @@ dependencies = [
  "iced_aw",
  "interpolation",
  "pliced",
- "plotters",
- "plotters-backend",
- "plotters-iced",
  "rand",
  "raumklang-core",
  "rfd",
@@ -3197,19 +3194,6 @@ checksum = "72ce181e3f6bf82d6c1dc569103ca7b1bd964c60ba03d7e6cdfbb3e3eb7f7405"
 dependencies = [
  "gif",
  "image",
- "plotters-backend",
-]
-
-[[package]]
-name = "plotters-iced"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a14e2dda1ebc8fcbf248263fb5831ca0b85edf80c412e2b44b6caa388f0589a"
-dependencies = [
- "iced_graphics",
- "iced_widget",
- "once_cell",
- "plotters",
  "plotters-backend",
 ]
 
