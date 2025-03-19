@@ -11,9 +11,6 @@ iced_aw = { version = "0.12.0", default-features = false, features = ["tabs", "m
 pliced = { git = "https://github.com/kunerd/pliced.git", branch = "main" }
 tokio = { version = "1.35", features = [ "fs" ] }
 rfd = "0.13"
-plotters-iced = "0.11"
-plotters-backend = "0.3"
-plotters = { version = "0.3", features = ["chrono"] }
 hound = "3.5"
 thiserror = "1.0"
 serde = { version = "1.0", features = ["derive"] }
