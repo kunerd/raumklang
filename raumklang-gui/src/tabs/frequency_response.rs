@@ -1,7 +1,7 @@
 use super::compute_impulse_response;
 use crate::{data, widgets::colored_circle};
 
-use pliced::plotters::{line_series, Chart};
+use pliced::chart::{line_series, Chart};
 use raumklang_core::dbfs;
 
 use iced::{
@@ -104,10 +104,10 @@ impl FrequencyResponse {
         (Self { entries }, Task::batch(tasks))
     }
 
-    pub fn view(
-        &self,
-        frequency_responses: &HashMap<data::MeasurementId, raumklang_core::FrequencyResponse>,
-    ) -> Element<'_, Message> {
+    pub fn view<'a>(
+        &'a self,
+        frequency_responses: &'a HashMap<data::MeasurementId, raumklang_core::FrequencyResponse>,
+    ) -> Element<'a, Message> {
         let entries = self
             .entries
             .iter()
@@ -137,7 +137,7 @@ impl FrequencyResponse {
                     } => Some((frequency_response_id, color)),
                     _ => None,
                 })
-                .flat_map(|(id, color)| frequency_responses.get(&id).map(|fr| (fr.clone(), color)))
+                .flat_map(|(id, color)| frequency_responses.get(&id).map(|fr| (fr, color)))
                 .map(|(fr, color)| {
                     line_series(
                         fr.data
@@ -153,10 +153,8 @@ impl FrequencyResponse {
                     ))
                 });
 
-            let chart = Chart::new()
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .x_range(0.0..1000.0)
+            let chart: Chart<_, (), _> = Chart::new()
+                .x_range(0.0..=1000.0)
                 .extend_series(series_list);
 
             container(chart)
