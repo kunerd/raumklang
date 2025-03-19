@@ -3154,6 +3154,7 @@ checksum = "953ec861398dccce10c670dfeaf3ec4911ca479e9c02154b3a215178c5f566f2"
 [[package]]
 name = "pliced"
 version = "0.1.0"
+source = "git+https://github.com/kunerd/pliced.git?branch=main#2068fe155091d75bc1e319d2f2dfd4046b4f726e"
 dependencies = [
  "iced",
  "once_cell",
