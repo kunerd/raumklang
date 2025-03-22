@@ -1,4 +1,4 @@
-mod components;
+// mod components;
 mod data;
 mod tabs;
 mod widgets;
@@ -329,10 +329,9 @@ impl Raumklang {
                 };
 
                 let (tab, task) = match tab_id {
-                    TabId::Measurements => (
-                        Tab::Measurements(tabs::Measurements::new()),
-                        Task::none(),
-                    ),
+                    TabId::Measurements => {
+                        (Tab::Measurements(tabs::Measurements::new()), Task::none())
+                    }
                     TabId::ImpulseResponse => (
                         Tab::ImpulseResponses(tabs::ImpulseResponseTab::new()),
                         Task::none(),
