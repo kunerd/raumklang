@@ -21,6 +21,7 @@ pub struct Id<T> {
 #[derive(Debug)]
 pub enum MeasurementState<L, O> {
     Loaded(L),
+    Loading,
     NotLoaded(O),
 }
 

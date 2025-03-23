@@ -12,9 +12,21 @@ pub struct RecentProjects {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Project {
+pub struct ProjectFile {
     pub loopback: Option<ProjectLoopback>,
     pub measurements: Vec<ProjectMeasurement>,
+}
+impl ProjectFile {
+    pub async fn load(path: impl AsRef<Path>) -> (Self, PathBuf) {
+        let path = path.as_ref();
+        let content = tokio::fs::read(path).await.unwrap();
+        // .map_err(|err| FileError::Io(err.kind()))?;
+
+        let project = serde_json::from_slice(&content).unwrap();
+        // .map_err(|err| FileError::Json(err.to_string()))?;
+
+        (project, path.to_path_buf())
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

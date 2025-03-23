@@ -4,10 +4,10 @@ use iced::{
     keyboard,
     mouse::ScrollDelta,
     widget::{
-        self, button, column, container, horizontal_rule, horizontal_space, row, scrollable,
-        text::Wrapping,
+        self, button, column, container, horizontal_rule, horizontal_space, row, scrollable, stack,
+        text, text::Wrapping,
     },
-    Alignment, Element, Length, Point, Subscription, Task,
+    Alignment, Color, Element, Length, Point, Subscription, Task,
 };
 
 use pliced::chart::{line_series, Chart, Labels};
@@ -45,7 +45,7 @@ pub enum Message {
 #[derive(Debug, Clone)]
 pub enum Event {
     Load,
-    Remove(usize, data::MeasurementId),
+    // Remove(usize, data::MeasurementId),
     LoadLoopback,
     RemoveLoopback,
 }
@@ -69,72 +69,74 @@ impl Measurements {
     pub fn update(
         &mut self,
         msg: Message,
-        loopback: Option<&data::Loopback>,
-        measurements: &data::Store<data::Measurement, OfflineMeasurement>,
+        // loopback: Option<&data::Loopback>,
+        // measurements: &data::Store<data::Measurement, OfflineMeasurement>,
+        // measurements: &Vec<MeasurementState<data::Measurement, OfflineMeasurement>>,
     ) -> (Task<Message>, Option<Event>) {
-        match msg {
-            Message::LoadLoopbackMeasurement => (Task::none(), Some(Event::LoadLoopback)),
-            Message::RemoveLoopbackMeasurement => (Task::none(), Some(Event::RemoveLoopback)),
-            Message::LoadMeasurement => (Task::none(), Some(Event::Load)),
-            Message::RemoveMeasurement(index) => {
-                let event = measurements
-                    .get_loaded_id(index)
-                    .map(|id| Event::Remove(index, id));
+        // match msg {
+        //     Message::LoadLoopbackMeasurement => (Task::none(), Some(Event::LoadLoopback)),
+        //     Message::RemoveLoopbackMeasurement => (Task::none(), Some(Event::RemoveLoopback)),
+        //     Message::LoadMeasurement => (Task::none(), Some(Event::Load)),
+        //     Message::RemoveMeasurement(index) => {
+        //         let event = measurements
+        //             .get_loaded_id(index)
+        //             .map(|id| Event::Remove(index, id));
 
-                (Task::none(), event)
-            }
-            Message::MeasurementSelected(selected) => {
-                let signal = match selected {
-                    SelectedMeasurement::Loopback => {
-                        loopback.map(|l| raumklang_core::Measurement::from(l.0.data.clone()))
-                    }
-                    SelectedMeasurement::Measurement(id) => {
-                        measurements.get(id).and_then(|m| match m {
-                            data::MeasurementState::Loaded(m) => Some(m.data.clone()),
-                            data::MeasurementState::NotLoaded(_) => None,
-                        })
-                    }
-                };
+        //         (Task::none(), event)
+        //     }
+        //     Message::MeasurementSelected(selected) => {
+        //         let signal = match selected {
+        //             SelectedMeasurement::Loopback => {
+        //                 loopback.map(|l| raumklang_core::Measurement::from(l.0.data.clone()))
+        //             }
+        //             SelectedMeasurement::Measurement(id) => {
+        //                 measurements.get(id).and_then(|m| match m {
+        //                     data::MeasurementState::Loaded(m) => Some(m.data.clone()),
+        //                     data::MeasurementState::NotLoaded(_) => None,
+        //                 })
+        //             }
+        //         };
 
-                self.x_range = signal.map_or(0.0..=10.0, |s| 0.0..=s.duration() as f32);
-                self.x_max = Some(*self.x_range.end());
-                self.selected = Some(selected);
+        //         self.x_range = signal.map_or(0.0..=10.0, |s| 0.0..=s.duration() as f32);
+        //         self.x_max = Some(*self.x_range.end());
+        //         self.selected = Some(selected);
 
-                (Task::none(), None)
-            }
-            Message::ChartScroll(pos, scroll_delta) => {
-                let Some(pos) = pos else {
-                    return (Task::none(), None);
-                };
+        //         (Task::none(), None)
+        //     }
+        //     Message::ChartScroll(pos, scroll_delta) => {
+        //         let Some(pos) = pos else {
+        //             return (Task::none(), None);
+        //         };
 
-                let Some(ScrollDelta::Lines { y, .. }) = scroll_delta else {
-                    return (Task::none(), None);
-                };
+        //         let Some(ScrollDelta::Lines { y, .. }) = scroll_delta else {
+        //             return (Task::none(), None);
+        //         };
 
-                match (self.shift_key_pressed, y.is_sign_positive()) {
-                    (true, true) => self.scroll_right(),
-                    (true, false) => self.scroll_left(),
-                    (false, true) => self.zoom_in(pos),
-                    (false, false) => self.zoom_out(pos),
-                }
+        //         match (self.shift_key_pressed, y.is_sign_positive()) {
+        //             (true, true) => self.scroll_right(),
+        //             (true, false) => self.scroll_left(),
+        //             (false, true) => self.zoom_in(pos),
+        //             (false, false) => self.zoom_out(pos),
+        //         }
 
-                (Task::none(), None)
-            }
-            Message::ShiftKeyPressed => {
-                self.shift_key_pressed = true;
-                (Task::none(), None)
-            }
-            Message::ShiftKeyReleased => {
-                self.shift_key_pressed = false;
-                (Task::none(), None)
-            }
-        }
+        //         (Task::none(), None)
+        //     }
+        //     Message::ShiftKeyPressed => {
+        //         self.shift_key_pressed = true;
+        //         (Task::none(), None)
+        //     }
+        //     Message::ShiftKeyReleased => {
+        //         self.shift_key_pressed = false;
+        //         (Task::none(), None)
+        //     }
+        // }
+        (Task::none(), None)
     }
 
     pub fn view<'a>(
         &'a self,
         loopback: Option<&'a data::MeasurementState<data::Loopback, OfflineMeasurement>>,
-        measurements: &'a data::Store<data::Measurement, OfflineMeasurement>,
+        measurements: &'a Vec<data::MeasurementState<data::Measurement, OfflineMeasurement>>,
     ) -> Element<'a, Message> {
         let measurements_list = collecting_list(self.selected.as_ref(), loopback, measurements);
 
@@ -145,12 +147,14 @@ impl Measurements {
         let signal = match self.selected {
             Some(SelectedMeasurement::Loopback) => loopback.and_then(|l| match l {
                 data::MeasurementState::Loaded(m) => Some(m.0.data.0.iter()),
-                data::MeasurementState::NotLoaded(_) => None,
+                data::MeasurementState::NotLoaded(_) | data::MeasurementState::Loading(_) => None,
             }),
             Some(SelectedMeasurement::Measurement(id)) => {
                 measurements.get(id).and_then(|m| match m {
                     data::MeasurementState::Loaded(signal) => Some(signal.data.iter()),
-                    data::MeasurementState::NotLoaded(_) => None,
+                    data::MeasurementState::NotLoaded(_) | data::MeasurementState::Loading(_) => {
+                        None
+                    }
                 })
             }
             None => None,
@@ -282,10 +286,11 @@ impl Measurements {
 fn collecting_list<'a>(
     selected: Option<&SelectedMeasurement>,
     loopback: Option<&'a data::MeasurementState<data::Loopback, OfflineMeasurement>>,
-    measurements: &'a data::Store<data::Measurement, OfflineMeasurement>,
+    measurements: &'a Vec<data::MeasurementState<data::Measurement, OfflineMeasurement>>,
 ) -> Element<'a, Message> {
     let loopback_entry = {
         let content: Element<_> = match &loopback {
+            Some(data::MeasurementState::Loading(signal)) => loading(signal),
             Some(data::MeasurementState::Loaded(signal)) => loopback_list_entry(selected, signal),
             Some(data::MeasurementState::NotLoaded(signal)) => {
                 offline_signal_list_entry(signal, Message::RemoveLoopbackMeasurement)
@@ -309,6 +314,7 @@ fn collecting_list<'a>(
                     .iter()
                     .enumerate()
                     .map(|(index, state)| match state {
+                        data::MeasurementState::Loading(signal) => loading(signal),
                         data::MeasurementState::Loaded(signal) => {
                             measurement_list_entry(selected, signal, index)
                         }
@@ -328,6 +334,25 @@ fn collecting_list<'a>(
     column!(loopback_entry, measurement_entries)
         .spacing(10)
         .into()
+}
+
+fn loading<'a>(signal: &'a OfflineMeasurement) -> Element<'a, Message> {
+    stack!(
+        column!(row![
+            widget::text(signal.name.as_ref().map(String::as_str).unwrap_or("Unkown")),
+            horizontal_space(),
+        ],),
+        container(text("Loading ..."))
+            .center(Length::Fill)
+            .style(|theme| container::Style {
+                border: container::rounded_box(theme).border,
+                background: Some(iced::Background::Color(Color::from_rgba(
+                    0.0, 0.0, 0.0, 0.8,
+                ))),
+                ..Default::default()
+            })
+    )
+    .into()
 }
 
 fn signal_list_category<'a>(
@@ -354,7 +379,7 @@ fn offline_signal_list_entry(
     delete_msg: Message,
 ) -> Element<'_, Message> {
     column!(row![
-        widget::text(&signal.name),
+        widget::text(signal.name.as_ref().map(String::as_str).unwrap_or("Unkown")),
         horizontal_space(),
         button(delete_icon())
             .on_press(delete_msg)
