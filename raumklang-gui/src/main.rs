@@ -43,73 +43,20 @@ enum Message {
     // ProjectFileLoaded((data::ProjectFile, PathBuf)),
     Landing(landing::Message),
     Measurements(measurements::Message),
-    ProjectLoaded(Result<(Arc<Project>, PathBuf), PickAndLoadError>),
+    ProjectLoaded(Result<(Arc<data::Project>, PathBuf), PickAndLoadError>),
 }
 
 struct Raumklang {
     tab: Tab,
-    project: Project,
+    project: data::Project,
     recent_projects: RecentProjects,
-}
-
-#[derive(Debug)]
-struct Project {
-    loopback: Option<data::Loopback>,
-    measurements: Vec<data::Measurement>,
-}
-
-impl Project {
-    fn new() -> Self {
-        Self {
-            loopback: None,
-            measurements: Vec::new(),
-        }
-    }
-
-    async fn load(project_file: data::ProjectFile) -> Self {
-        let loopback = match project_file.loopback {
-            Some(loopback) => Self::load_signal_from_file(loopback.path()).await.ok(),
-            None => None,
-        };
-
-        let measurements = join_all(
-            project_file
-                .measurements
-                .iter()
-                .map(|p| Self::load_signal_from_file(p.path.clone())),
-        )
-        .await
-        .into_iter()
-        .flatten()
-        .collect();
-
-        Self {
-            loopback,
-            measurements,
-        }
-    }
-
-    async fn load_signal_from_file<P, T>(path: P) -> Result<T, WavLoadError>
-    where
-        T: FromFile + Send + 'static,
-        P: AsRef<Path> + Send + Sync,
-    {
-        let path = path.as_ref().to_owned();
-        tokio::task::spawn_blocking(move || T::from_file(path))
-            .await
-            .map_err(|_err| WavLoadError::Other)?
-    }
-
-    fn has_no_measurements(&self) -> bool {
-        self.loopback.is_none() && self.measurements.is_empty()
-    }
 }
 
 impl Raumklang {
     fn new() -> (Self, Task<Message>) {
         let app = Self {
             tab: Tab::Loading,
-            project: Project::new(),
+            project: data::Project::new(),
             recent_projects: RecentProjects::new(MAX_RECENT_PROJECTS_ENTRIES),
         };
         let task = Task::perform(RecentProjects::load(), Message::RecentProjectsLoaded);
@@ -144,7 +91,7 @@ impl Raumklang {
                 landing::Message::Load => Task::future(
                     pick_file_and_load()
                         .and_then(|(file, path)| async {
-                            Ok((Arc::new(Project::load(file).await), path))
+                            Ok((Arc::new(data::Project::load(file).await), path))
                         })
                         .map(Message::ProjectLoaded),
                 ),
@@ -152,7 +99,7 @@ impl Raumklang {
                     Some(path) => Task::future(
                         load_project_from_file(path.clone())
                             .and_then(async |(file, path)| {
-                                Ok((Arc::new(Project::load(file).await), path))
+                                Ok((Arc::new(data::Project::load(file).await), path))
                             })
                             .map(Message::ProjectLoaded),
                     ),
