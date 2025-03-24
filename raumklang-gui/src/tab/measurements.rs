@@ -3,6 +3,7 @@ use crate::{
     delete_icon, Project,
 };
 
+use pliced::chart::{line_series, Chart, Labels};
 use raumklang_core::WavLoadError;
 
 use iced::{
@@ -205,10 +206,43 @@ impl Measurements {
         .width(Length::FillPortion(1));
 
         let content = {
-            let content = if project.has_no_measurements() {
-                text("You need to load one loopback or measurement signal at least.")
+            let content: Element<_> = if project.has_no_measurements() {
+                text("You need to load one loopback or measurement signal at least.").into()
             } else {
-                text("Not implemented, yet")
+                let signal = self
+                    .selected
+                    .as_ref()
+                    .and_then(|selection| match selection {
+                        Selected::Loopback => project.loopback.as_ref().map(|l| &l.0.data.0),
+                        Selected::Measurement(id) => project.measurements.get(*id).map(|m| &m.data),
+                    });
+
+                if let Some(signal) = signal {
+                    Chart::<_, (), _>::new()
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        // .x_range(self.x_range.clone())
+                        .x_labels(Labels::default().format(&|v| format!("{v:.0}")))
+                        .y_labels(Labels::default().format(&|v| format!("{v:.1}")))
+                        .push_series(
+                            line_series(
+                                signal
+                                    .iter()
+                                    .copied()
+                                    .enumerate()
+                                    .map(|(i, s)| (i as f32, s)),
+                            )
+                            .color(iced::Color::from_rgb8(2, 125, 66)),
+                        )
+                        // .on_scroll(|state: &pliced::chart::State<()>| {
+                        //     let pos = state.get_coords();
+                        //     let delta = state.scroll_delta();
+                        //     Message::ChartScroll(pos, delta)
+                        // })
+                        .into()
+                } else {
+                    text("Select a signal to view its data.").into()
+                }
             };
 
             container(content).center(Length::FillPortion(4))
