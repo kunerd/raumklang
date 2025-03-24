@@ -1,14 +1,13 @@
 pub mod landing;
-// pub mod measurements;
+pub mod measurements;
+
+pub use landing::landing;
+pub use measurements::Measurements;
 
 use iced::{
     widget::{container, text},
     Element, Length,
 };
-// use measurements::Measurements;
-pub use landing::landing;
-
-use std::ffi::OsStr;
 
 // pub mod impulse_response;
 // pub mod frequency_response;
@@ -19,7 +18,7 @@ use std::ffi::OsStr;
 pub enum Tab {
     Loading,
     Landing,
-    Measurements,
+    Measurements(Measurements),
 }
 
 pub fn loading<'a, Message: 'a>() -> Element<'a, Message> {
