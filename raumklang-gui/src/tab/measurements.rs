@@ -6,7 +6,6 @@ use crate::{
 use raumklang_core::WavLoadError;
 
 use iced::{
-    wgpu::core::pipeline::ColorStateError,
     widget::{
         self, button, column, container, horizontal_rule, horizontal_space, row, scrollable, text,
     },
@@ -41,14 +40,7 @@ pub enum Message {
     AddMeasurement,
     RemoveMeasurement(usize),
     MeasurementSignalLoaded(Result<Arc<data::Measurement>, Error>),
-    Select(Selected), // LoadMeasurement,
-                      // RemoveMeasurement(usize),
-                      // LoadLoopbackMeasurement,
-                      // RemoveLoopbackMeasurement,
-                      // MeasurementSelected(SelectedMeasurement),
-                      // ChartScroll(Option<Point>, Option<ScrollDelta>),
-                      // ShiftKeyPressed,
-                      // ShiftKeyReleased,
+    Select(Selected),
 }
 
 #[derive(Debug, Clone)]
@@ -84,13 +76,7 @@ impl Measurements {
         }
     }
 
-    pub fn update(
-        &mut self,
-        msg: Message,
-        // loopback: Option<&data::Loopback>,
-        // measurements: &data::Store<data::Measurement, OfflineMeasurement>,
-        // measurements: &Vec<MeasurementState<data::Measurement, OfflineMeasurement>>,
-    ) -> Action {
+    pub fn update(&mut self, msg: Message) -> Action {
         match msg {
             Message::AddLoopback => Action::Task(Task::perform(
                 pick_file_and_load_signal("Loopback"),
@@ -183,12 +169,7 @@ impl Measurements {
         // }
     }
 
-    pub fn view<'a>(
-        &'a self,
-        project: &'a Project,
-        // loopback: Option<&'a data::MeasurementState<data::Loopback, OfflineMeasurement>>,
-        // measurements: &'a Vec<data::MeasurementState<data::Measurement, OfflineMeasurement>>,
-    ) -> Element<'a, Message> {
+    pub fn view<'a>(&'a self, project: &'a Project) -> Element<'a, Message> {
         let sidebar = {
             let loopback = {
                 let (msg, content) = match project.loopback.as_ref() {
@@ -379,110 +360,6 @@ impl Measurements {
     //     }
 }
 
-async fn pick_file_and_load_signal<T>(file_type: impl AsRef<str>) -> Result<Arc<T>, Error>
-where
-    T: FromFile + Send + 'static,
-{
-    let handle = pick_file(file_type).await?;
-    load_signal_from_file(handle.path())
-        .await
-        .map(Arc::new)
-        .map_err(|err| Error::File(handle.path().to_path_buf(), Arc::new(err)))
-}
-
-async fn pick_file(file_type: impl AsRef<str>) -> Result<FileHandle, Error> {
-    rfd::AsyncFileDialog::new()
-        .set_title(format!("Choose {} file", file_type.as_ref()))
-        .add_filter("wav", &["wav", "wave"])
-        .add_filter("all", &["*"])
-        .pick_file()
-        .await
-        .ok_or(Error::DialogClosed)
-}
-
-async fn load_signal_from_file<P, T>(path: P) -> Result<T, WavLoadError>
-where
-    T: FromFile + Send + 'static,
-    P: AsRef<Path> + Send + Sync,
-{
-    let path = path.as_ref().to_owned();
-    tokio::task::spawn_blocking(move || T::from_file(path))
-        .await
-        .map_err(|_err| WavLoadError::Other)?
-}
-
-// fn collecting_list<'a>(
-//     selected: Option<&SelectedMeasurement>,
-//     loopback: Option<&'a data::MeasurementState<data::Loopback, OfflineMeasurement>>,
-//     measurements: &'a Vec<data::MeasurementState<data::Measurement, OfflineMeasurement>>,
-// ) -> Element<'a, Message> {
-//     let loopback_entry = {
-//         let content: Element<_> = match &loopback {
-//             Some(data::MeasurementState::Loading(signal)) => loading(signal),
-//             Some(data::MeasurementState::Loaded(signal)) => loopback_list_entry(selected, signal),
-//             Some(data::MeasurementState::NotLoaded(signal)) => {
-//                 offline_signal_list_entry(signal, Message::RemoveLoopbackMeasurement)
-//             }
-//             None => widget::text("Please load a loopback signal.").into(),
-//         };
-
-//         let add_msg = loopback
-//             .as_ref()
-//             .map_or(Some(Message::LoadLoopbackMeasurement), |_| None);
-
-//         signal_list_category("Loopback", add_msg, content)
-//     };
-
-//     let measurement_entries = {
-//         let content: Element<_> = {
-//             if measurements.is_empty() {
-//                 widget::text("Please load a measurement.").into()
-//             } else {
-//                 let entries: Vec<Element<_>> = measurements
-//                     .iter()
-//                     .enumerate()
-//                     .map(|(index, state)| match state {
-//                         data::MeasurementState::Loading(signal) => loading(signal),
-//                         data::MeasurementState::Loaded(signal) => {
-//                             measurement_list_entry(selected, signal, index)
-//                         }
-//                         data::MeasurementState::NotLoaded(signal) => {
-//                             offline_signal_list_entry(signal, Message::RemoveMeasurement(index))
-//                         }
-//                     })
-//                     .collect();
-
-//                 column(entries).spacing(5).into()
-//             }
-//         };
-
-//         signal_list_category("Measurements", Some(Message::LoadMeasurement), content)
-//     };
-
-//     column!(loopback_entry, measurement_entries)
-//         .spacing(10)
-//         .into()
-// }
-
-// fn loading<'a>(signal: &'a OfflineMeasurement) -> Element<'a, Message> {
-//     stack!(
-//         column!(row![
-//             widget::text(signal.name.as_ref().map(String::as_str).unwrap_or("Unkown")),
-//             horizontal_space(),
-//         ],),
-//         container(text("Loading ..."))
-//             .center(Length::Fill)
-//             .style(|theme| container::Style {
-//                 border: container::rounded_box(theme).border,
-//                 background: Some(iced::Background::Color(Color::from_rgba(
-//                     0.0, 0.0, 0.0, 0.8,
-//                 ))),
-//                 ..Default::default()
-//             })
-//     )
-//     .into()
-// }
-
 fn signal_list_category<'a>(
     name: &'a str,
     add_msg: Option<Message>,
@@ -501,20 +378,6 @@ fn signal_list_category<'a>(
         .spacing(5)
         .into()
 }
-
-// fn offline_signal_list_entry(
-//     signal: &crate::OfflineMeasurement,
-//     delete_msg: Message,
-// ) -> Element<'_, Message> {
-//     column!(row![
-//         widget::text(signal.name.as_ref().map(String::as_str).unwrap_or("Unkown")),
-//         horizontal_space(),
-//         button(delete_icon())
-//             .on_press(delete_msg)
-//             .style(button::danger)
-//     ],)
-//     .into()
-// }
 
 fn loopback_list_entry<'a>(
     selected: Option<&Selected>,
@@ -596,4 +459,36 @@ fn measurement_list_entry<'a>(
         .width(Length::Fill)
         .style(style)
         .into()
+}
+
+async fn pick_file_and_load_signal<T>(file_type: impl AsRef<str>) -> Result<Arc<T>, Error>
+where
+    T: FromFile + Send + 'static,
+{
+    let handle = pick_file(file_type).await?;
+    load_signal_from_file(handle.path())
+        .await
+        .map(Arc::new)
+        .map_err(|err| Error::File(handle.path().to_path_buf(), Arc::new(err)))
+}
+
+async fn pick_file(file_type: impl AsRef<str>) -> Result<FileHandle, Error> {
+    rfd::AsyncFileDialog::new()
+        .set_title(format!("Choose {} file", file_type.as_ref()))
+        .add_filter("wav", &["wav", "wave"])
+        .add_filter("all", &["*"])
+        .pick_file()
+        .await
+        .ok_or(Error::DialogClosed)
+}
+
+async fn load_signal_from_file<P, T>(path: P) -> Result<T, WavLoadError>
+where
+    T: FromFile + Send + 'static,
+    P: AsRef<Path> + Send + Sync,
+{
+    let path = path.as_ref().to_owned();
+    tokio::task::spawn_blocking(move || T::from_file(path))
+        .await
+        .map_err(|_err| WavLoadError::Other)?
 }
