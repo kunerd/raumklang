@@ -210,10 +210,20 @@ impl Measurements {
                     .selected
                     .as_ref()
                     .and_then(|selection| match selection {
-                        Selected::Loopback => project.loopback.as_ref().map(|s| s.data.iter()),
-                        Selected::Measurement(id) => {
-                            project.measurements.get(*id).map(|s| s.data.iter())
-                        }
+                        Selected::Loopback => project.loopback.as_ref().and_then(|s| {
+                            if let data::project::State::Loaded(data) = &s.state {
+                                Some(data.iter())
+                            } else {
+                                None
+                            }
+                        }),
+                        Selected::Measurement(id) => project.measurements.get(*id).and_then(|s| {
+                            if let data::project::State::Loaded(data) = &s.state {
+                                Some(data.iter())
+                            } else {
+                                None
+                            }
+                        }),
                     });
 
                 if let Some(signal) = signal {
@@ -410,17 +420,22 @@ fn loopback_list_entry<'a>(
     selected: Option<&Selected>,
     signal: &'a data::Loopback,
 ) -> Element<'a, Message> {
-    let samples = signal.data.duration();
-    let sample_rate = signal.data.sample_rate() as f32;
-    let content = column![
-        column![
-            text(&signal.name).size(16),
-            column![
+    let data_info = match &signal.state {
+        data::project::State::NotLoaded => None,
+        data::project::State::Loaded(data) => {
+            let samples = data.duration();
+            let sample_rate = data.sample_rate() as f32;
+            Some(column![
                 text(format!("Samples: {}", samples)).size(12),
                 text(format!("Duration: {} s", samples as f32 / sample_rate)).size(12),
-            ]
-        ]
-        .spacing(5),
+            ])
+        }
+    };
+
+    let content = column![
+        column![text(&signal.name).size(16)]
+            .push_maybe(data_info)
+            .spacing(5),
         horizontal_rule(3),
         row![
             horizontal_space(),
@@ -452,17 +467,22 @@ fn measurement_list_entry<'a>(
     signal: &'a data::Measurement,
     selected: Option<&Selected>,
 ) -> Element<'a, Message> {
-    let samples = signal.data.duration();
-    let sample_rate = signal.data.sample_rate() as f32;
+    let data_info = match &signal.state {
+        data::project::State::NotLoaded => None,
+        data::project::State::Loaded(data) => {
+            let samples = data.duration();
+            let sample_rate = data.sample_rate() as f32;
+            Some(column![
+                text(format!("Samples: {}", samples)).size(12),
+                text(format!("Duration: {} s", samples as f32 / sample_rate)).size(12),
+            ])
+        }
+    };
+
     let content = column![
-        column![
-            text(&signal.name).size(16),
-            column![
-                text!("Samples: {}", samples).size(12),
-                text!("Duration: {} s", samples as f32 / sample_rate).size(12),
-            ]
-        ]
-        .spacing(5),
+        column![text(&signal.name).size(16),]
+            .push_maybe(data_info)
+            .spacing(5),
         horizontal_rule(3),
         row![
             horizontal_space(),
