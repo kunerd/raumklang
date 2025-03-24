@@ -1,13 +1,11 @@
 mod model;
-mod project;
+pub mod project;
 mod recent_projects;
 // mod store;
 
-pub use model::{
-    FromFile, Loopback, Measurement, ProjectFile, ProjectLoopback, ProjectMeasurement,
-};
+pub use model::ProjectFile;
 
-pub use project::Project;
+pub use project::{Loopback, Measurement, Project};
 pub use recent_projects::RecentProjects;
 // pub use store::{Id, MeasurementState, Store};
 

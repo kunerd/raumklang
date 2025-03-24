@@ -1,5 +1,5 @@
 use crate::{
-    data::{self, FromFile},
+    data::{self, project::FromFile},
     delete_icon,
 };
 

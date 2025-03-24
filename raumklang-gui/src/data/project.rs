@@ -1,14 +1,21 @@
-use super::FromFile;
-
 use iced::futures::future::join_all;
 use raumklang_core::WavLoadError;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct Project {
-    pub loopback: Option<super::Loopback>,
-    pub measurements: Vec<super::Measurement>,
+    pub loopback: Option<Loopback>,
+    pub measurements: Vec<Measurement>,
+}
+
+pub type Loopback = Measurement<raumklang_core::Loopback>;
+
+#[derive(Debug, Clone)]
+pub struct Measurement<D = raumklang_core::Measurement> {
+    pub name: String,
+    pub path: PathBuf,
+    pub data: D,
 }
 
 impl Project {
@@ -55,5 +62,47 @@ impl Project {
 
     pub fn has_no_measurements(&self) -> bool {
         self.loopback.is_none() && self.measurements.is_empty()
+    }
+}
+
+impl FromFile for Loopback {
+    fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError>
+    where
+        Self: Sized,
+    {
+        let path = path.as_ref();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_os_string().into_string().ok())
+            .unwrap_or("Unknown".to_string());
+
+        let data = raumklang_core::Loopback::from_file(path)?;
+
+        let path = path.to_path_buf();
+        Ok(Measurement { name, path, data })
+    }
+}
+
+pub trait FromFile {
+    fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError>
+    where
+        Self: Sized;
+}
+
+impl FromFile for Measurement {
+    fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError> {
+        let path = path.as_ref();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_os_string().into_string().ok())
+            .unwrap_or("Unknown".to_string());
+
+        let data = raumklang_core::Measurement::from_file(path)?;
+
+        Ok(Self {
+            name,
+            path: path.to_path_buf(),
+            data,
+        })
     }
 }
