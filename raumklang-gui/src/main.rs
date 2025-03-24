@@ -3,36 +3,13 @@ mod data;
 mod tab;
 mod widgets;
 
-use std::{ffi::OsStr, io, path::PathBuf};
+use tab::{landing, Tab};
 
-use data::{Measurement, ProjectFile, ProjectLoopback, ProjectMeasurement, RecentProjects};
-use iced_aw::style::colors::RED;
-use tab::{
-    // frequency_response, impulse_response,
-    // measurements::{self, Error, Measurements},
-    Tab,
-};
+use data::RecentProjects;
 
-// use data::{FromFile, Project, ProjectLoopback, ProjectMeasurement};
-// use raumklang_core::WavLoadError;
+use iced::{widget::text, Element, Font, Settings, Subscription, Task, Theme};
 
-use iced::{
-    widget::{container, text},
-    Element, Font, Length, Settings, Subscription, Task, Theme,
-};
-// use iced_aw::{
-//     menu::{self, primary, Item},
-//     style::Status,
-//     Menu, MenuBar,
-// };
-// use rfd::FileHandle;
-
-// use std::{
-//     collections::HashMap,
-//     io, mem,
-//     path::{Path, PathBuf},
-//     sync::Arc,
-// };
+use std::path::PathBuf;
 
 const MAX_RECENT_PROJECTS_ENTRIES: usize = 10;
 
@@ -55,19 +32,28 @@ fn main() -> iced::Result {
 enum Message {
     RecentProjectsLoaded(data::RecentProjects),
     ProjectFileLoaded((data::ProjectFile, PathBuf)),
+    Landing(landing::Message),
 }
 
 struct Raumklang {
     tab: Tab,
-    // project: Option<data::Project>,
+    project: Option<Project>,
     recent_projects: RecentProjects,
+}
+
+struct Project {}
+
+impl Project {
+    fn new() -> Self {
+        Self {}
+    }
 }
 
 impl Raumklang {
     fn new() -> (Self, Task<Message>) {
         let app = Self {
             tab: Tab::Loading,
-            // project: None,
+            project: None,
             recent_projects: RecentProjects::new(MAX_RECENT_PROJECTS_ENTRIES),
         };
         let task = Task::perform(RecentProjects::load(), Message::RecentProjectsLoaded);
@@ -92,36 +78,26 @@ impl Raumklang {
                 self.tab = Tab::Landing;
 
                 Task::none()
-                // if let Some(path) = self.recent_projects.first().cloned() {
-                //     Task::perform(ProjectFile::load(path), Message::ProjectFileLoaded)
-                // } else {
-                //     Task::none()
-                // }
             }
-            Message::ProjectFileLoaded((_project, _path)) => {
-                // self.project = Some(Project::new(project));
+            Message::ProjectFileLoaded((_project, _path)) => Task::none(),
+            Message::Landing(message) => match message {
+                landing::Message::New => {
+                    self.project = Some(Project::new());
+                    self.tab = Tab::Measurements;
 
-                Task::none()
-            } // Message::Measurements(_message) => Task::none(),
+                    Task::none()
+                }
+                landing::Message::Load => todo!(),
+                landing::Message::Recent(_) => todo!(),
+            },
         }
     }
 
     fn view(&self) -> Element<'_, Message> {
         match &self.tab {
             Tab::Loading => tab::loading(),
-            Tab::Landing => tab::landing(&self.recent_projects),
-            Tab::Measurements => {
-                text("not implemented yet").into()
-                // if let Some(project) = &self.project {
-                //     measurements_tab
-                //         .view(project.loopback.as_ref(), &project.measurements)
-                //         .map(Message::Measurements)
-                // } else {
-                //     container(text("No project loaded"))
-                //         .center(Length::Fill)
-                //         .into()
-                // }
-            }
+            Tab::Landing => tab::landing(&self.recent_projects).map(Message::Landing),
+            Tab::Measurements => text("not implemented yet").into(),
         }
     }
 
@@ -134,31 +110,31 @@ impl Raumklang {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct OfflineMeasurement {
-    name: Option<String>,
-    path: PathBuf,
-}
+// #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+// pub struct OfflineMeasurement {
+//     name: Option<String>,
+//     path: PathBuf,
+// }
 
-impl OfflineMeasurement {
-    pub fn from_loopback(loopback: ProjectLoopback) -> Self {
-        let path = loopback.path();
+// impl OfflineMeasurement {
+//     pub fn from_loopback(loopback: ProjectLoopback) -> Self {
+//         let path = loopback.path();
 
-        Self {
-            name: path.file_name().and_then(OsStr::to_str).map(String::from),
-            path: loopback.path().to_path_buf(),
-        }
-    }
+//         Self {
+//             name: path.file_name().and_then(OsStr::to_str).map(String::from),
+//             path: loopback.path().to_path_buf(),
+//         }
+//     }
 
-    pub fn from_measurement(measurement: ProjectMeasurement) -> Self {
-        let path = &measurement.path;
+//     pub fn from_measurement(measurement: ProjectMeasurement) -> Self {
+//         let path = &measurement.path;
 
-        Self {
-            name: path.file_name().and_then(OsStr::to_str).map(String::from),
-            path: measurement.path.to_path_buf(),
-        }
-    }
-}
+//         Self {
+//             name: path.file_name().and_then(OsStr::to_str).map(String::from),
+//             path: measurement.path.to_path_buf(),
+//         }
+//     }
+// }
 // #[derive(Debug, Clone)]
 // enum Message {
 //     NewProject,
