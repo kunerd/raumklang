@@ -420,15 +420,17 @@ fn loopback_list_entry<'a>(
     selected: Option<&Selected>,
     signal: &'a data::Loopback,
 ) -> Element<'a, Message> {
-    let data_info = match &signal.state {
-        data::project::State::NotLoaded => None,
+    let (data_info, select_msg) = match &signal.state {
+        data::project::State::NotLoaded => (None, None),
         data::project::State::Loaded(data) => {
             let samples = data.duration();
             let sample_rate = data.sample_rate() as f32;
-            Some(column![
+            let info = column![
                 text(format!("Samples: {}", samples)).size(12),
                 text(format!("Duration: {} s", samples as f32 / sample_rate)).size(12),
-            ])
+            ];
+
+            (Some(info), Some(Message::Select(Selected::Loopback)))
         }
     };
 
@@ -456,7 +458,7 @@ fn loopback_list_entry<'a>(
     };
 
     button(content)
-        .on_press(Message::Select(Selected::Loopback))
+        .on_press_maybe(select_msg)
         .style(style)
         .width(Length::Fill)
         .into()
@@ -467,15 +469,20 @@ fn measurement_list_entry<'a>(
     signal: &'a data::Measurement,
     selected: Option<&Selected>,
 ) -> Element<'a, Message> {
-    let data_info = match &signal.state {
-        data::project::State::NotLoaded => None,
+    let (data_info, select_msg) = match &signal.state {
+        data::project::State::NotLoaded => (None, None),
         data::project::State::Loaded(data) => {
             let samples = data.duration();
             let sample_rate = data.sample_rate() as f32;
-            Some(column![
+            let info = column![
                 text(format!("Samples: {}", samples)).size(12),
                 text(format!("Duration: {} s", samples as f32 / sample_rate)).size(12),
-            ])
+            ];
+
+            (
+                Some(info),
+                Some(Message::Select(Selected::Measurement(index))),
+            )
         }
     };
 
@@ -502,7 +509,7 @@ fn measurement_list_entry<'a>(
     };
 
     button(content)
-        .on_press(Message::Select(Selected::Measurement(index)))
+        .on_press_maybe(select_msg)
         .width(Length::Fill)
         .style(style)
         .into()
