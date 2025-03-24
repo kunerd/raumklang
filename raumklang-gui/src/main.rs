@@ -3,9 +3,9 @@ mod data;
 mod tab;
 mod widgets;
 
-use tab::{landing, Tab};
+use tab::{landing, measurements, Measurements, Tab};
 
-use data::RecentProjects;
+use data::{Loopback, RecentProjects};
 
 use iced::{widget::text, Element, Font, Settings, Subscription, Task, Theme};
 
@@ -31,21 +31,24 @@ fn main() -> iced::Result {
 #[derive(Debug, Clone)]
 enum Message {
     RecentProjectsLoaded(data::RecentProjects),
-    ProjectFileLoaded((data::ProjectFile, PathBuf)),
+    // ProjectFileLoaded((data::ProjectFile, PathBuf)),
     Landing(landing::Message),
+    Measurements(measurements::Message),
 }
 
 struct Raumklang {
     tab: Tab,
-    project: Option<Project>,
+    project: Project,
     recent_projects: RecentProjects,
 }
 
-struct Project {}
+struct Project {
+    loopback: Option<Loopback>,
+}
 
 impl Project {
     fn new() -> Self {
-        Self {}
+        Self { loopback: None }
     }
 }
 
@@ -53,7 +56,7 @@ impl Raumklang {
     fn new() -> (Self, Task<Message>) {
         let app = Self {
             tab: Tab::Loading,
-            project: None,
+            project: Project::new(),
             recent_projects: RecentProjects::new(MAX_RECENT_PROJECTS_ENTRIES),
         };
         let task = Task::perform(RecentProjects::load(), Message::RecentProjectsLoaded);
@@ -79,17 +82,24 @@ impl Raumklang {
 
                 Task::none()
             }
-            Message::ProjectFileLoaded((_project, _path)) => Task::none(),
             Message::Landing(message) => match message {
                 landing::Message::New => {
-                    self.project = Some(Project::new());
-                    self.tab = Tab::Measurements;
+                    self.tab = Tab::Measurements(tab::Measurements::new());
 
                     Task::none()
                 }
                 landing::Message::Load => todo!(),
                 landing::Message::Recent(_) => todo!(),
             },
+            Message::Measurements(message) => {
+                let Tab::Measurements(measurements) = &mut self.tab else {
+                    return Task::none();
+                };
+
+                measurements.update(message);
+
+                Task::none()
+            }
         }
     }
 
@@ -97,7 +107,9 @@ impl Raumklang {
         match &self.tab {
             Tab::Loading => tab::loading(),
             Tab::Landing => tab::landing(&self.recent_projects).map(Message::Landing),
-            Tab::Measurements => text("not implemented yet").into(),
+            Tab::Measurements(measurements) => {
+                measurements.view(&self.project).map(Message::Measurements)
+            }
         }
     }
 
