@@ -1,76 +1,59 @@
-use iced::Task;
+use super::FromFile;
 
-use crate::OfflineMeasurement;
+use iced::futures::future::join_all;
+use raumklang_core::WavLoadError;
 
-use super::{Loopback, Measurement, ProjectLoopback};
-
-pub struct Project {
-    pub loopback: Option<Loopback>,
-    pub measurements: Vec<Measurement>,
-}
-
-struct Loopback(Measurement);
-struct Measurement {
-    name: String,
-    path: PathBuf,
-    state: State,
-}
-
-enum State {
-    Idle,
-    Loading,
-    Loaded(raumklang_core::Measurement),
-}
+use std::path::Path;
 
 #[derive(Debug)]
-pub enum MeasurementState<L, O> {
-    Loading(O),
-    Loaded(L),
-    NotLoaded(O),
+pub struct Project {
+    pub loopback: Option<super::Loopback>,
+    pub measurements: Vec<super::Measurement>,
 }
 
 impl Project {
-    pub fn new(project: super::ProjectFile) -> Self {
-        //                 recent_projects.insert(path);
-        //                 let recent_projects = recent_projects.clone();
-        //                 tasks.push(
-        //                     Task::perform(
-        //                         async move { save_recent_projects(&recent_projects).await },
-        //                         |_| {},
-        //                     )
-        //                     .discard(),
-        //                 );
+    pub fn new() -> Self {
+        Self {
+            loopback: None,
+            measurements: Vec::new(),
+        }
+    }
 
-        //                 *measurements = data::Store::new();
-        //                 if let Some(loopback) = project.loopback {
-        //                     let path = loopback.path().clone();
-        //                     tasks.push(Task::perform(
-        //                         async move {
-        //                             load_signal_from_file(path.clone())
-        //                                 .await
-        //                                 .map(Arc::new)
-        //                                 .map_err(|err| Error::File(path.to_path_buf(), Arc::new(err)))
-        //                         },
-        //                         Message::LoopbackMeasurementLoaded,
-        //                     ));
-        //                 }
-        //                 for measurement in project.measurements {
-        //                     let path = measurement.path.clone();
-        //                     tasks.push(Task::perform(
-        //                         async move {
-        //                             load_signal_from_file(path.clone())
-        //                                 .await
-        //                                 .map(Arc::new)
-        //                                 .map_err(|err| Error::File(path.to_path_buf(), Arc::new(err)))
-        //                         },
-        //                         Message::MeasurementLoaded,
-        //                     ))
-        //                 }
+    pub async fn load(project_file: super::ProjectFile) -> Self {
+        let loopback = match project_file.loopback {
+            Some(loopback) => Self::load_signal_from_file(loopback.path()).await.ok(),
+            None => None,
+        };
 
-        //                 Task::batch(tasks)
+        let measurements = join_all(
+            project_file
+                .measurements
+                .iter()
+                .map(|p| Self::load_signal_from_file(p.path.clone())),
+        )
+        .await
+        .into_iter()
+        .flatten()
+        .collect();
+
         Self {
             loopback,
             measurements,
         }
+    }
+
+    pub async fn load_signal_from_file<P, T>(path: P) -> Result<T, WavLoadError>
+    where
+        T: FromFile + Send + 'static,
+        P: AsRef<Path> + Send + Sync,
+    {
+        let path = path.as_ref().to_owned();
+        tokio::task::spawn_blocking(move || T::from_file(path))
+            .await
+            .map_err(|_err| WavLoadError::Other)?
+    }
+
+    pub fn has_no_measurements(&self) -> bool {
+        self.loopback.is_none() && self.measurements.is_empty()
     }
 }

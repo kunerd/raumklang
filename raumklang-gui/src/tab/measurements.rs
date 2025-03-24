@@ -1,6 +1,6 @@
 use crate::{
     data::{self, FromFile},
-    delete_icon, Project,
+    delete_icon,
 };
 
 use pliced::chart::{line_series, Chart, Labels};
@@ -15,10 +15,7 @@ use iced::{
 
 use rfd::FileHandle;
 
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
 // use pliced::chart::{line_series, Chart, Labels};
 
@@ -170,7 +167,7 @@ impl Measurements {
         // }
     }
 
-    pub fn view<'a>(&'a self, project: &'a Project) -> Element<'a, Message> {
+    pub fn view<'a>(&'a self, project: &'a data::Project) -> Element<'a, Message> {
         let sidebar = {
             let loopback = {
                 let (msg, content) = match project.loopback.as_ref() {
@@ -500,7 +497,7 @@ where
     T: FromFile + Send + 'static,
 {
     let handle = pick_file(file_type).await?;
-    Project::load_signal_from_file(handle.path())
+    data::Project::load_signal_from_file(handle.path())
         .await
         .map(Arc::new)
         .map_err(|err| Error::File(handle.path().to_path_buf(), Arc::new(err)))

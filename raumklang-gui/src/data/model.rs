@@ -16,6 +16,7 @@ pub struct ProjectFile {
     pub loopback: Option<ProjectLoopback>,
     pub measurements: Vec<ProjectMeasurement>,
 }
+
 impl ProjectFile {
     pub async fn load(path: impl AsRef<Path>) -> (Self, PathBuf) {
         let path = path.as_ref();
