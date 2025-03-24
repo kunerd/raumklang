@@ -11,11 +11,18 @@ pub struct Project {
 
 pub type Loopback = Measurement<raumklang_core::Loopback>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Measurement<D = raumklang_core::Measurement> {
     pub name: String,
     pub path: PathBuf,
-    pub data: D,
+    pub state: State<D>,
+}
+
+#[derive(Debug, Default)]
+pub enum State<D> {
+    #[default]
+    NotLoaded,
+    Loaded(D),
 }
 
 impl Project {
@@ -79,7 +86,11 @@ impl FromFile for Loopback {
         let data = raumklang_core::Loopback::from_file(path)?;
 
         let path = path.to_path_buf();
-        Ok(Measurement { name, path, data })
+        Ok(Measurement {
+            name,
+            path,
+            state: State::Loaded(data),
+        })
     }
 }
 
@@ -102,7 +113,7 @@ impl FromFile for Measurement {
         Ok(Self {
             name,
             path: path.to_path_buf(),
-            data,
+            state: State::Loaded(data),
         })
     }
 }
