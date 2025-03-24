@@ -96,9 +96,16 @@ impl Raumklang {
                     return Task::none();
                 };
 
-                measurements.update(message);
+                let action = measurements.update(message);
 
-                Task::none()
+                match action {
+                    measurements::Action::LoopbackAdded(loopback) => {
+                        self.project.loopback = Some(loopback);
+                        Task::none()
+                    }
+                    measurements::Action::Task(task) => task.map(Message::Measurements),
+                    measurements::Action::None => Task::none(),
+                }
             }
         }
     }
