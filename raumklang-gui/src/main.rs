@@ -5,13 +5,11 @@ mod widgets;
 
 use std::{ffi::OsStr, io, path::PathBuf};
 
-use data::{
-    Measurement, Project, ProjectFile, ProjectLoopback, ProjectMeasurement, RecentProjects,
-};
+use data::{Measurement, ProjectFile, ProjectLoopback, ProjectMeasurement, RecentProjects};
 use iced_aw::style::colors::RED;
 use tab::{
     // frequency_response, impulse_response,
-    measurements::{self, Error, Measurements},
+    // measurements::{self, Error, Measurements},
     Tab,
 };
 
@@ -53,16 +51,15 @@ fn main() -> iced::Result {
         .run_with(Raumklang::new)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Message {
     RecentProjectsLoaded(data::RecentProjects),
     ProjectFileLoaded((data::ProjectFile, PathBuf)),
-    Measurements(measurements::Message),
 }
 
 struct Raumklang {
     tab: Tab,
-    project: Option<data::Project>,
+    // project: Option<data::Project>,
     recent_projects: RecentProjects,
 }
 
@@ -70,7 +67,7 @@ impl Raumklang {
     fn new() -> (Self, Task<Message>) {
         let app = Self {
             tab: Tab::Loading,
-            project: None,
+            // project: None,
             recent_projects: RecentProjects::new(MAX_RECENT_PROJECTS_ENTRIES),
         };
         let task = Task::perform(RecentProjects::load(), Message::RecentProjectsLoaded);
@@ -92,35 +89,38 @@ impl Raumklang {
                     self.recent_projects.insert(path);
                 }
 
-                if let Some(path) = self.recent_projects.first().cloned() {
-                    Task::perform(ProjectFile::load(path), Message::ProjectFileLoaded)
-                } else {
-                    Task::none()
-                }
-            }
-            Message::ProjectFileLoaded((project, _path)) => {
-                self.project = Some(Project::new(project));
-                self.tab = Tab::Measurements(Measurements::new());
+                self.tab = Tab::Landing;
 
                 Task::none()
+                // if let Some(path) = self.recent_projects.first().cloned() {
+                //     Task::perform(ProjectFile::load(path), Message::ProjectFileLoaded)
+                // } else {
+                //     Task::none()
+                // }
             }
-            Message::Measurements(_message) => Task::none(),
+            Message::ProjectFileLoaded((_project, _path)) => {
+                // self.project = Some(Project::new(project));
+
+                Task::none()
+            } // Message::Measurements(_message) => Task::none(),
         }
     }
 
     fn view(&self) -> Element<'_, Message> {
         match &self.tab {
             Tab::Loading => tab::loading(),
-            Tab::Measurements(measurements_tab) => {
-                if let Some(project) = &self.project {
-                    measurements_tab
-                        .view(project.loopback.as_ref(), &project.measurements)
-                        .map(Message::Measurements)
-                } else {
-                    container(text("No project loaded"))
-                        .center(Length::Fill)
-                        .into()
-                }
+            Tab::Landing => tab::landing(&self.recent_projects),
+            Tab::Measurements => {
+                text("not implemented yet").into()
+                // if let Some(project) = &self.project {
+                //     measurements_tab
+                //         .view(project.loopback.as_ref(), &project.measurements)
+                //         .map(Message::Measurements)
+                // } else {
+                //     container(text("No project loaded"))
+                //         .center(Length::Fill)
+                //         .into()
+                // }
             }
         }
     }
