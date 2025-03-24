@@ -1,5 +1,8 @@
 use crate::{
-    data::{self, project::FromFile},
+    data::{
+        self,
+        measurement::{self, FromFile},
+    },
     delete_icon,
 };
 
@@ -34,7 +37,7 @@ pub struct Measurements {
 pub enum Message {
     AddLoopback,
     RemoveLoopback,
-    LoopbackSignalLoaded(Result<Arc<data::Loopback>, Error>),
+    LoopbackSignalLoaded(Result<Arc<data::measurement::Loopback>, Error>),
     AddMeasurement,
     RemoveMeasurement(usize),
     MeasurementSignalLoaded(Result<Arc<data::Measurement>, Error>),
@@ -48,7 +51,7 @@ pub enum Selected {
 }
 
 pub enum Action {
-    LoopbackAdded(data::Loopback),
+    LoopbackAdded(data::measurement::Loopback),
     RemoveLoopback,
     MeasurementAdded(data::Measurement),
     RemoveMeasurement(usize),
@@ -211,14 +214,14 @@ impl Measurements {
                     .as_ref()
                     .and_then(|selection| match selection {
                         Selected::Loopback => project.loopback.as_ref().and_then(|s| {
-                            if let data::project::State::Loaded(data) = &s.state {
+                            if let measurement::State::Loaded(data) = &s.state {
                                 Some(data.iter())
                             } else {
                                 None
                             }
                         }),
                         Selected::Measurement(id) => project.measurements.get(*id).and_then(|s| {
-                            if let data::project::State::Loaded(data) = &s.state {
+                            if let measurement::State::Loaded(data) = &s.state {
                                 Some(data.iter())
                             } else {
                                 None
@@ -418,11 +421,11 @@ fn signal_list_category<'a>(
 
 fn loopback_list_entry<'a>(
     selected: Option<&Selected>,
-    signal: &'a data::Loopback,
+    signal: &'a data::measurement::Loopback,
 ) -> Element<'a, Message> {
     let (data_info, select_msg) = match &signal.state {
-        data::project::State::NotLoaded => (None, None),
-        data::project::State::Loaded(data) => {
+        measurement::State::NotLoaded => (None, None),
+        measurement::State::Loaded(data) => {
             let samples = data.duration();
             let sample_rate = data.sample_rate() as f32;
             let info = column![
@@ -470,8 +473,8 @@ fn measurement_list_entry<'a>(
     selected: Option<&Selected>,
 ) -> Element<'a, Message> {
     let (data_info, select_msg) = match &signal.state {
-        data::project::State::NotLoaded => (None, None),
-        data::project::State::Loaded(data) => {
+        measurement::State::NotLoaded => (None, None),
+        measurement::State::Loaded(data) => {
             let samples = data.duration();
             let sample_rate = data.sample_rate() as f32;
             let info = column![
