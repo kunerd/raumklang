@@ -4,6 +4,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::FileError;
+
+use super::project::Measurement;
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RecentProjects {
     #[serde(skip)]
@@ -18,15 +22,16 @@ pub struct ProjectFile {
 }
 
 impl ProjectFile {
-    pub async fn load(path: impl AsRef<Path>) -> (Self, PathBuf) {
+    pub async fn load(path: impl AsRef<Path>) -> Result<Self, FileError> {
         let path = path.as_ref();
-        let content = tokio::fs::read(path).await.unwrap();
-        // .map_err(|err| FileError::Io(err.kind()))?;
+        let content = tokio::fs::read(path)
+            .await
+            .map_err(|err| FileError::Io(err.kind()))?;
 
-        let project = serde_json::from_slice(&content).unwrap();
-        // .map_err(|err| FileError::Json(err.to_string()))?;
+        let project =
+            serde_json::from_slice(&content).map_err(|err| FileError::Json(err.to_string()))?;
 
-        (project, path.to_path_buf())
+        Ok(project)
     }
 }
 
@@ -36,15 +41,6 @@ pub struct ProjectLoopback(ProjectMeasurement);
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProjectMeasurement {
     pub path: PathBuf,
-}
-
-pub type Loopback = Measurement<raumklang_core::Loopback>;
-
-#[derive(Debug, Clone)]
-pub struct Measurement<D = raumklang_core::Measurement> {
-    pub name: String,
-    pub path: PathBuf,
-    pub data: D,
 }
 
 impl ProjectLoopback {
@@ -62,48 +58,6 @@ impl<D> From<&Measurement<D>> for ProjectMeasurement {
         Self {
             path: value.path.to_path_buf(),
         }
-    }
-}
-
-impl FromFile for Loopback {
-    fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError>
-    where
-        Self: Sized,
-    {
-        let path = path.as_ref();
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_os_string().into_string().ok())
-            .unwrap_or("Unknown".to_string());
-
-        let data = raumklang_core::Loopback::from_file(path)?;
-
-        let path = path.to_path_buf();
-        Ok(Measurement { name, path, data })
-    }
-}
-
-pub trait FromFile {
-    fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError>
-    where
-        Self: Sized;
-}
-
-impl FromFile for Measurement {
-    fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError> {
-        let path = path.as_ref();
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_os_string().into_string().ok())
-            .unwrap_or("Unknown".to_string());
-
-        let data = raumklang_core::Measurement::from_file(path)?;
-
-        Ok(Self {
-            name,
-            path: path.to_path_buf(),
-            data,
-        })
     }
 }
 

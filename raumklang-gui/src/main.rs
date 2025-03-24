@@ -9,13 +9,12 @@ use std::{
     sync::Arc,
 };
 
-use raumklang_core::WavLoadError;
 use tab::{landing, measurements, Measurements, Tab};
 
-use data::{FromFile, RecentProjects};
+use data::{ProjectFile, RecentProjects};
 
 use iced::{
-    futures::{future::join_all, FutureExt, TryFutureExt},
+    futures::{FutureExt, TryFutureExt},
     widget::text,
     Element, Font, Settings, Subscription, Task, Theme,
 };
@@ -906,14 +905,10 @@ async fn load_project_from_file<P: AsRef<Path>>(
     path: P,
 ) -> Result<(data::ProjectFile, PathBuf), PickAndLoadError> {
     let path = path.as_ref();
-    let content = tokio::fs::read(path)
-        .await
-        .map_err(|err| FileError::Io(err.kind()))?;
 
-    let signals =
-        serde_json::from_slice(&content).map_err(|err| FileError::Json(err.to_string()))?;
+    let project = ProjectFile::load(path).await?;
 
-    Ok((signals, path.to_path_buf()))
+    Ok((project, path.to_path_buf()))
 }
 
 // async fn save_to_file(path: PathBuf, content: String) -> Result<(), FileError> {
