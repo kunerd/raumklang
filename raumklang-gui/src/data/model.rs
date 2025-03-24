@@ -38,8 +38,7 @@ pub struct ProjectMeasurement {
     pub path: PathBuf,
 }
 
-#[derive(Debug, Clone)]
-pub struct Loopback(pub Measurement<raumklang_core::Loopback>);
+pub type Loopback = Measurement<raumklang_core::Loopback>;
 
 #[derive(Debug, Clone)]
 pub struct Measurement<D = raumklang_core::Measurement> {
@@ -58,26 +57,10 @@ impl ProjectLoopback {
     }
 }
 
-impl From<&Loopback> for ProjectLoopback {
-    fn from(value: &Loopback) -> Self {
-        Self(ProjectMeasurement::from(&value.0))
-    }
-}
-
 impl<D> From<&Measurement<D>> for ProjectMeasurement {
     fn from(value: &Measurement<D>) -> Self {
         Self {
             path: value.path.to_path_buf(),
-        }
-    }
-}
-
-impl From<Loopback> for Measurement {
-    fn from(loopback: Loopback) -> Self {
-        Self {
-            name: loopback.0.name,
-            path: loopback.0.path,
-            data: raumklang_core::Measurement::from(loopback.0.data),
         }
     }
 }
@@ -96,7 +79,7 @@ impl FromFile for Loopback {
         let data = raumklang_core::Loopback::from_file(path)?;
 
         let path = path.to_path_buf();
-        Ok(Self(Measurement { name, path, data }))
+        Ok(Measurement { name, path, data })
     }
 }
 
