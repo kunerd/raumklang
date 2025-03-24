@@ -30,6 +30,13 @@ impl RecentProjects {
         serde_json::from_slice(&content).unwrap()
     }
 
+    pub async fn save(self) {
+        let path = Self::path().await.unwrap();
+
+        let contents = serde_json::to_string_pretty(&self).unwrap();
+        tokio::fs::write(path, contents).await.unwrap();
+    }
+
     pub fn insert(&mut self, path: impl AsRef<Path>) {
         let path = path.as_ref();
 

@@ -3,11 +3,23 @@ mod data;
 mod tab;
 mod widgets;
 
-use tab::{landing, measurements, Tab};
+use std::{
+    future::Future,
+    io,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
-use data::RecentProjects;
+use raumklang_core::WavLoadError;
+use tab::{landing, measurements, Measurements, Tab};
 
-use iced::{widget::text, Element, Font, Settings, Subscription, Task, Theme};
+use data::{FromFile, ProjectFile, ProjectLoopback, RecentProjects};
+
+use iced::{
+    futures::{future::join_all, FutureExt, SinkExt, TryFutureExt},
+    widget::text,
+    Element, Font, Settings, Subscription, Task, Theme,
+};
 
 const MAX_RECENT_PROJECTS_ENTRIES: usize = 10;
 
@@ -32,6 +44,7 @@ enum Message {
     // ProjectFileLoaded((data::ProjectFile, PathBuf)),
     Landing(landing::Message),
     Measurements(measurements::Message),
+    ProjectLoaded(Result<(Arc<Project>, PathBuf), PickAndLoadError>),
 }
 
 struct Raumklang {
@@ -40,6 +53,7 @@ struct Raumklang {
     recent_projects: RecentProjects,
 }
 
+#[derive(Debug)]
 struct Project {
     loopback: Option<data::Loopback>,
     measurements: Vec<data::Measurement>,
@@ -51,6 +65,40 @@ impl Project {
             loopback: None,
             measurements: Vec::new(),
         }
+    }
+
+    async fn load(project_file: data::ProjectFile) -> Self {
+        let loopback = match project_file.loopback {
+            Some(loopback) => Self::load_signal_from_file(loopback.path()).await.ok(),
+            None => None,
+        };
+
+        let measurements = join_all(
+            project_file
+                .measurements
+                .iter()
+                .map(|p| Self::load_signal_from_file(p.path.clone())),
+        )
+        .await
+        .into_iter()
+        .flatten()
+        .collect();
+
+        Self {
+            loopback,
+            measurements,
+        }
+    }
+
+    async fn load_signal_from_file<P, T>(path: P) -> Result<T, WavLoadError>
+    where
+        T: FromFile + Send + 'static,
+        P: AsRef<Path> + Send + Sync,
+    {
+        let path = path.as_ref().to_owned();
+        tokio::task::spawn_blocking(move || T::from_file(path))
+            .await
+            .map_err(|_err| WavLoadError::Other)?
     }
 
     fn has_no_measurements(&self) -> bool {
@@ -94,8 +142,23 @@ impl Raumklang {
 
                     Task::none()
                 }
-                landing::Message::Load => todo!(),
-                landing::Message::Recent(_) => todo!(),
+                landing::Message::Load => Task::future(
+                    pick_file_and_load()
+                        .and_then(|(file, path)| async {
+                            Ok((Arc::new(Project::load(file).await), path))
+                        })
+                        .map(Message::ProjectLoaded),
+                ),
+                landing::Message::Recent(id) => match self.recent_projects.get(id) {
+                    Some(path) => Task::future(
+                        load_project_from_file(path.clone())
+                            .and_then(async |(file, path)| {
+                                Ok((Arc::new(Project::load(file).await), path))
+                            })
+                            .map(Message::ProjectLoaded),
+                    ),
+                    None => Task::none(),
+                },
             },
             Message::Measurements(message) => {
                 let Tab::Measurements(measurements) = &mut self.tab else {
@@ -128,6 +191,21 @@ impl Raumklang {
                     measurements::Action::Task(task) => task.map(Message::Measurements),
                     measurements::Action::None => Task::none(),
                 }
+            }
+            Message::ProjectLoaded(Ok((project, path))) => match Arc::into_inner(project) {
+                Some(project) => {
+                    self.project = project;
+                    self.recent_projects.insert(path);
+                    self.tab = Tab::Measurements(Measurements::new());
+
+                    Task::future(self.recent_projects.clone().save()).discard()
+                }
+                None => Task::none(),
+            },
+            Message::ProjectLoaded(Err(err)) => {
+                dbg!(err);
+
+                Task::none()
             }
         }
     }
@@ -229,21 +307,21 @@ impl Raumklang {
 //     FrequencyResponse,
 // }
 
-// #[derive(thiserror::Error, Debug, Clone)]
-// pub enum FileError {
-//     #[error("Fehler beim laden der Datei: {0}")]
-//     Io(io::ErrorKind),
-//     #[error("Dateiinhalt fehlerhaft: {0}")]
-//     Json(String),
-// }
+#[derive(thiserror::Error, Debug, Clone)]
+pub enum FileError {
+    #[error("could not load file: {0}")]
+    Io(io::ErrorKind),
+    #[error("could not parse file: {0}")]
+    Json(String),
+}
 
-// #[derive(Debug, Clone, thiserror::Error)]
-// pub enum PickAndLoadError {
-//     #[error("Dateiauswahl wurde geschlossen")]
-//     DialogClosed,
-//     #[error(transparent)]
-//     File(#[from] FileError),
-// }
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum PickAndLoadError {
+    #[error("dialog closed")]
+    DialogClosed,
+    #[error(transparent)]
+    File(#[from] FileError),
+}
 
 // #[derive(Debug, Clone, thiserror::Error)]
 // pub enum PickAndSaveError {
@@ -282,28 +360,28 @@ impl Raumklang {
 
 //                 Task::none()
 //             }
-//             Message::LoadProject => Task::perform(pick_file_and_load(), Message::ProjectLoaded),
-//             Message::ProjectLoaded(Ok((project, path))) => {
-//                 let Raumklang::Loaded {
-//                     measurements,
-//                     recent_projects,
-//                     ..
-//                 } = self
-//                 else {
-//                     return Task::none();
-//                 };
+// Message::LoadProject => Task::perform(pick_file_and_load(), Message::ProjectLoaded),
+// Message::ProjectLoaded(Ok((project, path))) => {
+//     let Raumklang::Loaded {
+//         measurements,
+//         recent_projects,
+//         ..
+//     } = self
+//     else {
+//         return Task::none();
+//     };
 
-//                 let mut tasks = vec![];
+//     let mut tasks = vec![];
 
-//                 recent_projects.insert(path);
-//                 let recent_projects = recent_projects.clone();
-//                 tasks.push(
-//                     Task::perform(
-//                         async move { save_recent_projects(&recent_projects).await },
-//                         |_| {},
-//                     )
-//                     .discard(),
-//                 );
+//     recent_projects.insert(path);
+//     let recent_projects = recent_projects.clone();
+//     tasks.push(
+//         Task::perform(
+//             async move { save_recent_projects(&recent_projects).await },
+//             |_| {},
+//         )
+//         .discard(),
+//     );
 
 //                 *measurements = data::Store::new();
 //                 if let Some(loopback) = project.loopback {
@@ -868,29 +946,29 @@ pub fn delete_icon<'a, M>() -> Element<'a, M> {
 //     Ok(path)
 // }
 
-// async fn pick_file_and_load() -> Result<(data::Project, PathBuf), PickAndLoadError> {
-//     let handle = rfd::AsyncFileDialog::new()
-//         .set_title("Choose project file ...")
-//         .pick_file()
-//         .await
-//         .ok_or(PickAndLoadError::DialogClosed)?;
+async fn pick_file_and_load() -> Result<(data::ProjectFile, PathBuf), PickAndLoadError> {
+    let handle = rfd::AsyncFileDialog::new()
+        .set_title("Choose project file ...")
+        .pick_file()
+        .await
+        .ok_or(PickAndLoadError::DialogClosed)?;
 
-//     load_project_from_file(handle.path()).await
-// }
+    load_project_from_file(handle.path()).await
+}
 
-// async fn load_project_from_file<P: AsRef<Path>>(
-//     path: P,
-// ) -> Result<(data::Project, PathBuf), PickAndLoadError> {
-//     let path = path.as_ref();
-//     let content = tokio::fs::read(path)
-//         .await
-//         .map_err(|err| FileError::Io(err.kind()))?;
+async fn load_project_from_file<P: AsRef<Path>>(
+    path: P,
+) -> Result<(data::ProjectFile, PathBuf), PickAndLoadError> {
+    let path = path.as_ref();
+    let content = tokio::fs::read(path)
+        .await
+        .map_err(|err| FileError::Io(err.kind()))?;
 
-//     let signals =
-//         serde_json::from_slice(&content).map_err(|err| FileError::Json(err.to_string()))?;
+    let signals =
+        serde_json::from_slice(&content).map_err(|err| FileError::Json(err.to_string()))?;
 
-//     Ok((signals, path.to_path_buf()))
-// }
+    Ok((signals, path.to_path_buf()))
+}
 
 // async fn save_to_file(path: PathBuf, content: String) -> Result<(), FileError> {
 //     tokio::fs::write(path, content)
