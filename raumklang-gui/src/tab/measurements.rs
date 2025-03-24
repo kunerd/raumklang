@@ -43,9 +43,10 @@ pub enum SelectedMeasurement {
 #[derive(Debug, Clone)]
 pub enum Message {
     AddLoopback,
-    LoopbackSignalLoaded(Result<Arc<data::Loopback>, Error>),
     RemoveLoopback,
+    LoopbackSignalLoaded(Result<Arc<data::Loopback>, Error>),
     AddMeasurement,
+    RemoveMeasurement(usize),
     MeasurementSignalLoaded(Result<Arc<data::Measurement>, Error>),
     // LoadMeasurement,
     // RemoveMeasurement(usize),
@@ -58,10 +59,11 @@ pub enum Message {
 }
 
 pub enum Action {
-    Task(Task<Message>),
     LoopbackAdded(data::Loopback),
-    MeasurementAdded(data::Measurement),
     RemoveLoopback,
+    MeasurementAdded(data::Measurement),
+    RemoveMeasurement(usize),
+    Task(Task<Message>),
     None,
 }
 
@@ -95,6 +97,7 @@ impl Measurements {
                 pick_file_and_load_signal("Loopback"),
                 Message::LoopbackSignalLoaded,
             )),
+            Message::RemoveLoopback => Action::RemoveLoopback,
             Message::LoopbackSignalLoaded(Ok(signal)) => match Arc::into_inner(signal) {
                 Some(signal) => Action::LoopbackAdded(signal),
                 None => Action::None,
@@ -107,6 +110,7 @@ impl Measurements {
                 pick_file_and_load_signal("Measurement"),
                 Message::MeasurementSignalLoaded,
             )),
+            Message::RemoveMeasurement(id) => Action::RemoveMeasurement(id),
             Message::MeasurementSignalLoaded(Ok(signal)) => match Arc::into_inner(signal) {
                 Some(signal) => Action::MeasurementAdded(signal),
                 None => Action::None,
@@ -115,7 +119,6 @@ impl Measurements {
                 dbg!(err);
                 Action::None
             }
-            Message::RemoveLoopback => Action::RemoveLoopback,
         }
         // match msg {
         //     Message::LoadLoopbackMeasurement => (Task::none(), Some(Event::LoadLoopback)),
@@ -203,6 +206,7 @@ impl Measurements {
                             .enumerate()
                             .map(|(i, m)| measurement_list_entry(None, m, i)),
                     )
+                    .spacing(3)
                     .into()
                 };
 
@@ -570,7 +574,7 @@ fn measurement_list_entry<'a>(
             horizontal_space(),
             button("...").style(button::secondary),
             button(delete_icon())
-                // .on_press(Message::RemoveMeasurement(index))
+                .on_press(Message::RemoveMeasurement(index))
                 .style(button::danger)
         ]
         .spacing(3),

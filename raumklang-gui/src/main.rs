@@ -110,13 +110,18 @@ impl Raumklang {
 
                         Task::none()
                     }
+                    measurements::Action::RemoveLoopback => {
+                        self.project.loopback = None;
+
+                        Task::none()
+                    }
                     measurements::Action::MeasurementAdded(measurement) => {
                         self.project.measurements.push(measurement);
 
                         Task::none()
                     }
-                    measurements::Action::RemoveLoopback => {
-                        self.project.loopback = None;
+                    measurements::Action::RemoveMeasurement(id) => {
+                        self.project.measurements.remove(id);
 
                         Task::none()
                     }
