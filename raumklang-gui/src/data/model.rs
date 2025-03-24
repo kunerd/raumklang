@@ -1,4 +1,3 @@
-use raumklang_core::WavLoadError;
 use std::{
     collections::{vec_deque, VecDeque},
     path::{Path, PathBuf},
@@ -6,7 +5,7 @@ use std::{
 
 use crate::FileError;
 
-use super::project::Measurement;
+use super::Measurement;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RecentProjects {
