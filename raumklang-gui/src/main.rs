@@ -4,7 +4,6 @@ mod tab;
 mod widgets;
 
 use std::{
-    future::Future,
     io,
     path::{Path, PathBuf},
     sync::Arc,
@@ -13,10 +12,10 @@ use std::{
 use raumklang_core::WavLoadError;
 use tab::{landing, measurements, Measurements, Tab};
 
-use data::{FromFile, ProjectFile, ProjectLoopback, RecentProjects};
+use data::{FromFile, RecentProjects};
 
 use iced::{
-    futures::{future::join_all, FutureExt, SinkExt, TryFutureExt},
+    futures::{future::join_all, FutureExt, TryFutureExt},
     widget::text,
     Element, Font, Settings, Subscription, Task, Theme,
 };
