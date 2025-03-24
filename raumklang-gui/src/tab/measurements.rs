@@ -6,6 +6,7 @@ use crate::{
 use raumklang_core::WavLoadError;
 
 use iced::{
+    wgpu::core::pipeline::ColorStateError,
     widget::{
         self, button, column, container, horizontal_rule, horizontal_space, row, scrollable, text,
     },
@@ -44,6 +45,7 @@ pub enum Message {
     AddLoopback,
     AddMeasurement,
     LoopbackSignalLoaded(Result<Arc<data::Loopback>, Error>),
+    MeasurementSignalLoaded(Result<Arc<data::Measurement>, Error>),
     // LoadMeasurement,
     // RemoveMeasurement(usize),
     // LoadLoopbackMeasurement,
@@ -58,6 +60,7 @@ pub enum Action {
     Task(Task<Message>),
     LoopbackAdded(data::Loopback),
     None,
+    MeasurementAdded(data::Measurement),
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -90,15 +93,23 @@ impl Measurements {
                 pick_file_and_load_signal("Loopback"),
                 Message::LoopbackSignalLoaded,
             )),
-            Message::AddMeasurement => {
-                dbg!("Add measurement");
-                Action::None
-            }
             Message::LoopbackSignalLoaded(Ok(signal)) => match Arc::into_inner(signal) {
                 Some(signal) => Action::LoopbackAdded(signal),
                 None => Action::None,
             },
             Message::LoopbackSignalLoaded(Err(err)) => {
+                dbg!(err);
+                Action::None
+            }
+            Message::AddMeasurement => Action::Task(Task::perform(
+                pick_file_and_load_signal("Measurement"),
+                Message::MeasurementSignalLoaded,
+            )),
+            Message::MeasurementSignalLoaded(Ok(signal)) => match Arc::into_inner(signal) {
+                Some(signal) => Action::MeasurementAdded(signal),
+                None => Action::None,
+            },
+            Message::MeasurementSignalLoaded(Err(err)) => {
                 dbg!(err);
                 Action::None
             }
@@ -179,7 +190,18 @@ impl Measurements {
             };
 
             let measurements = {
-                let content = horizontal_space().into();
+                let content = if project.measurements.is_empty() {
+                    horizontal_space().into()
+                } else {
+                    column(
+                        project
+                            .measurements
+                            .iter()
+                            .enumerate()
+                            .map(|(i, m)| measurement_list_entry(None, m, i)),
+                    )
+                    .into()
+                };
 
                 signal_list_category("Measurements", Some(Message::AddMeasurement), content)
             };
@@ -192,7 +214,7 @@ impl Measurements {
         .width(Length::FillPortion(1));
 
         let content = {
-            let content = if project.loopback.is_none() {
+            let content = if project.has_no_measurements() {
                 text("You need to load one loopback or measurement signal at least.")
             } else {
                 text("Not implemented, yet")
@@ -492,14 +514,14 @@ fn loopback_list_entry<'a>(
     let sample_rate = signal.0.data.0.sample_rate() as f32;
     let content = column!(
         row![
-            widget::text(&signal.0.name),
+            text(&signal.0.name).size(16),
             horizontal_space(),
             button(delete_icon())
                 // .on_press(Message::RemoveLoopbackMeasurement)
                 .style(button::danger)
         ],
-        widget::text(format!("Samples: {}", samples)),
-        widget::text(format!("Duration: {} s", samples as f32 / sample_rate)),
+        text(format!("Samples: {}", samples)).size(12),
+        text(format!("Duration: {} s", samples as f32 / sample_rate)).size(12),
     );
 
     // let style = if let Some(SelectedMeasurement::Loopback) = selected {
@@ -516,36 +538,48 @@ fn loopback_list_entry<'a>(
         .into()
 }
 
-// fn measurement_list_entry<'a>(
-//     selected: Option<&SelectedMeasurement>,
-//     signal: &'a data::Measurement,
-//     index: usize,
-// ) -> Element<'a, Message> {
-//     let samples = signal.data.duration();
-//     let sample_rate = signal.data.sample_rate() as f32;
-//     let content = column!(
-//         row![
-//             widget::text(&signal.name).wrapping(Wrapping::Glyph),
-//             horizontal_space(),
-//             button(delete_icon())
-//                 .on_press(Message::RemoveMeasurement(index))
-//                 .style(button::danger)
-//         ],
-//         widget::text(format!("Samples: {}", samples)),
-//         widget::text(format!("Duration: {} s", samples as f32 / sample_rate)),
-//     );
+fn measurement_list_entry<'a>(
+    selected: Option<&SelectedMeasurement>,
+    signal: &'a data::Measurement,
+    index: usize,
+) -> Element<'a, Message> {
+    let samples = signal.data.duration();
+    let sample_rate = signal.data.sample_rate() as f32;
+    let content = column![
+        column![
+            text(&signal.name).size(16),
+            column![
+                text!("Samples: {}", samples).size(12),
+                text!("Duration: {} s", samples as f32 / sample_rate).size(12),
+            ]
+        ]
+        .spacing(5),
+        horizontal_rule(3),
+        row![
+            horizontal_space(),
+            button("...").style(button::secondary),
+            button(delete_icon())
+                // .on_press(Message::RemoveMeasurement(index))
+                .style(button::danger)
+        ]
+        .spacing(3),
+    ]
+    .clip(true)
+    .spacing(3);
 
-//     let style = match selected {
-//         Some(SelectedMeasurement::Measurement(selected)) if *selected == index => button::primary,
-//         Some(_) => button::secondary,
-//         None => button::secondary,
-//     };
+    // let style = match selected {
+    //     Some(SelectedMeasurement::Measurement(selected)) if *selected == index => button::primary,
+    //     Some(_) => button::secondary,
+    //     None => button::secondary,
+    // };
+    //
+    let style = button::secondary;
 
-//     button(content)
-//         .on_press(Message::MeasurementSelected(
-//             SelectedMeasurement::Measurement(index),
-//         ))
-//         .width(Length::Fill)
-//         .style(style)
-//         .into()
-// }
+    button(content)
+        // .on_press(Message::MeasurementSelected(
+        //     SelectedMeasurement::Measurement(index),
+        // ))
+        .width(Length::Fill)
+        .style(style)
+        .into()
+}

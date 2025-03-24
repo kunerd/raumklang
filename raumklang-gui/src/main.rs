@@ -3,13 +3,11 @@ mod data;
 mod tab;
 mod widgets;
 
-use tab::{landing, measurements, Measurements, Tab};
+use tab::{landing, measurements, Tab};
 
-use data::{Loopback, RecentProjects};
+use data::RecentProjects;
 
 use iced::{widget::text, Element, Font, Settings, Subscription, Task, Theme};
-
-use std::path::PathBuf;
 
 const MAX_RECENT_PROJECTS_ENTRIES: usize = 10;
 
@@ -43,12 +41,20 @@ struct Raumklang {
 }
 
 struct Project {
-    loopback: Option<Loopback>,
+    loopback: Option<data::Loopback>,
+    measurements: Vec<data::Measurement>,
 }
 
 impl Project {
     fn new() -> Self {
-        Self { loopback: None }
+        Self {
+            loopback: None,
+            measurements: Vec::new(),
+        }
+    }
+
+    fn has_no_measurements(&self) -> bool {
+        self.loopback.is_none() && self.measurements.is_empty()
     }
 }
 
@@ -101,10 +107,16 @@ impl Raumklang {
                 match action {
                     measurements::Action::LoopbackAdded(loopback) => {
                         self.project.loopback = Some(loopback);
+
                         Task::none()
                     }
                     measurements::Action::Task(task) => task.map(Message::Measurements),
                     measurements::Action::None => Task::none(),
+                    measurements::Action::MeasurementAdded(measurement) => {
+                        self.project.measurements.push(measurement);
+
+                        Task::none()
+                    }
                 }
             }
         }
