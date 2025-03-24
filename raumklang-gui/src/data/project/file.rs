@@ -2,15 +2,13 @@ use std::path::{Path, PathBuf};
 
 use crate::FileError;
 
-use super::Measurement;
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ProjectFile {
-    pub loopback: Option<ProjectLoopback>,
-    pub measurements: Vec<ProjectMeasurement>,
+pub struct File {
+    pub loopback: Option<Loopback>,
+    pub measurements: Vec<Measurement>,
 }
 
-impl ProjectFile {
+impl File {
     pub async fn load(path: impl AsRef<Path>) -> Result<Self, FileError> {
         let path = path.as_ref();
         let content = tokio::fs::read(path)
@@ -25,15 +23,15 @@ impl ProjectFile {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ProjectLoopback(ProjectMeasurement);
+pub struct Loopback(Measurement);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ProjectMeasurement {
+pub struct Measurement {
     pub path: PathBuf,
 }
 
-impl ProjectLoopback {
-    pub fn new(inner: ProjectMeasurement) -> Self {
+impl Loopback {
+    pub fn new(inner: Measurement) -> Self {
         Self(inner)
     }
 
@@ -42,8 +40,8 @@ impl ProjectLoopback {
     }
 }
 
-impl<D> From<&Measurement<D>> for ProjectMeasurement {
-    fn from(value: &Measurement<D>) -> Self {
+impl<D> From<&super::Measurement<D>> for Measurement {
+    fn from(value: &super::Measurement<D>) -> Self {
         Self {
             path: value.path.to_path_buf(),
         }
