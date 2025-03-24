@@ -11,7 +11,7 @@ use std::{
 
 use tab::{landing, measurements, Measurements, Tab};
 
-use data::{ProjectFile, RecentProjects};
+use data::{project, RecentProjects};
 
 use iced::{
     futures::{FutureExt, TryFutureExt},
@@ -891,7 +891,7 @@ pub fn delete_icon<'a, M>() -> Element<'a, M> {
 //     Ok(path)
 // }
 
-async fn pick_file_and_load() -> Result<(data::ProjectFile, PathBuf), PickAndLoadError> {
+async fn pick_file_and_load() -> Result<(project::File, PathBuf), PickAndLoadError> {
     let handle = rfd::AsyncFileDialog::new()
         .set_title("Choose project file ...")
         .pick_file()
@@ -903,10 +903,10 @@ async fn pick_file_and_load() -> Result<(data::ProjectFile, PathBuf), PickAndLoa
 
 async fn load_project_from_file<P: AsRef<Path>>(
     path: P,
-) -> Result<(data::ProjectFile, PathBuf), PickAndLoadError> {
+) -> Result<(project::File, PathBuf), PickAndLoadError> {
     let path = path.as_ref();
 
-    let project = ProjectFile::load(path).await?;
+    let project = project::File::load(path).await?;
 
     Ok((project, path.to_path_buf()))
 }

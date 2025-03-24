@@ -1,12 +1,16 @@
-use iced::futures::future::join_all;
-use raumklang_core::WavLoadError;
-
-use std::path::Path;
+mod file;
 
 use super::{
     measurement::{self, FromFile},
     Measurement,
 };
+pub use file::File;
+
+use raumklang_core::WavLoadError;
+
+use iced::futures::future::join_all;
+
+use std::path::Path;
 
 #[derive(Debug)]
 pub struct Project {
@@ -22,7 +26,7 @@ impl Project {
         }
     }
 
-    pub async fn load(project_file: super::ProjectFile) -> Self {
+    pub async fn load(project_file: File) -> Self {
         let loopback = match project_file.loopback {
             Some(loopback) => Self::load_signal_from_file(loopback.path()).await.ok(),
             None => None,
