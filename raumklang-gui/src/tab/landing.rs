@@ -16,6 +16,7 @@ pub fn landing<'a>(recent_projects: &'a RecentProjects) -> Element<'a, Message> 
     let recent_project_entries = recent_projects
         .iter()
         .enumerate()
+        .rev()
         .filter_map(|(i, p)| p.file_name().map(|f| (i, f)))
         .filter_map(|(i, p)| p.to_str().map(|f| (i, f)))
         .map(|(i, n)| {

@@ -500,7 +500,7 @@ where
     T: FromFile + Send + 'static,
 {
     let handle = pick_file(file_type).await?;
-    load_signal_from_file(handle.path())
+    Project::load_signal_from_file(handle.path())
         .await
         .map(Arc::new)
         .map_err(|err| Error::File(handle.path().to_path_buf(), Arc::new(err)))
@@ -514,15 +514,4 @@ async fn pick_file(file_type: impl AsRef<str>) -> Result<FileHandle, Error> {
         .pick_file()
         .await
         .ok_or(Error::DialogClosed)
-}
-
-async fn load_signal_from_file<P, T>(path: P) -> Result<T, WavLoadError>
-where
-    T: FromFile + Send + 'static,
-    P: AsRef<Path> + Send + Sync,
-{
-    let path = path.as_ref().to_owned();
-    tokio::task::spawn_blocking(move || T::from_file(path))
-        .await
-        .map_err(|_err| WavLoadError::Other)?
 }
