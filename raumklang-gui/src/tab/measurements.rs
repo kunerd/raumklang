@@ -43,8 +43,9 @@ pub enum SelectedMeasurement {
 #[derive(Debug, Clone)]
 pub enum Message {
     AddLoopback,
-    AddMeasurement,
     LoopbackSignalLoaded(Result<Arc<data::Loopback>, Error>),
+    RemoveLoopback,
+    AddMeasurement,
     MeasurementSignalLoaded(Result<Arc<data::Measurement>, Error>),
     // LoadMeasurement,
     // RemoveMeasurement(usize),
@@ -59,8 +60,9 @@ pub enum Message {
 pub enum Action {
     Task(Task<Message>),
     LoopbackAdded(data::Loopback),
-    None,
     MeasurementAdded(data::Measurement),
+    RemoveLoopback,
+    None,
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -113,6 +115,7 @@ impl Measurements {
                 dbg!(err);
                 Action::None
             }
+            Message::RemoveLoopback => Action::RemoveLoopback,
         }
         // match msg {
         //     Message::LoadLoopbackMeasurement => (Task::none(), Some(Event::LoadLoopback)),
@@ -513,15 +516,23 @@ fn loopback_list_entry<'a>(
     let samples = signal.0.data.0.duration();
     let sample_rate = signal.0.data.0.sample_rate() as f32;
     let content = column!(
-        row![
+        column![
             text(&signal.0.name).size(16),
+            column![
+                text(format!("Samples: {}", samples)).size(12),
+                text(format!("Duration: {} s", samples as f32 / sample_rate)).size(12),
+            ]
+        ]
+        .spacing(5),
+        horizontal_rule(3),
+        row![
             horizontal_space(),
+            button("...").style(button::secondary),
             button(delete_icon())
-                // .on_press(Message::RemoveLoopbackMeasurement)
+                .on_press(Message::RemoveLoopback)
                 .style(button::danger)
-        ],
-        text(format!("Samples: {}", samples)).size(12),
-        text(format!("Duration: {} s", samples as f32 / sample_rate)).size(12),
+        ]
+        .spacing(3),
     );
 
     // let style = if let Some(SelectedMeasurement::Loopback) = selected {
