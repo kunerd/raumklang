@@ -1,10 +1,25 @@
+use iced::Task;
+
 use crate::OfflineMeasurement;
 
 use super::{Loopback, Measurement, ProjectLoopback};
 
 pub struct Project {
-    pub loopback: Option<MeasurementState<Loopback, OfflineMeasurement>>,
-    pub measurements: Vec<MeasurementState<Measurement, OfflineMeasurement>>,
+    pub loopback: Option<Loopback>,
+    pub measurements: Vec<Measurement>,
+}
+
+struct Loopback(Measurement);
+struct Measurement {
+    name: String,
+    path: PathBuf,
+    state: State,
+}
+
+enum State {
+    Idle,
+    Loading,
+    Loaded(raumklang_core::Measurement),
 }
 
 #[derive(Debug)]
@@ -16,20 +31,6 @@ pub enum MeasurementState<L, O> {
 
 impl Project {
     pub fn new(project: super::ProjectFile) -> Self {
-        let loopback = project
-            .loopback
-            .map(OfflineMeasurement::from_loopback)
-            .map(MeasurementState::Loading);
-
-        let measurements = project
-            .measurements
-            .into_iter()
-            .map(OfflineMeasurement::from_measurement)
-            .map(MeasurementState::Loading)
-            .collect();
-
-        //                 let mut tasks = vec![];
-
         //                 recent_projects.insert(path);
         //                 let recent_projects = recent_projects.clone();
         //                 tasks.push(
