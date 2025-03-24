@@ -14,6 +14,7 @@ use std::{
     f32,
     io::{self},
     path::Path,
+    slice::Iter,
 };
 
 #[derive(Error, Debug)]
@@ -33,7 +34,7 @@ pub enum WavLoadError {
 }
 
 #[derive(Debug, Clone)]
-pub struct Loopback(pub Measurement);
+pub struct Loopback(Measurement);
 
 #[derive(Debug, Clone)]
 pub struct Measurement {
@@ -44,6 +45,18 @@ pub struct Measurement {
 impl Loopback {
     pub fn new(sample_rate: u32, data: Vec<f32>) -> Self {
         Self(Measurement::new(sample_rate, data))
+    }
+
+    pub fn iter(&self) -> Iter<f32> {
+        self.0.iter()
+    }
+
+    pub fn sample_rate(&self) -> u32 {
+        self.0.sample_rate()
+    }
+
+    pub fn duration(&self) -> usize {
+        self.0.duration()
     }
 
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError> {
@@ -74,12 +87,12 @@ impl Measurement {
         self.sample_rate
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &f32> + Clone {
-        self.data.iter()
-    }
-
     pub fn duration(&self) -> usize {
         self.data.len()
+    }
+
+    pub fn iter(&self) -> Iter<f32> {
+        self.data.iter()
     }
 }
 

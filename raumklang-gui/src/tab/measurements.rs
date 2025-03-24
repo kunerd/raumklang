@@ -210,8 +210,10 @@ impl Measurements {
                     .selected
                     .as_ref()
                     .and_then(|selection| match selection {
-                        Selected::Loopback => project.loopback.as_ref().map(|l| &l.0.data.0),
-                        Selected::Measurement(id) => project.measurements.get(*id).map(|m| &m.data),
+                        Selected::Loopback => project.loopback.as_ref().map(|s| s.data.iter()),
+                        Selected::Measurement(id) => {
+                            project.measurements.get(*id).map(|s| s.data.iter())
+                        }
                     });
 
                 if let Some(signal) = signal {
@@ -222,14 +224,8 @@ impl Measurements {
                         .x_labels(Labels::default().format(&|v| format!("{v:.0}")))
                         .y_labels(Labels::default().format(&|v| format!("{v:.1}")))
                         .push_series(
-                            line_series(
-                                signal
-                                    .iter()
-                                    .copied()
-                                    .enumerate()
-                                    .map(|(i, s)| (i as f32, s)),
-                            )
-                            .color(iced::Color::from_rgb8(2, 125, 66)),
+                            line_series(signal.copied().enumerate().map(|(i, s)| (i as f32, s)))
+                                .color(iced::Color::from_rgb8(2, 125, 66)),
                         )
                         // .on_scroll(|state: &pliced::chart::State<()>| {
                         //     let pos = state.get_coords();
@@ -414,11 +410,11 @@ fn loopback_list_entry<'a>(
     selected: Option<&Selected>,
     signal: &'a data::Loopback,
 ) -> Element<'a, Message> {
-    let samples = signal.0.data.0.duration();
-    let sample_rate = signal.0.data.0.sample_rate() as f32;
+    let samples = signal.data.duration();
+    let sample_rate = signal.data.sample_rate() as f32;
     let content = column![
         column![
-            text(&signal.0.name).size(16),
+            text(&signal.name).size(16),
             column![
                 text(format!("Samples: {}", samples)).size(12),
                 text(format!("Duration: {} s", samples as f32 / sample_rate)).size(12),
