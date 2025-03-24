@@ -27,17 +27,10 @@ use std::{
 // use crate::{data, delete_icon, OfflineMeasurement};
 
 pub struct Measurements {
-    // selected: Option<SelectedMeasurement>,
-
+    selected: Option<Selected>,
     // shift_key_pressed: bool,
     // x_max: Option<f32>,
     // x_range: RangeInclusive<f32>,
-}
-
-#[derive(Debug, Clone)]
-pub enum SelectedMeasurement {
-    // Loopback,
-    // Measurement(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -48,14 +41,20 @@ pub enum Message {
     AddMeasurement,
     RemoveMeasurement(usize),
     MeasurementSignalLoaded(Result<Arc<data::Measurement>, Error>),
-    // LoadMeasurement,
-    // RemoveMeasurement(usize),
-    // LoadLoopbackMeasurement,
-    // RemoveLoopbackMeasurement,
-    // MeasurementSelected(SelectedMeasurement),
-    // ChartScroll(Option<Point>, Option<ScrollDelta>),
-    // ShiftKeyPressed,
-    // ShiftKeyReleased,
+    Select(Selected), // LoadMeasurement,
+                      // RemoveMeasurement(usize),
+                      // LoadLoopbackMeasurement,
+                      // RemoveLoopbackMeasurement,
+                      // MeasurementSelected(SelectedMeasurement),
+                      // ChartScroll(Option<Point>, Option<ScrollDelta>),
+                      // ShiftKeyPressed,
+                      // ShiftKeyReleased,
+}
+
+#[derive(Debug, Clone)]
+pub enum Selected {
+    Loopback,
+    Measurement(usize),
 }
 
 pub enum Action {
@@ -78,7 +77,7 @@ pub enum Error {
 impl Measurements {
     pub fn new() -> Self {
         Self {
-            // selected: None,
+            selected: None,
             // shift_key_pressed: false,
             // x_max: Some(10.0),
             // x_range: 0.0..=10.0,
@@ -117,6 +116,11 @@ impl Measurements {
             },
             Message::MeasurementSignalLoaded(Err(err)) => {
                 dbg!(err);
+                Action::None
+            }
+            Message::Select(selected) => {
+                self.selected = Some(selected);
+
                 Action::None
             }
         }
@@ -188,7 +192,10 @@ impl Measurements {
         let sidebar = {
             let loopback = {
                 let (msg, content) = match project.loopback.as_ref() {
-                    Some(signal) => (None, loopback_list_entry(None, signal).into()),
+                    Some(signal) => (
+                        None,
+                        loopback_list_entry(self.selected.as_ref(), signal).into(),
+                    ),
                     None => (Some(Message::AddLoopback), horizontal_space().into()),
                 };
 
@@ -199,13 +206,9 @@ impl Measurements {
                 let content = if project.measurements.is_empty() {
                     horizontal_space().into()
                 } else {
-                    column(
-                        project
-                            .measurements
-                            .iter()
-                            .enumerate()
-                            .map(|(i, m)| measurement_list_entry(None, m, i)),
-                    )
+                    column(project.measurements.iter().enumerate().map(|(id, signal)| {
+                        measurement_list_entry(id, signal, self.selected.as_ref())
+                    }))
                     .spacing(3)
                     .into()
                 };
@@ -514,12 +517,12 @@ fn signal_list_category<'a>(
 // }
 
 fn loopback_list_entry<'a>(
-    selected: Option<&SelectedMeasurement>,
+    selected: Option<&Selected>,
     signal: &'a data::Loopback,
 ) -> Element<'a, Message> {
     let samples = signal.0.data.0.duration();
     let sample_rate = signal.0.data.0.sample_rate() as f32;
-    let content = column!(
+    let content = column![
         column![
             text(&signal.0.name).size(16),
             column![
@@ -537,26 +540,27 @@ fn loopback_list_entry<'a>(
                 .style(button::danger)
         ]
         .spacing(3),
-    );
+    ]
+    .clip(true)
+    .spacing(3);
 
-    // let style = if let Some(SelectedMeasurement::Loopback) = selected {
-    //     button::primary
-    // } else {
-    //     button::secondary
-    // };
-    let style = button::secondary;
+    let style = if let Some(Selected::Loopback) = selected {
+        button::primary
+    } else {
+        button::secondary
+    };
 
     button(content)
-        // .on_press(Message::MeasurementSelected(SelectedMeasurement::Loopback))
+        .on_press(Message::Select(Selected::Loopback))
         .style(style)
         .width(Length::Fill)
         .into()
 }
 
 fn measurement_list_entry<'a>(
-    selected: Option<&SelectedMeasurement>,
-    signal: &'a data::Measurement,
     index: usize,
+    signal: &'a data::Measurement,
+    selected: Option<&Selected>,
 ) -> Element<'a, Message> {
     let samples = signal.data.duration();
     let sample_rate = signal.data.sample_rate() as f32;
@@ -582,18 +586,13 @@ fn measurement_list_entry<'a>(
     .clip(true)
     .spacing(3);
 
-    // let style = match selected {
-    //     Some(SelectedMeasurement::Measurement(selected)) if *selected == index => button::primary,
-    //     Some(_) => button::secondary,
-    //     None => button::secondary,
-    // };
-    //
-    let style = button::secondary;
+    let style = match selected {
+        Some(Selected::Measurement(selected)) if *selected == index => button::primary,
+        _ => button::secondary,
+    };
 
     button(content)
-        // .on_press(Message::MeasurementSelected(
-        //     SelectedMeasurement::Measurement(index),
-        // ))
+        .on_press(Message::Select(Selected::Measurement(index)))
         .width(Length::Fill)
         .style(style)
         .into()
