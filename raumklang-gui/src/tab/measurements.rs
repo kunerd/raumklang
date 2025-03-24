@@ -1,16 +1,23 @@
-// use std::{fmt::Debug, ops::RangeInclusive, path::PathBuf, sync::Arc};
-
-use iced::{
-    keyboard,
-    mouse::ScrollDelta,
-    widget::{
-        self, button, column, container, horizontal_rule, horizontal_space, row, scrollable, stack,
-        text, text::Wrapping,
-    },
-    Alignment, Color, Element, Length, Point, Subscription, Task,
+use crate::{
+    data::{self, FromFile},
+    delete_icon, Project,
 };
 
-use crate::Project;
+use raumklang_core::WavLoadError;
+
+use iced::{
+    widget::{
+        self, button, column, container, horizontal_rule, horizontal_space, row, scrollable, text,
+    },
+    Alignment, Element, Length, Task,
+};
+
+use rfd::FileHandle;
+
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 // use pliced::chart::{line_series, Chart, Labels};
 
@@ -36,6 +43,7 @@ pub enum SelectedMeasurement {
 pub enum Message {
     AddLoopback,
     AddMeasurement,
+    LoopbackSignalLoaded(Result<Arc<data::Loopback>, Error>),
     // LoadMeasurement,
     // RemoveMeasurement(usize),
     // LoadLoopbackMeasurement,
@@ -46,19 +54,19 @@ pub enum Message {
     // ShiftKeyReleased,
 }
 
-#[derive(Debug, Clone)]
-pub enum Event {
-    // Load,
-    // Remove(usize, data::MeasurementId),
-    // LoadLoopback,
-    // RemoveLoopback,
+pub enum Action {
+    Task(Task<Message>),
+    LoopbackAdded(data::Loopback),
+    None,
 }
 
-// #[derive(Debug, Clone)]
-// pub enum Error {
-//     File(PathBuf, Arc<WavLoadError>),
-//     DialogClosed,
-// }
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum Error {
+    #[error("error while loading file: {0}")]
+    File(PathBuf, Arc<WavLoadError>),
+    #[error("dialog closed")]
+    DialogClosed,
+}
 
 impl Measurements {
     pub fn new() -> Self {
@@ -76,13 +84,23 @@ impl Measurements {
         // loopback: Option<&data::Loopback>,
         // measurements: &data::Store<data::Measurement, OfflineMeasurement>,
         // measurements: &Vec<MeasurementState<data::Measurement, OfflineMeasurement>>,
-    ) {
+    ) -> Action {
         match msg {
-            Message::AddLoopback => {
-                dbg!("Add loopback");
-            }
+            Message::AddLoopback => Action::Task(Task::perform(
+                pick_file_and_load_signal("Loopback"),
+                Message::LoopbackSignalLoaded,
+            )),
             Message::AddMeasurement => {
                 dbg!("Add measurement");
+                Action::None
+            }
+            Message::LoopbackSignalLoaded(Ok(signal)) => match Arc::into_inner(signal) {
+                Some(signal) => Action::LoopbackAdded(signal),
+                None => Action::None,
+            },
+            Message::LoopbackSignalLoaded(Err(err)) => {
+                dbg!(err);
+                Action::None
             }
         }
         // match msg {
@@ -152,12 +170,12 @@ impl Measurements {
     ) -> Element<'a, Message> {
         let sidebar = {
             let loopback = {
-                let content = match project.loopback {
-                    Some(_) => text("Not implemented, yet.").into(),
-                    None => horizontal_space().into(),
+                let (msg, content) = match project.loopback.as_ref() {
+                    Some(signal) => (None, loopback_list_entry(None, signal).into()),
+                    None => (Some(Message::AddLoopback), horizontal_space().into()),
                 };
 
-                signal_list_category("Loopback", Some(Message::AddLoopback), content)
+                signal_list_category("Loopback", msg, content)
             };
 
             let measurements = {
@@ -329,6 +347,38 @@ impl Measurements {
     //     }
 }
 
+async fn pick_file_and_load_signal<T>(file_type: impl AsRef<str>) -> Result<Arc<T>, Error>
+where
+    T: FromFile + Send + 'static,
+{
+    let handle = pick_file(file_type).await?;
+    load_signal_from_file(handle.path())
+        .await
+        .map(Arc::new)
+        .map_err(|err| Error::File(handle.path().to_path_buf(), Arc::new(err)))
+}
+
+async fn pick_file(file_type: impl AsRef<str>) -> Result<FileHandle, Error> {
+    rfd::AsyncFileDialog::new()
+        .set_title(format!("Choose {} file", file_type.as_ref()))
+        .add_filter("wav", &["wav", "wave"])
+        .add_filter("all", &["*"])
+        .pick_file()
+        .await
+        .ok_or(Error::DialogClosed)
+}
+
+async fn load_signal_from_file<P, T>(path: P) -> Result<T, WavLoadError>
+where
+    T: FromFile + Send + 'static,
+    P: AsRef<Path> + Send + Sync,
+{
+    let path = path.as_ref().to_owned();
+    tokio::task::spawn_blocking(move || T::from_file(path))
+        .await
+        .map_err(|_err| WavLoadError::Other)?
+}
+
 // fn collecting_list<'a>(
 //     selected: Option<&SelectedMeasurement>,
 //     loopback: Option<&'a data::MeasurementState<data::Loopback, OfflineMeasurement>>,
@@ -434,36 +484,37 @@ fn signal_list_category<'a>(
 //     .into()
 // }
 
-// fn loopback_list_entry<'a>(
-//     selected: Option<&SelectedMeasurement>,
-//     signal: &'a data::Loopback,
-// ) -> Element<'a, Message> {
-//     let samples = signal.0.data.0.duration();
-//     let sample_rate = signal.0.data.0.sample_rate() as f32;
-//     let content = column!(
-//         row![
-//             widget::text(&signal.0.name),
-//             horizontal_space(),
-//             button(delete_icon())
-//                 .on_press(Message::RemoveLoopbackMeasurement)
-//                 .style(button::danger)
-//         ],
-//         widget::text(format!("Samples: {}", samples)),
-//         widget::text(format!("Duration: {} s", samples as f32 / sample_rate)),
-//     );
+fn loopback_list_entry<'a>(
+    selected: Option<&SelectedMeasurement>,
+    signal: &'a data::Loopback,
+) -> Element<'a, Message> {
+    let samples = signal.0.data.0.duration();
+    let sample_rate = signal.0.data.0.sample_rate() as f32;
+    let content = column!(
+        row![
+            widget::text(&signal.0.name),
+            horizontal_space(),
+            button(delete_icon())
+                // .on_press(Message::RemoveLoopbackMeasurement)
+                .style(button::danger)
+        ],
+        widget::text(format!("Samples: {}", samples)),
+        widget::text(format!("Duration: {} s", samples as f32 / sample_rate)),
+    );
 
-//     let style = if let Some(SelectedMeasurement::Loopback) = selected {
-//         button::primary
-//     } else {
-//         button::secondary
-//     };
+    // let style = if let Some(SelectedMeasurement::Loopback) = selected {
+    //     button::primary
+    // } else {
+    //     button::secondary
+    // };
+    let style = button::secondary;
 
-//     button(content)
-//         .on_press(Message::MeasurementSelected(SelectedMeasurement::Loopback))
-//         .style(style)
-//         .width(Length::Fill)
-//         .into()
-// }
+    button(content)
+        // .on_press(Message::MeasurementSelected(SelectedMeasurement::Loopback))
+        .style(style)
+        .width(Length::Fill)
+        .into()
+}
 
 // fn measurement_list_entry<'a>(
 //     selected: Option<&SelectedMeasurement>,
