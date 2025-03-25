@@ -310,7 +310,7 @@ where
     T: FromFile + Send + 'static,
 {
     let handle = pick_file(file_type).await?;
-    data::Project::load_signal_from_file(handle.path())
+    measurement::load_from_file(handle.path())
         .await
         .map(Arc::new)
         .map_err(|err| Error::File(handle.path().to_path_buf(), Arc::new(err)))
