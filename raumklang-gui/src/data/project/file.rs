@@ -9,6 +9,14 @@ pub struct File {
     pub measurements: Vec<Measurement>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Loopback(Measurement);
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Measurement {
+    pub path: PathBuf,
+}
+
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum Error {
     #[error("could not load file: {0}")]
@@ -16,7 +24,6 @@ pub enum Error {
     #[error("could not parse file: {0}")]
     Json(String),
 }
-
 impl File {
     pub async fn load(path: impl AsRef<Path>) -> Result<Self, Error> {
         let path = path.as_ref();
@@ -31,19 +38,7 @@ impl File {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Loopback(Measurement);
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Measurement {
-    pub path: PathBuf,
-}
-
 impl Loopback {
-    pub fn new(inner: Measurement) -> Self {
-        Self(inner)
-    }
-
     pub fn path(&self) -> &PathBuf {
         &self.0.path
     }

@@ -1,25 +1,17 @@
 mod data;
 mod tab;
-mod widgets;
+// mod widgets;
 
 use std::{
-    io,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use tab::{landing, measurements, Measurements, Tab};
 
-use data::{
-    project::{self, file},
-    RecentProjects,
-};
+use data::{project::file, RecentProjects};
 
-use iced::{
-    futures::{FutureExt, TryFutureExt},
-    widget::text,
-    Element, Font, Settings, Subscription, Task, Theme,
-};
+use iced::{futures::FutureExt, widget::text, Element, Font, Settings, Subscription, Task, Theme};
 
 const MAX_RECENT_PROJECTS_ENTRIES: usize = 10;
 

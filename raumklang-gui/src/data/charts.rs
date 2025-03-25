@@ -1,7 +1,3 @@
-//pub mod frequency_response;
-//pub mod impulse_response;
-//pub mod measurement;
-
 use iced::mouse;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -9,13 +5,6 @@ pub enum TimeSeriesUnit {
     #[default]
     Time,
     Samples,
-}
-
-#[derive(Debug, Clone)]
-pub enum InteractiveViewportMessage {
-    MouseEvent(mouse::Event, iced::Point),
-    ShiftKeyReleased,
-    ShiftKeyPressed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
