@@ -13,7 +13,7 @@ use screen::{
     Screen,
 };
 
-use data::{project::file, RecentProjects};
+use data::{impulse_response, project::file, RecentProjects};
 
 use iced::{
     futures::FutureExt,
@@ -48,6 +48,7 @@ enum Message {
 
     Measurements(measurements::Message),
     ImpulseResponses(impulse_responses::Message),
+    ImpulseResponseComputed(Result<(usize, raumklang_core::ImpulseResponse), data::Error>),
 }
 
 struct Raumklang {
@@ -181,9 +182,58 @@ impl Raumklang {
                 let action = impulse_responses.update(message);
 
                 match action {
-                    impulse_responses::Action::ComputeImpulseResponse(_) => {}
-                }
+                    impulse_responses::Action::ComputeImpulseResponse(id) => {
+                        let Some(loopback) = self.project.loopback().cloned() else {
+                            return Task::none();
+                        };
 
+                        let Some(measurement) = self.project.measurements_mut().get_mut(id) else {
+                            return Task::none();
+                        };
+
+                        let data::measurement::State::Loaded { data: loopback, .. } =
+                            loopback.state
+                        else {
+                            return Task::none();
+                        };
+
+                        let data::measurement::State::Loaded {
+                            data: measurement,
+                            impulse_response:
+                                impulse_response @ impulse_response::State::NotComputed,
+                        } = &mut measurement.state
+                        else {
+                            return Task::none();
+                        };
+
+                        *impulse_response = impulse_response::State::Computing;
+
+                        Task::perform(
+                            data::compute_impulse_response(id, loopback, measurement.clone()),
+                            Message::ImpulseResponseComputed,
+                        )
+                    }
+                }
+            }
+            Message::ImpulseResponseComputed(Ok((id, impulse_response))) => {
+                self.project
+                    .measurements_mut()
+                    .get_mut(id)
+                    .map(|m| match &mut m.state {
+                        data::measurement::State::NotLoaded => {}
+                        data::measurement::State::Loaded {
+                            impulse_response: ir,
+                            ..
+                        } => {
+                            *ir = data::impulse_response::State::Computed(impulse_response);
+                        }
+                    });
+
+                Task::none()
+            }
+
+            Message::ImpulseResponseComputed(Err(err)) => {
+                dbg!(err);
                 Task::none()
             }
         }

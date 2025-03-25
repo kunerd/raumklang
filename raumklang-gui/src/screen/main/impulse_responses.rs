@@ -2,8 +2,10 @@ use iced::{
     widget::{button, column, container, horizontal_rule, row, scrollable, text},
     Element, Length,
 };
+use pliced::chart::{line_series, Chart, Labels};
+use rustfft::num_complex::ComplexFloat;
 
-use crate::data;
+use crate::data::{self, impulse_response};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -68,9 +70,49 @@ impl ImpulseReponses {
         }
         .width(Length::FillPortion(1));
 
+        let content: Element<_> = {
+            if let Some(id) = self.selected {
+                let state = measurements
+                    .get(id)
+                    .map(|m| &m.state)
+                    .and_then(|s| match s {
+                        data::measurement::State::Loaded {
+                            impulse_response: impulse_response::State::Computed(impulse_response),
+                            ..
+                        } => Some(impulse_response),
+                        _ => None,
+                    });
+
+                match state {
+                    Some(impulse_response) => {
+                        let chart: Chart<_, (), _> = Chart::new()
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            // .x_range(x_scale_fn(-44_10.0, sample_rate)..=x_scale_fn(44_100.0, sample_rate))
+                            .y_labels(Labels::default().format(&|v| format!("{v:.2}")))
+                            .push_series(
+                                line_series(
+                                    impulse_response
+                                        .data
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(i, s)| (i as f32, s.abs())),
+                                )
+                                .color(iced::Color::from_rgb8(2, 125, 66)),
+                            );
+                        chart.into()
+                    }
+                    // TODO: add spinner
+                    None => text("Impulse response not computed, yet.").into(),
+                }
+            } else {
+                text("Please select an entry to view its data.").into()
+            }
+        };
+
         row![
             container(sidebar).width(Length::FillPortion(1)),
-            container("Not implemented, yet.").center(Length::FillPortion(4))
+            container(content).center(Length::FillPortion(4))
         ]
         .into()
     }

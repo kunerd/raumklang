@@ -58,6 +58,11 @@ impl Project {
     pub fn measurements(&self) -> &[Measurement] {
         &self.measurements
     }
+
+    pub fn measurements_mut(&mut self) -> &mut [Measurement] {
+        &mut self.measurements
+    }
+
     pub fn has_no_measurements(&self) -> bool {
         self.loopback.is_none() && self.measurements.is_empty()
     }
