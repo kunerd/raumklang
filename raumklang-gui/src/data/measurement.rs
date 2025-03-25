@@ -6,15 +6,18 @@ use super::impulse_response;
 
 pub type Loopback = Measurement<raumklang_core::Loopback>;
 
-#[derive(Debug)]
-pub struct Measurement<D = raumklang_core::Measurement> {
+#[derive(Debug, Clone)]
+pub struct Measurement<D = raumklang_core::Measurement>
+where
+    D: Clone,
+{
     pub name: String,
     pub path: PathBuf,
     pub state: State<D>,
 }
 
-#[derive(Debug, Default)]
-pub enum State<D> {
+#[derive(Debug, Default, Clone)]
+pub enum State<D: Clone> {
     #[default]
     NotLoaded,
     Loaded {
@@ -28,6 +31,11 @@ pub trait FromFile {
     where
         Self: Sized;
 }
+
+// impl Measurement<raumklang_core::Measurement> {
+//     pub async fn compute_impulse_response()
+
+// }
 
 pub async fn load_from_file<P, T>(path: P) -> Result<T, WavLoadError>
 where
