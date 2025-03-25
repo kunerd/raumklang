@@ -13,7 +13,10 @@ use screen::{
     Screen,
 };
 
-use data::{impulse_response, project::file, RecentProjects};
+use data::{
+    project::{file, ImpulseResponseComputation},
+    RecentProjects,
+};
 
 use iced::{
     futures::FutureExt,
@@ -183,34 +186,16 @@ impl Raumklang {
 
                 match action {
                     impulse_responses::Action::ComputeImpulseResponse(id) => {
-                        let Some(loopback) = self.project.loopback().cloned() else {
-                            return Task::none();
-                        };
+                        let computation =
+                            match ImpulseResponseComputation::new(id, &mut self.project) {
+                                Ok(computation) => computation,
+                                Err(err) => {
+                                    dbg!(err);
+                                    return Task::none();
+                                }
+                            };
 
-                        let Some(measurement) = self.project.measurements_mut().get_mut(id) else {
-                            return Task::none();
-                        };
-
-                        let data::measurement::LoopbackState::Loaded(loopback) = loopback.state
-                        else {
-                            return Task::none();
-                        };
-
-                        let data::measurement::MeasurementState::Loaded {
-                            data: measurement,
-                            impulse_response:
-                                impulse_response @ impulse_response::State::NotComputed,
-                        } = &mut measurement.state
-                        else {
-                            return Task::none();
-                        };
-
-                        *impulse_response = impulse_response::State::Computing;
-
-                        Task::perform(
-                            data::compute_impulse_response(id, loopback, measurement.clone()),
-                            Message::ImpulseResponseComputed,
-                        )
+                        Task::perform(computation.run(), Message::ImpulseResponseComputed)
                     }
                 }
             }

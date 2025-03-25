@@ -3,7 +3,7 @@ pub mod file;
 use super::{
     impulse_response,
     measurement::{self},
-    Measurement,
+    Error, Measurement,
 };
 pub use file::File;
 
@@ -15,6 +15,12 @@ use std::path::Path;
 pub struct Project {
     loopback: Option<measurement::Loopback>,
     measurements: Vec<Measurement>,
+}
+
+pub struct ImpulseResponseComputation {
+    pub id: usize,
+    pub loopback: raumklang_core::Loopback,
+    pub measurement: raumklang_core::Measurement,
 }
 
 impl Project {
@@ -86,5 +92,53 @@ impl Project {
 
     pub fn remove_measurement(&mut self, index: usize) -> Measurement {
         self.measurements.remove(index)
+    }
+}
+
+impl ImpulseResponseComputation {
+    pub fn new(measurement_id: usize, project: &mut Project) -> Result<Self, Error> {
+        let Some(loopback) = project.loopback.as_ref() else {
+            return Err(Error::ImpulseResponseComputationFailed);
+        };
+
+        let Some(measurement) = project.measurements.get_mut(measurement_id) else {
+            return Err(Error::ImpulseResponseComputationFailed);
+        };
+
+        let measurement::LoopbackState::Loaded(loopback) = &loopback.state else {
+            return Err(Error::ImpulseResponseComputationFailed);
+        };
+
+        let measurement::MeasurementState::Loaded {
+            data: measurement,
+            impulse_response: impulse_response @ impulse_response::State::NotComputed,
+        } = &mut measurement.state
+        else {
+            return Err(Error::ImpulseResponseComputationFailed);
+        };
+
+        *impulse_response = impulse_response::State::Computing;
+
+        let loopback = loopback.clone();
+        let measurement = measurement.clone();
+
+        Ok(ImpulseResponseComputation {
+            id: measurement_id,
+            loopback,
+            measurement,
+        })
+    }
+
+    pub async fn run(self) -> Result<(usize, raumklang_core::ImpulseResponse), Error> {
+        let id = self.id;
+
+        let impulse_response = tokio::task::spawn_blocking(move || {
+            raumklang_core::ImpulseResponse::from_signals(&self.loopback, &self.measurement)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+
+        Ok((id, impulse_response))
     }
 }
