@@ -4,24 +4,34 @@ use raumklang_core::WavLoadError;
 
 use super::impulse_response;
 
-pub type Loopback = Measurement<raumklang_core::Loopback>;
+// pub type Loopback = Measurement<raumklang_core::Loopback>;
 
 #[derive(Debug, Clone)]
-pub struct Measurement<D = raumklang_core::Measurement>
-where
-    D: Clone,
-{
-    pub name: String,
+pub struct Loopback {
     pub path: PathBuf,
-    pub state: State<D>,
+    pub state: LoopbackState,
 }
 
 #[derive(Debug, Default, Clone)]
-pub enum State<D: Clone> {
+pub enum LoopbackState {
+    #[default]
+    NotLoaded,
+    Loaded(raumklang_core::Loopback),
+}
+
+#[derive(Debug, Clone)]
+pub struct Measurement {
+    pub name: String,
+    pub path: PathBuf,
+    pub state: MeasurementState,
+}
+
+#[derive(Debug, Default, Clone)]
+pub enum MeasurementState {
     #[default]
     NotLoaded,
     Loaded {
-        data: D,
+        data: raumklang_core::Measurement,
         impulse_response: impulse_response::State,
     },
 }
@@ -54,21 +64,14 @@ impl FromFile for Loopback {
         Self: Sized,
     {
         let path = path.as_ref();
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_os_string().into_string().ok())
-            .unwrap_or("Unknown".to_string());
 
         let state = match raumklang_core::Loopback::from_file(path) {
-            Ok(data) => State::Loaded {
-                data,
-                impulse_response: impulse_response::State::NotComputed,
-            },
-            Err(_) => State::NotLoaded,
+            Ok(data) => LoopbackState::Loaded(data),
+            Err(_) => LoopbackState::NotLoaded,
         };
 
         let path = path.to_path_buf();
-        Ok(Measurement { name, path, state })
+        Ok(Self { path, state })
     }
 }
 
@@ -81,11 +84,11 @@ impl FromFile for Measurement {
             .unwrap_or("Unknown".to_string());
 
         let state = match raumklang_core::Measurement::from_file(path) {
-            Ok(data) => State::Loaded {
+            Ok(data) => MeasurementState::Loaded {
                 data,
                 impulse_response: impulse_response::State::NotComputed,
             },
-            Err(_) => State::NotLoaded,
+            Err(_) => MeasurementState::NotLoaded,
         };
 
         Ok(Self {

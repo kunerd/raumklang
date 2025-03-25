@@ -44,8 +44,8 @@ impl Loopback {
     }
 }
 
-impl<D: Clone> From<&super::Measurement<D>> for Measurement {
-    fn from(value: &super::Measurement<D>) -> Self {
+impl From<&super::Measurement> for Measurement {
+    fn from(value: &super::Measurement) -> Self {
         Self {
             path: value.path.to_path_buf(),
         }

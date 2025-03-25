@@ -76,7 +76,7 @@ impl ImpulseReponses {
                     .get(id)
                     .map(|m| &m.state)
                     .and_then(|s| match s {
-                        data::measurement::State::Loaded {
+                        data::measurement::MeasurementState::Loaded {
                             impulse_response: impulse_response::State::Computed(impulse_response),
                             ..
                         } => Some(impulse_response),

@@ -148,7 +148,7 @@ impl Measurements {
                     .as_ref()
                     .and_then(|selection| match selection {
                         Selected::Loopback => project.loopback().and_then(|s| {
-                            if let measurement::State::Loaded { data, .. } = &s.state {
+                            if let measurement::LoopbackState::Loaded(data) = &s.state {
                                 Some(data.iter())
                             } else {
                                 None
@@ -156,7 +156,8 @@ impl Measurements {
                         }),
                         Selected::Measurement(id) => {
                             project.measurements().get(*id).and_then(|s| {
-                                if let measurement::State::Loaded { data, .. } = &s.state {
+                                if let measurement::MeasurementState::Loaded { data, .. } = &s.state
+                                {
                                     Some(data.iter())
                                 } else {
                                     None
@@ -218,8 +219,8 @@ fn loopback_list_entry<'a>(
     signal: &'a data::measurement::Loopback,
 ) -> Element<'a, Message> {
     let (data_info, select_msg) = match &signal.state {
-        measurement::State::NotLoaded => (None, None),
-        measurement::State::Loaded { data, .. } => {
+        measurement::LoopbackState::NotLoaded => (None, None),
+        measurement::LoopbackState::Loaded(data) => {
             let samples = data.duration();
             let sample_rate = data.sample_rate() as f32;
             let info = column![
@@ -232,7 +233,7 @@ fn loopback_list_entry<'a>(
     };
 
     let content = column![
-        column![text(&signal.name).size(16)]
+        column![text("Loopback").size(16)]
             .push_maybe(data_info)
             .spacing(5),
         horizontal_rule(3),
@@ -267,8 +268,8 @@ fn measurement_list_entry<'a>(
     selected: Option<&Selected>,
 ) -> Element<'a, Message> {
     let (data_info, select_msg) = match &signal.state {
-        measurement::State::NotLoaded => (None, None),
-        measurement::State::Loaded { data, .. } => {
+        measurement::MeasurementState::NotLoaded => (None, None),
+        measurement::MeasurementState::Loaded { data, .. } => {
             let samples = data.duration();
             let sample_rate = data.sample_rate() as f32;
             let info = column![

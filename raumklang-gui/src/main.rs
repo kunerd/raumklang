@@ -191,13 +191,12 @@ impl Raumklang {
                             return Task::none();
                         };
 
-                        let data::measurement::State::Loaded { data: loopback, .. } =
-                            loopback.state
+                        let data::measurement::LoopbackState::Loaded(loopback) = loopback.state
                         else {
                             return Task::none();
                         };
 
-                        let data::measurement::State::Loaded {
+                        let data::measurement::MeasurementState::Loaded {
                             data: measurement,
                             impulse_response:
                                 impulse_response @ impulse_response::State::NotComputed,
@@ -220,8 +219,8 @@ impl Raumklang {
                     .measurements_mut()
                     .get_mut(id)
                     .map(|m| match &mut m.state {
-                        data::measurement::State::NotLoaded => {}
-                        data::measurement::State::Loaded {
+                        data::measurement::MeasurementState::NotLoaded => {}
+                        data::measurement::MeasurementState::Loaded {
                             impulse_response: ir,
                             ..
                         } => {
