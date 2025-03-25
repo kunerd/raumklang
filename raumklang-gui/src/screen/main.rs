@@ -1,4 +1,7 @@
+pub mod impulse_responses;
 pub mod measurements;
+
+pub use impulse_responses::ImpulseReponses;
 pub use measurements::Measurements;
 
 #[derive(Debug, Clone)]
@@ -9,7 +12,7 @@ pub enum TabId {
 
 pub enum Tab {
     Measurements(Measurements),
-    ImpulseResponses,
+    ImpulseResponses(ImpulseReponses),
 }
 
 impl Default for Tab {

@@ -2,7 +2,7 @@ pub mod file;
 
 use super::{
     measurement::{self},
-    Measurement,
+    ImpulseResponse, Measurement,
 };
 pub use file::File;
 
@@ -14,6 +14,7 @@ use std::path::Path;
 pub struct Project {
     pub loopback: Option<measurement::Loopback>,
     pub measurements: Vec<Measurement>,
+    pub impulse_responses: Vec<ImpulseResponse>,
 }
 
 impl Project {
@@ -21,6 +22,7 @@ impl Project {
         Self {
             loopback: None,
             measurements: Vec::new(),
+            impulse_responses: Vec::new(),
         }
     }
 
@@ -48,6 +50,7 @@ impl Project {
         Ok(Self {
             loopback,
             measurements,
+            impulse_responses: Vec::new(),
         })
     }
 

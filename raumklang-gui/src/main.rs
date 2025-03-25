@@ -9,7 +9,7 @@ use std::{
 
 use screen::{
     landing,
-    main::{self, measurements, Measurements},
+    main::{self, impulse_responses, measurements, ImpulseReponses, Measurements},
     Screen,
 };
 
@@ -43,9 +43,11 @@ enum Message {
     RecentProjectsLoaded(Result<data::RecentProjects, data::Error>),
     // ProjectFileLoaded((data::ProjectFile, PathBuf)),
     Landing(landing::Message),
-    Measurements(measurements::Message),
     ProjectLoaded(Result<(Arc<data::Project>, PathBuf), PickAndLoadError>),
     TabSelected(main::TabId),
+
+    Measurements(measurements::Message),
+    ImpulseResponses(impulse_responses::Message),
 }
 
 struct Raumklang {
@@ -109,6 +111,35 @@ impl Raumklang {
                     None => Task::none(),
                 },
             },
+            Message::ProjectLoaded(Ok((project, path))) => match Arc::into_inner(project) {
+                Some(project) => {
+                    self.project = project;
+                    self.recent_projects.insert(path);
+                    self.screen = Screen::Main(main::Tab::default());
+
+                    Task::future(self.recent_projects.clone().save()).discard()
+                }
+                None => Task::none(),
+            },
+            Message::ProjectLoaded(Err(err)) => {
+                dbg!(err);
+
+                Task::none()
+            }
+            Message::TabSelected(tab_id) => {
+                let Screen::Main(tab) = &mut self.screen else {
+                    return Task::none();
+                };
+
+                *tab = match tab_id {
+                    main::TabId::Measurements => main::Tab::Measurements(Measurements::new()),
+                    main::TabId::ImpulseResponses => {
+                        main::Tab::ImpulseResponses(ImpulseReponses::new())
+                    }
+                };
+
+                Task::none()
+            }
             Message::Measurements(message) => {
                 let Screen::Main(main::Tab::Measurements(measurements)) = &mut self.screen else {
                     return Task::none();
@@ -141,30 +172,17 @@ impl Raumklang {
                     measurements::Action::None => Task::none(),
                 }
             }
-            Message::ProjectLoaded(Ok((project, path))) => match Arc::into_inner(project) {
-                Some(project) => {
-                    self.project = project;
-                    self.recent_projects.insert(path);
-                    self.screen = Screen::Main(main::Tab::default());
-
-                    Task::future(self.recent_projects.clone().save()).discard()
-                }
-                None => Task::none(),
-            },
-            Message::ProjectLoaded(Err(err)) => {
-                dbg!(err);
-
-                Task::none()
-            }
-            Message::TabSelected(tab_id) => {
-                let Screen::Main(tab) = &mut self.screen else {
+            Message::ImpulseResponses(message) => {
+                let Screen::Main(main::Tab::ImpulseResponses(impulse_responses)) = &mut self.screen
+                else {
                     return Task::none();
                 };
 
-                *tab = match tab_id {
-                    main::TabId::Measurements => main::Tab::Measurements(Measurements::new()),
-                    main::TabId::ImpulseResponses => main::Tab::ImpulseResponses,
-                };
+                let action = impulse_responses.update(message);
+
+                match action {
+                    impulse_responses::Action::ComputeImpulseResponse(_) => {}
+                }
 
                 Task::none()
             }
@@ -197,7 +215,7 @@ impl Raumklang {
                     ),
                     tab_button(
                         "Impulse Responses",
-                        matches!(tab, main::Tab::ImpulseResponses),
+                        matches!(tab, main::Tab::ImpulseResponses(_)),
                         Message::TabSelected(main::TabId::ImpulseResponses)
                     )
                 ]
@@ -207,7 +225,9 @@ impl Raumklang {
                     main::Tab::Measurements(measurements) => {
                         measurements.view(&self.project).map(Message::Measurements)
                     }
-                    main::Tab::ImpulseResponses => text("Not implemented, yet").into(),
+                    main::Tab::ImpulseResponses(impulse_responses) => impulse_responses
+                        .view(&self.project.impulse_responses)
+                        .map(Message::ImpulseResponses),
                 };
 
                 column![header, content].into()
