@@ -129,7 +129,7 @@ impl ImpulseResponseComputation {
         }))
     }
 
-    pub async fn run(self) -> Result<(usize, raumklang_core::ImpulseResponse), Error> {
+    pub async fn run(self) -> Result<(usize, super::ImpulseResponse), Error> {
         let id = self.id;
 
         let impulse_response = tokio::task::spawn_blocking(move || {
@@ -139,6 +139,6 @@ impl ImpulseResponseComputation {
         .await
         .unwrap();
 
-        Ok((id, impulse_response))
+        Ok((id, impulse_response.into()))
     }
 }
