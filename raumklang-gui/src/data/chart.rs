@@ -1,5 +1,3 @@
-use iced::mouse;
-
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum TimeSeriesUnit {
     #[default]
