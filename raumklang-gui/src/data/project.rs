@@ -96,7 +96,7 @@ impl Project {
 }
 
 impl ImpulseResponseComputation {
-    pub fn new(measurement_id: usize, project: &mut Project) -> Result<Self, Error> {
+    pub fn new(measurement_id: usize, project: &mut Project) -> Result<Option<Self>, Error> {
         let Some(loopback) = project.loopback.as_ref() else {
             return Err(Error::ImpulseResponseComputationFailed);
         };
@@ -114,7 +114,7 @@ impl ImpulseResponseComputation {
             impulse_response: impulse_response @ impulse_response::State::NotComputed,
         } = &mut measurement.state
         else {
-            return Err(Error::ImpulseResponseComputationFailed);
+            return Ok(None);
         };
 
         *impulse_response = impulse_response::State::Computing;
@@ -122,11 +122,11 @@ impl ImpulseResponseComputation {
         let loopback = loopback.clone();
         let measurement = measurement.clone();
 
-        Ok(ImpulseResponseComputation {
+        Ok(Some(ImpulseResponseComputation {
             id: measurement_id,
             loopback,
             measurement,
-        })
+        }))
     }
 
     pub async fn run(self) -> Result<(usize, raumklang_core::ImpulseResponse), Error> {
