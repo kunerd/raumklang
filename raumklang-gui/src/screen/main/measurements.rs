@@ -100,39 +100,44 @@ impl Measurements {
     }
 
     pub fn view<'a>(&'a self, project: &'a data::Project) -> Element<'a, Message> {
-        let sidebar = {
-            let loopback = {
-                let (msg, content) = match project.loopback.as_ref() {
-                    Some(signal) => (
-                        None,
-                        loopback_list_entry(self.selected.as_ref(), signal).into(),
-                    ),
-                    None => (Some(Message::AddLoopback), horizontal_space().into()),
+        let sidebar =
+            {
+                let loopback = {
+                    let (msg, content) = match project.loopback() {
+                        Some(signal) => (
+                            None,
+                            loopback_list_entry(self.selected.as_ref(), signal).into(),
+                        ),
+                        None => (Some(Message::AddLoopback), horizontal_space().into()),
+                    };
+
+                    signal_list_category("Loopback", msg, content)
                 };
 
-                signal_list_category("Loopback", msg, content)
-            };
+                let measurements =
+                    {
+                        let content =
+                            if project.measurements().is_empty() {
+                                horizontal_space().into()
+                            } else {
+                                column(project.measurements().iter().enumerate().map(
+                                    |(id, signal)| {
+                                        measurement_list_entry(id, signal, self.selected.as_ref())
+                                    },
+                                ))
+                                .spacing(3)
+                                .into()
+                            };
 
-            let measurements = {
-                let content = if project.measurements.is_empty() {
-                    horizontal_space().into()
-                } else {
-                    column(project.measurements.iter().enumerate().map(|(id, signal)| {
-                        measurement_list_entry(id, signal, self.selected.as_ref())
-                    }))
-                    .spacing(3)
-                    .into()
-                };
+                        signal_list_category("Measurements", Some(Message::AddMeasurement), content)
+                    };
 
-                signal_list_category("Measurements", Some(Message::AddMeasurement), content)
-            };
-
-            container(scrollable(
-                column![loopback, measurements].spacing(20).padding(10),
-            ))
-            .style(container::rounded_box)
-        }
-        .width(Length::FillPortion(1));
+                container(scrollable(
+                    column![loopback, measurements].spacing(20).padding(10),
+                ))
+                .style(container::rounded_box)
+            }
+            .width(Length::FillPortion(1));
 
         let content = {
             let content: Element<_> = if project.has_no_measurements() {
@@ -142,20 +147,22 @@ impl Measurements {
                     .selected
                     .as_ref()
                     .and_then(|selection| match selection {
-                        Selected::Loopback => project.loopback.as_ref().and_then(|s| {
-                            if let measurement::State::Loaded(data) = &s.state {
+                        Selected::Loopback => project.loopback().and_then(|s| {
+                            if let measurement::State::Loaded { data, .. } = &s.state {
                                 Some(data.iter())
                             } else {
                                 None
                             }
                         }),
-                        Selected::Measurement(id) => project.measurements.get(*id).and_then(|s| {
-                            if let measurement::State::Loaded(data) = &s.state {
-                                Some(data.iter())
-                            } else {
-                                None
-                            }
-                        }),
+                        Selected::Measurement(id) => {
+                            project.measurements().get(*id).and_then(|s| {
+                                if let measurement::State::Loaded { data, .. } = &s.state {
+                                    Some(data.iter())
+                                } else {
+                                    None
+                                }
+                            })
+                        }
                     });
 
                 if let Some(signal) = signal {
@@ -212,7 +219,7 @@ fn loopback_list_entry<'a>(
 ) -> Element<'a, Message> {
     let (data_info, select_msg) = match &signal.state {
         measurement::State::NotLoaded => (None, None),
-        measurement::State::Loaded(data) => {
+        measurement::State::Loaded { data, .. } => {
             let samples = data.duration();
             let sample_rate = data.sample_rate() as f32;
             let info = column![
@@ -261,7 +268,7 @@ fn measurement_list_entry<'a>(
 ) -> Element<'a, Message> {
     let (data_info, select_msg) = match &signal.state {
         measurement::State::NotLoaded => (None, None),
-        measurement::State::Loaded(data) => {
+        measurement::State::Loaded { data, .. } => {
             let samples = data.duration();
             let sample_rate = data.sample_rate() as f32;
             let info = column![
