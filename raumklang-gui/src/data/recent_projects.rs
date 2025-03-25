@@ -1,3 +1,5 @@
+use super::Error;
+
 use std::{
     collections::{vec_deque, VecDeque},
     io,
@@ -19,15 +21,17 @@ impl RecentProjects {
         }
     }
 
-    async fn path() -> Result<PathBuf, io::Error> {
+    async fn path() -> Result<PathBuf, Error> {
         Ok(data_dir().await?.join("recent_projects.json"))
     }
 
-    pub async fn load() -> Self {
-        let path = Self::path().await.unwrap();
+    pub async fn load() -> Result<Self, Error> {
+        let path = Self::path().await?;
 
-        let content = tokio::fs::read(path).await.unwrap();
-        serde_json::from_slice(&content).unwrap()
+        let content = tokio::fs::read(path).await?;
+        let recent = serde_json::from_slice(&content)?;
+
+        Ok(recent)
     }
 
     pub async fn save(self) {

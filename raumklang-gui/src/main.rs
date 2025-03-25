@@ -32,7 +32,7 @@ fn main() -> iced::Result {
 
 #[derive(Debug, Clone)]
 enum Message {
-    RecentProjectsLoaded(data::RecentProjects),
+    RecentProjectsLoaded(Result<data::RecentProjects, data::Error>),
     // ProjectFileLoaded((data::ProjectFile, PathBuf)),
     Landing(landing::Message),
     Measurements(measurements::Message),
@@ -63,13 +63,20 @@ impl Raumklang {
 
     fn update(&mut self, msg: Message) -> Task<Message> {
         match msg {
-            Message::RecentProjectsLoaded(recent_projects) => {
+            Message::RecentProjectsLoaded(Ok(recent_projects)) => {
                 for path in recent_projects
                     .into_iter()
                     .take(MAX_RECENT_PROJECTS_ENTRIES)
                 {
                     self.recent_projects.insert(path);
                 }
+
+                self.tab = Tab::Landing;
+
+                Task::none()
+            }
+            Message::RecentProjectsLoaded(Err(err)) => {
+                dbg!(err);
 
                 self.tab = Tab::Landing;
 
