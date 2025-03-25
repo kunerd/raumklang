@@ -20,7 +20,7 @@ use data::{
 
 use iced::{
     futures::FutureExt,
-    widget::{button, column, row, text, Button},
+    widget::{button, column, container, row, text, Button},
     Element, Font, Settings, Subscription, Task, Theme,
 };
 
@@ -198,6 +198,8 @@ impl Raumklang {
 
                         Task::perform(computation.run(), Message::ImpulseResponseComputed)
                     }
+
+                    impulse_responses::Action::None => Task::none(),
                 }
             }
             Message::ImpulseResponseComputed(Ok((id, impulse_response))) => {
@@ -265,7 +267,10 @@ impl Raumklang {
                         .map(Message::ImpulseResponses),
                 };
 
-                column![header, content].into()
+                container(column![header, content].spacing(5))
+                    .padding(5)
+                    .style(container::bordered_box)
+                    .into()
             }
         }
     }

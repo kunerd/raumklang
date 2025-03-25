@@ -1,3 +1,4 @@
+pub mod chart;
 pub mod impulse_response;
 pub mod measurement;
 pub mod project;

@@ -1,28 +1,49 @@
 use iced::{
-    widget::{button, column, container, horizontal_rule, row, scrollable, text},
-    Element, Length,
+    widget::{
+        button, column, container, horizontal_rule, horizontal_space, pick_list, row, scrollable,
+        text,
+    },
+    Alignment, Element, Length,
 };
 use pliced::chart::{line_series, Chart, Labels};
 use rustfft::num_complex::ComplexFloat;
 
-use crate::data::{self, impulse_response};
+use crate::data::{self, chart, impulse_response};
+
+pub struct ImpulseReponses {
+    selected: Option<usize>,
+    chart_data: ChartData,
+}
+
+#[derive(Default)]
+pub struct ChartData {
+    amplitude_unit: chart::AmplitudeUnit,
+    time_unit: chart::TimeSeriesUnit,
+}
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Select(usize),
+    Chart(ChartOperation),
+}
+
+#[derive(Debug, Clone)]
+pub enum ChartOperation {
+    TimeUnitChanged(chart::TimeSeriesUnit),
+    AmplitudeUnitChanged(chart::AmplitudeUnit),
 }
 
 pub enum Action {
     ComputeImpulseResponse(usize),
-}
-
-pub struct ImpulseReponses {
-    selected: Option<usize>,
+    None,
 }
 
 impl ImpulseReponses {
     pub fn new() -> Self {
-        Self { selected: None }
+        Self {
+            selected: None,
+            chart_data: ChartData::default(),
+        }
     }
 
     pub fn update(&mut self, message: Message) -> Action {
@@ -31,6 +52,11 @@ impl ImpulseReponses {
                 self.selected = Some(id);
 
                 Action::ComputeImpulseResponse(id)
+            }
+            Message::Chart(operation) => {
+                self.chart_data.apply(operation);
+
+                Action::None
             }
         }
     }
@@ -85,6 +111,14 @@ impl ImpulseReponses {
 
                 match state {
                     Some(impulse_response) => {
+                        let header = row![pick_list(
+                            &chart::AmplitudeUnit::ALL[..],
+                            Some(&self.chart_data.amplitude_unit),
+                            |unit| Message::Chart(ChartOperation::AmplitudeUnitChanged(unit))
+                        ),]
+                        .align_y(Alignment::Center)
+                        .spacing(10);
+
                         let chart: Chart<_, (), _> = Chart::new()
                             .width(Length::Fill)
                             .height(Length::Fill)
@@ -100,7 +134,22 @@ impl ImpulseReponses {
                                 )
                                 .color(iced::Color::from_rgb8(2, 125, 66)),
                             );
-                        chart.into()
+
+                        let footer = {
+                            row![
+                                horizontal_space(),
+                                pick_list(
+                                    &chart::TimeSeriesUnit::ALL[..],
+                                    Some(&self.chart_data.time_unit),
+                                    |unit| {
+                                        Message::Chart(ChartOperation::TimeUnitChanged(unit))
+                                    }
+                                ),
+                            ]
+                            .align_y(Alignment::Center)
+                        };
+
+                        container(column![header, chart, footer]).into()
                     }
                     // TODO: add spinner
                     None => text("Impulse response not computed, yet.").into(),
@@ -114,6 +163,18 @@ impl ImpulseReponses {
             container(sidebar).width(Length::FillPortion(1)),
             container(content).center(Length::FillPortion(4))
         ]
+        .spacing(10)
         .into()
+    }
+}
+
+impl ChartData {
+    fn apply(&mut self, operation: ChartOperation) {
+        match operation {
+            ChartOperation::TimeUnitChanged(time_unit) => self.time_unit = time_unit,
+            ChartOperation::AmplitudeUnitChanged(amplitude_unit) => {
+                self.amplitude_unit = amplitude_unit
+            }
+        }
     }
 }
