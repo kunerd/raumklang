@@ -7,8 +7,8 @@ pub enum TimeSeriesUnit {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AmplitudeUnit {
-    #[default]
     PercentFullScale,
+    #[default]
     DezibelFullScale,
 }
 
