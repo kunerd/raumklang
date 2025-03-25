@@ -18,9 +18,9 @@ pub struct Project {
 }
 
 pub struct ImpulseResponseComputation {
-    pub id: usize,
-    pub loopback: raumklang_core::Loopback,
-    pub measurement: raumklang_core::Measurement,
+    id: usize,
+    loopback: raumklang_core::Loopback,
+    measurement: raumklang_core::Measurement,
 }
 
 impl Project {
