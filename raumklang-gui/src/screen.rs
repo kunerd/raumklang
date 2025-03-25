@@ -1,18 +1,17 @@
 pub mod landing;
-pub mod measurements;
+pub mod main;
 
 pub use landing::landing;
-pub use measurements::Measurements;
 
 use iced::{
     widget::{container, text},
     Element, Length,
 };
 
-pub enum Tab {
+pub enum Screen {
     Loading,
     Landing,
-    Measurements(Measurements),
+    Main(main::Tab),
 }
 
 pub fn loading<'a, Message: 'a>() -> Element<'a, Message> {
