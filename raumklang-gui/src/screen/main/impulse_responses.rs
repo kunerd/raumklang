@@ -118,37 +118,40 @@ impl ImpulseReponses {
                         .align_y(Alignment::Center)
                         .spacing(10);
 
-                        let x_scale_fn = match self.chart_data.time_unit {
-                            chart::TimeSeriesUnit::Samples => sample_scale,
-                            chart::TimeSeriesUnit::Time => time_scale,
+                        let chart: Chart<_, (), _> = {
+                            let x_scale_fn = match self.chart_data.time_unit {
+                                chart::TimeSeriesUnit::Samples => sample_scale,
+                                chart::TimeSeriesUnit::Time => time_scale,
+                            };
+
+                            let y_scale_fn: fn(f32, f32) -> f32 =
+                                match self.chart_data.amplitude_unit {
+                                    chart::AmplitudeUnit::PercentFullScale => percent_full_scale,
+                                    chart::AmplitudeUnit::DezibelFullScale => db_full_scale,
+                                };
+
+                            let sample_rate = impulse_response.sample_rate as f32;
+
+                            Chart::new()
+                                .width(Length::Fill)
+                                .height(Length::Fill)
+                                .x_range(
+                                    x_scale_fn(-44_10.0, sample_rate)
+                                        ..=x_scale_fn(44_100.0, sample_rate),
+                                )
+                                .y_labels(Labels::default().format(&|v| format!("{v:.2}")))
+                                .push_series(
+                                    line_series(impulse_response.data.iter().enumerate().map(
+                                        move |(i, s)| {
+                                            (
+                                                x_scale_fn(i as f32, sample_rate),
+                                                y_scale_fn(*s, impulse_response.max),
+                                            )
+                                        },
+                                    ))
+                                    .color(iced::Color::from_rgb8(2, 125, 66)),
+                                )
                         };
-
-                        let y_scale_fn: fn(f32, f32) -> f32 = match self.chart_data.amplitude_unit {
-                            chart::AmplitudeUnit::PercentFullScale => percent_full_scale,
-                            chart::AmplitudeUnit::DezibelFullScale => db_full_scale,
-                        };
-
-                        let sample_rate = impulse_response.sample_rate as f32;
-
-                        let chart: Chart<_, (), _> = Chart::new()
-                            .width(Length::Fill)
-                            .height(Length::Fill)
-                            .x_range(
-                                x_scale_fn(-44_10.0, sample_rate)
-                                    ..=x_scale_fn(44_100.0, sample_rate),
-                            )
-                            .y_labels(Labels::default().format(&|v| format!("{v:.2}")))
-                            .push_series(
-                                line_series(impulse_response.data.iter().enumerate().map(
-                                    move |(i, s)| {
-                                        (
-                                            x_scale_fn(i as f32, sample_rate),
-                                            y_scale_fn(*s, impulse_response.max),
-                                        )
-                                    },
-                                ))
-                                .color(iced::Color::from_rgb8(2, 125, 66)),
-                            );
 
                         let footer = {
                             row![
