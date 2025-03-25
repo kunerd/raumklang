@@ -1,5 +1,5 @@
 mod data;
-mod tab;
+mod screen;
 // mod widgets;
 
 use std::{
@@ -7,11 +7,19 @@ use std::{
     sync::Arc,
 };
 
-use tab::{landing, measurements, Measurements, Tab};
+use screen::{
+    landing,
+    main::{self, measurements, Measurements},
+    Screen,
+};
 
 use data::{project::file, RecentProjects};
 
-use iced::{futures::FutureExt, widget::text, Element, Font, Settings, Subscription, Task, Theme};
+use iced::{
+    futures::FutureExt,
+    widget::{button, column, row, text, Button},
+    Element, Font, Settings, Subscription, Task, Theme,
+};
 
 const MAX_RECENT_PROJECTS_ENTRIES: usize = 10;
 
@@ -37,10 +45,11 @@ enum Message {
     Landing(landing::Message),
     Measurements(measurements::Message),
     ProjectLoaded(Result<(Arc<data::Project>, PathBuf), PickAndLoadError>),
+    TabSelected(main::TabId),
 }
 
 struct Raumklang {
-    tab: Tab,
+    screen: Screen,
     project: data::Project,
     recent_projects: RecentProjects,
 }
@@ -48,7 +57,7 @@ struct Raumklang {
 impl Raumklang {
     fn new() -> (Self, Task<Message>) {
         let app = Self {
-            tab: Tab::Loading,
+            screen: Screen::Loading,
             project: data::Project::new(),
             recent_projects: RecentProjects::new(MAX_RECENT_PROJECTS_ENTRIES),
         };
@@ -71,20 +80,20 @@ impl Raumklang {
                     self.recent_projects.insert(path);
                 }
 
-                self.tab = Tab::Landing;
+                self.screen = Screen::Landing;
 
                 Task::none()
             }
             Message::RecentProjectsLoaded(Err(err)) => {
                 dbg!(err);
 
-                self.tab = Tab::Landing;
+                self.screen = Screen::Landing;
 
                 Task::none()
             }
             Message::Landing(message) => match message {
                 landing::Message::New => {
-                    self.tab = Tab::Measurements(tab::Measurements::new());
+                    self.screen = Screen::Main(main::Tab::default());
 
                     Task::none()
                 }
@@ -101,7 +110,7 @@ impl Raumklang {
                 },
             },
             Message::Measurements(message) => {
-                let Tab::Measurements(measurements) = &mut self.tab else {
+                let Screen::Main(main::Tab::Measurements(measurements)) = &mut self.screen else {
                     return Task::none();
                 };
 
@@ -136,7 +145,7 @@ impl Raumklang {
                 Some(project) => {
                     self.project = project;
                     self.recent_projects.insert(path);
-                    self.tab = Tab::Measurements(Measurements::new());
+                    self.screen = Screen::Main(main::Tab::default());
 
                     Task::future(self.recent_projects.clone().save()).discard()
                 }
@@ -147,15 +156,61 @@ impl Raumklang {
 
                 Task::none()
             }
+            Message::TabSelected(tab_id) => {
+                let Screen::Main(tab) = &mut self.screen else {
+                    return Task::none();
+                };
+
+                *tab = match tab_id {
+                    main::TabId::Measurements => main::Tab::Measurements(Measurements::new()),
+                    main::TabId::ImpulseResponses => main::Tab::ImpulseResponses,
+                };
+
+                Task::none()
+            }
         }
     }
 
     fn view(&self) -> Element<'_, Message> {
-        match &self.tab {
-            Tab::Loading => tab::loading(),
-            Tab::Landing => tab::landing(&self.recent_projects).map(Message::Landing),
-            Tab::Measurements(measurements) => {
-                measurements.view(&self.project).map(Message::Measurements)
+        match &self.screen {
+            Screen::Loading => screen::loading(),
+            Screen::Landing => screen::landing(&self.recent_projects).map(Message::Landing),
+            Screen::Main(tab) => {
+                fn tab_button<'a>(
+                    text: &'a str,
+                    active: bool,
+                    msg: Message,
+                ) -> Button<'a, Message> {
+                    let style = match active {
+                        true => button::primary,
+                        false => button::secondary,
+                    };
+
+                    button(text.as_ref()).style(style).on_press(msg)
+                }
+
+                let header = row![
+                    tab_button(
+                        "Measurements",
+                        matches!(tab, main::Tab::Measurements(_)),
+                        Message::TabSelected(main::TabId::Measurements)
+                    ),
+                    tab_button(
+                        "Impulse Responses",
+                        matches!(tab, main::Tab::ImpulseResponses),
+                        Message::TabSelected(main::TabId::ImpulseResponses)
+                    )
+                ]
+                .spacing(5);
+
+                let content = match tab {
+                    main::Tab::Measurements(measurements) => {
+                        measurements.view(&self.project).map(Message::Measurements)
+                    }
+                    main::Tab::ImpulseResponses => text("Not implemented, yet").into(),
+                };
+
+                column![header, content].into()
             }
         }
     }
