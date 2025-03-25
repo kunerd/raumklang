@@ -73,8 +73,8 @@ impl Project {
         self.measurements
             .iter_mut()
             .for_each(|m| match &mut m.state {
-                measurement::State::NotLoaded => {}
-                measurement::State::Loaded {
+                measurement::MeasurementState::NotLoaded => {}
+                measurement::MeasurementState::Loaded {
                     impulse_response, ..
                 } => *impulse_response = impulse_response::State::NotComputed,
             });
