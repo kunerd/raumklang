@@ -149,22 +149,22 @@ impl Raumklang {
 
                 match action {
                     measurements::Action::LoopbackAdded(loopback) => {
-                        self.project.loopback = Some(loopback);
+                        self.project.set_loopback(Some(loopback));
 
                         Task::none()
                     }
                     measurements::Action::RemoveLoopback => {
-                        self.project.loopback = None;
+                        self.project.set_loopback(None);
 
                         Task::none()
                     }
                     measurements::Action::MeasurementAdded(measurement) => {
-                        self.project.measurements.push(measurement);
+                        self.project.push_measurements(measurement);
 
                         Task::none()
                     }
                     measurements::Action::RemoveMeasurement(id) => {
-                        self.project.measurements.remove(id);
+                        self.project.remove_measurement(id);
 
                         Task::none()
                     }
@@ -226,7 +226,7 @@ impl Raumklang {
                         measurements.view(&self.project).map(Message::Measurements)
                     }
                     main::Tab::ImpulseResponses(impulse_responses) => impulse_responses
-                        .view(&self.project.impulse_responses)
+                        .view(self.project.measurements())
                         .map(Message::ImpulseResponses),
                 };
 

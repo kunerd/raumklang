@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use raumklang_core::WavLoadError;
 
+use super::impulse_response;
+
 pub type Loopback = Measurement<raumklang_core::Loopback>;
 
 #[derive(Debug)]
@@ -15,7 +17,10 @@ pub struct Measurement<D = raumklang_core::Measurement> {
 pub enum State<D> {
     #[default]
     NotLoaded,
-    Loaded(D),
+    Loaded {
+        data: D,
+        impulse_response: impulse_response::State,
+    },
 }
 
 pub trait FromFile {
@@ -47,7 +52,10 @@ impl FromFile for Loopback {
             .unwrap_or("Unknown".to_string());
 
         let state = match raumklang_core::Loopback::from_file(path) {
-            Ok(data) => State::Loaded(data),
+            Ok(data) => State::Loaded {
+                data,
+                impulse_response: impulse_response::State::NotComputed,
+            },
             Err(_) => State::NotLoaded,
         };
 
@@ -65,7 +73,10 @@ impl FromFile for Measurement {
             .unwrap_or("Unknown".to_string());
 
         let state = match raumklang_core::Measurement::from_file(path) {
-            Ok(data) => State::Loaded(data),
+            Ok(data) => State::Loaded {
+                data,
+                impulse_response: impulse_response::State::NotComputed,
+            },
             Err(_) => State::NotLoaded,
         };
 

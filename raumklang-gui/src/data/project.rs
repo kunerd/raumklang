@@ -1,8 +1,9 @@
 pub mod file;
 
 use super::{
+    impulse_response,
     measurement::{self},
-    ImpulseResponse, Measurement,
+    Measurement,
 };
 pub use file::File;
 
@@ -12,9 +13,8 @@ use std::path::Path;
 
 #[derive(Debug)]
 pub struct Project {
-    pub loopback: Option<measurement::Loopback>,
-    pub measurements: Vec<Measurement>,
-    pub impulse_responses: Vec<ImpulseResponse>,
+    loopback: Option<measurement::Loopback>,
+    measurements: Vec<Measurement>,
 }
 
 impl Project {
@@ -22,13 +22,11 @@ impl Project {
         Self {
             loopback: None,
             measurements: Vec::new(),
-            impulse_responses: Vec::new(),
         }
     }
 
     pub async fn load(path: impl AsRef<Path>) -> Result<Self, file::Error> {
         let path = path.as_ref();
-
         let project_file = File::load(path).await?;
 
         let loopback = match project_file.loopback {
@@ -36,7 +34,7 @@ impl Project {
             None => None,
         };
 
-        let measurements = join_all(
+        let measurements: Vec<_> = join_all(
             project_file
                 .measurements
                 .iter()
@@ -50,11 +48,38 @@ impl Project {
         Ok(Self {
             loopback,
             measurements,
-            impulse_responses: Vec::new(),
         })
     }
 
+    pub fn loopback(&self) -> Option<&measurement::Loopback> {
+        self.loopback.as_ref()
+    }
+
+    pub fn measurements(&self) -> &[Measurement] {
+        &self.measurements
+    }
     pub fn has_no_measurements(&self) -> bool {
         self.loopback.is_none() && self.measurements.is_empty()
+    }
+
+    pub fn set_loopback(&mut self, loopback: Option<measurement::Loopback>) {
+        self.loopback = loopback;
+
+        self.measurements
+            .iter_mut()
+            .for_each(|m| match &mut m.state {
+                measurement::State::NotLoaded => {}
+                measurement::State::Loaded {
+                    impulse_response, ..
+                } => *impulse_response = impulse_response::State::NotComputed,
+            });
+    }
+
+    pub fn push_measurements(&mut self, measurement: Measurement) {
+        self.measurements.push(measurement);
+    }
+
+    pub fn remove_measurement(&mut self, index: usize) -> Measurement {
+        self.measurements.remove(index)
     }
 }
