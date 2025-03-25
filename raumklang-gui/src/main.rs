@@ -188,7 +188,8 @@ impl Raumklang {
                     impulse_responses::Action::ComputeImpulseResponse(id) => {
                         let computation =
                             match ImpulseResponseComputation::new(id, &mut self.project) {
-                                Ok(computation) => computation,
+                                Ok(Some(computation)) => computation,
+                                Ok(None) => return Task::none(),
                                 Err(err) => {
                                     dbg!(err);
                                     return Task::none();
