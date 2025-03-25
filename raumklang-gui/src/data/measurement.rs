@@ -18,6 +18,23 @@ pub enum State<D> {
     Loaded(D),
 }
 
+pub trait FromFile {
+    fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError>
+    where
+        Self: Sized;
+}
+
+pub async fn load_from_file<P, T>(path: P) -> Result<T, WavLoadError>
+where
+    T: FromFile + Send + 'static,
+    P: AsRef<Path> + Send + Sync,
+{
+    let path = path.as_ref().to_owned();
+    tokio::task::spawn_blocking(move || T::from_file(path))
+        .await
+        .map_err(|_err| WavLoadError::Other)?
+}
+
 impl FromFile for Loopback {
     fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError>
     where
@@ -37,12 +54,6 @@ impl FromFile for Loopback {
         let path = path.to_path_buf();
         Ok(Measurement { name, path, state })
     }
-}
-
-pub trait FromFile {
-    fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError>
-    where
-        Self: Sized;
 }
 
 impl FromFile for Measurement {

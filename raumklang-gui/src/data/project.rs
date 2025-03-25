@@ -1,12 +1,10 @@
 pub mod file;
 
 use super::{
-    measurement::{self, FromFile},
+    measurement::{self},
     Measurement,
 };
 pub use file::File;
-
-use raumklang_core::WavLoadError;
 
 use iced::futures::future::join_all;
 
@@ -32,7 +30,7 @@ impl Project {
         let project_file = File::load(path).await?;
 
         let loopback = match project_file.loopback {
-            Some(loopback) => Self::load_signal_from_file(loopback.path()).await.ok(),
+            Some(loopback) => measurement::load_from_file(loopback.path()).await.ok(),
             None => None,
         };
 
@@ -40,7 +38,7 @@ impl Project {
             project_file
                 .measurements
                 .iter()
-                .map(|p| Self::load_signal_from_file(p.path.clone())),
+                .map(|p| measurement::load_from_file(p.path.clone())),
         )
         .await
         .into_iter()
@@ -51,17 +49,6 @@ impl Project {
             loopback,
             measurements,
         })
-    }
-
-    pub async fn load_signal_from_file<P, T>(path: P) -> Result<T, WavLoadError>
-    where
-        T: FromFile + Send + 'static,
-        P: AsRef<Path> + Send + Sync,
-    {
-        let path = path.as_ref().to_owned();
-        tokio::task::spawn_blocking(move || T::from_file(path))
-            .await
-            .map_err(|_err| WavLoadError::Other)?
     }
 
     pub fn has_no_measurements(&self) -> bool {
