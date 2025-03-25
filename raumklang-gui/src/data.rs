@@ -1,7 +1,9 @@
+pub mod impulse_response;
 pub mod measurement;
 pub mod project;
 mod recent_projects;
 
+pub use impulse_response::ImpulseResponse;
 pub use measurement::Measurement;
 pub use project::Project;
 pub use recent_projects::RecentProjects;
