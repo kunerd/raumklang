@@ -1,4 +1,4 @@
-mod file;
+pub mod file;
 
 use super::{
     measurement::{self, FromFile},
@@ -26,7 +26,11 @@ impl Project {
         }
     }
 
-    pub async fn load(project_file: File) -> Self {
+    pub async fn load(path: impl AsRef<Path>) -> Result<Self, file::Error> {
+        let path = path.as_ref();
+
+        let project_file = File::load(path).await?;
+
         let loopback = match project_file.loopback {
             Some(loopback) => Self::load_signal_from_file(loopback.path()).await.ok(),
             None => None,
@@ -43,10 +47,10 @@ impl Project {
         .flatten()
         .collect();
 
-        Self {
+        Ok(Self {
             loopback,
             measurements,
-        }
+        })
     }
 
     pub async fn load_signal_from_file<P, T>(path: P) -> Result<T, WavLoadError>
