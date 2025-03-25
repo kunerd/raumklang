@@ -10,7 +10,10 @@ use std::{
 
 use tab::{landing, measurements, Measurements, Tab};
 
-use data::{project, RecentProjects};
+use data::{
+    project::{self, file},
+    RecentProjects,
+};
 
 use iced::{
     futures::{FutureExt, TryFutureExt},
@@ -86,21 +89,15 @@ impl Raumklang {
 
                     Task::none()
                 }
-                landing::Message::Load => Task::future(
-                    pick_file_and_load()
-                        .and_then(|(file, path)| async {
-                            Ok((Arc::new(data::Project::load(file).await), path))
-                        })
-                        .map(Message::ProjectLoaded),
+                landing::Message::Load => Task::perform(
+                    pick_project_file().then(async |res| {
+                        let path = res?;
+                        load_project(path).await
+                    }),
+                    Message::ProjectLoaded,
                 ),
                 landing::Message::Recent(id) => match self.recent_projects.get(id) {
-                    Some(path) => Task::future(
-                        load_project_from_file(path.clone())
-                            .and_then(async |(file, path)| {
-                                Ok((Arc::new(data::Project::load(file).await), path))
-                            })
-                            .map(Message::ProjectLoaded),
-                    ),
+                    Some(path) => Task::perform(load_project(path.clone()), Message::ProjectLoaded),
                     None => Task::none(),
                 },
             },
@@ -173,20 +170,12 @@ impl Raumklang {
     }
 }
 
-#[derive(thiserror::Error, Debug, Clone)]
-pub enum FileError {
-    #[error("could not load file: {0}")]
-    Io(io::ErrorKind),
-    #[error("could not parse file: {0}")]
-    Json(String),
-}
-
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum PickAndLoadError {
     #[error("dialog closed")]
     DialogClosed,
     #[error(transparent)]
-    File(#[from] FileError),
+    File(#[from] file::Error),
 }
 
 pub fn icon<'a, M>(codepoint: char) -> Element<'a, M> {
@@ -199,22 +188,21 @@ pub fn delete_icon<'a, M>() -> Element<'a, M> {
     icon('\u{F1F8}')
 }
 
-async fn pick_file_and_load() -> Result<(project::File, PathBuf), PickAndLoadError> {
+async fn pick_project_file() -> Result<PathBuf, PickAndLoadError> {
     let handle = rfd::AsyncFileDialog::new()
         .set_title("Choose project file ...")
         .pick_file()
         .await
         .ok_or(PickAndLoadError::DialogClosed)?;
 
-    load_project_from_file(handle.path()).await
+    Ok(handle.path().to_path_buf())
 }
 
-async fn load_project_from_file<P: AsRef<Path>>(
-    path: P,
-) -> Result<(project::File, PathBuf), PickAndLoadError> {
+async fn load_project(
+    path: impl AsRef<Path>,
+) -> Result<(Arc<data::Project>, PathBuf), PickAndLoadError> {
     let path = path.as_ref();
-
-    let project = project::File::load(path).await?;
+    let project = data::Project::load(path).await.map(Arc::new)?;
 
     Ok((project, path.to_path_buf()))
 }
