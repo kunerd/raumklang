@@ -51,7 +51,7 @@ enum Message {
 
     Measurements(measurements::Message),
     ImpulseResponses(impulse_responses::Message),
-    ImpulseResponseComputed(Result<(usize, raumklang_core::ImpulseResponse), data::Error>),
+    ImpulseResponseComputed(Result<(usize, data::ImpulseResponse), data::Error>),
 }
 
 struct Raumklang {
@@ -267,7 +267,7 @@ impl Raumklang {
                         .map(Message::ImpulseResponses),
                 };
 
-                container(column![header, content].spacing(5))
+                container(column![header, content].spacing(10))
                     .padding(5)
                     .style(container::bordered_box)
                     .into()
