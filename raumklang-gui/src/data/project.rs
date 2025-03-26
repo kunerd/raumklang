@@ -2,7 +2,7 @@ pub mod file;
 
 use super::{
     impulse_response,
-    measurement::{self},
+    measurement::{self, loopback},
     Error, Measurement,
 };
 pub use file::File;
@@ -79,8 +79,8 @@ impl Project {
         self.measurements
             .iter_mut()
             .for_each(|m| match &mut m.state {
-                measurement::MeasurementState::NotLoaded => {}
-                measurement::MeasurementState::Loaded {
+                measurement::State::NotLoaded => {}
+                measurement::State::Loaded {
                     impulse_response, ..
                 } => *impulse_response = impulse_response::State::NotComputed,
             });
@@ -105,11 +105,11 @@ impl ImpulseResponseComputation {
             return Err(Error::ImpulseResponseComputationFailed);
         };
 
-        let measurement::LoopbackState::Loaded(loopback) = &loopback.state else {
+        let loopback::State::Loaded(loopback) = &loopback.state else {
             return Err(Error::ImpulseResponseComputationFailed);
         };
 
-        let measurement::MeasurementState::Loaded {
+        let measurement::State::Loaded {
             data: measurement,
             impulse_response: impulse_response @ impulse_response::State::NotComputed,
         } = &mut measurement.state

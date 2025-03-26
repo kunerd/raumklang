@@ -207,8 +207,8 @@ impl Raumklang {
                     .measurements_mut()
                     .get_mut(id)
                     .map(|m| match &mut m.state {
-                        data::measurement::MeasurementState::NotLoaded => {}
-                        data::measurement::MeasurementState::Loaded {
+                        data::measurement::State::NotLoaded => {}
+                        data::measurement::State::Loaded {
                             impulse_response: ir,
                             ..
                         } => {
