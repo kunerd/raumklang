@@ -199,13 +199,12 @@ fn signal_list_category<'a>(
     add_msg: Option<Message>,
     content: Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let header = row!(widget::text(name), horizontal_space()).align_y(Alignment::Center);
+    let add_button = add_msg.map(|msg| button("+").on_press(msg).style(button::secondary));
 
-    let header = if let Some(msg) = add_msg {
-        header.push(button("+").on_press(msg))
-    } else {
-        header
-    };
+    let header = row![widget::text(name), horizontal_space()]
+        .push_maybe(add_button)
+        .padding(5)
+        .align_y(Alignment::Center);
 
     column!(header, horizontal_rule(1), content)
         .width(Length::Fill)
