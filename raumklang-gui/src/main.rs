@@ -276,7 +276,11 @@ impl Raumklang {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        Subscription::none()
+        if let Screen::Main(main::Tab::Measurements(measurements)) = &self.screen {
+            measurements.subscription().map(Message::Measurements)
+        } else {
+            Subscription::none()
+        }
     }
 
     fn theme(&self) -> Theme {
