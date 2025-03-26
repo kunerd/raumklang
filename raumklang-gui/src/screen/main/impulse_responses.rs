@@ -1,9 +1,13 @@
+use std::ops::RangeInclusive;
+
 use iced::{
+    keyboard,
+    mouse::ScrollDelta,
     widget::{
         button, column, container, horizontal_rule, horizontal_space, pick_list, row, scrollable,
         text,
     },
-    Alignment, Element, Length,
+    Alignment, Element, Length, Point, Subscription,
 };
 use pliced::chart::{line_series, Chart, Labels};
 
@@ -16,6 +20,9 @@ pub struct ImpulseReponses {
 
 #[derive(Default)]
 pub struct ChartData {
+    x_max: Option<f32>,
+    x_range: Option<RangeInclusive<f32>>,
+    shift_key_pressed: bool,
     amplitude_unit: chart::AmplitudeUnit,
     time_unit: chart::TimeSeriesUnit,
 }
@@ -30,6 +37,13 @@ pub enum Message {
 pub enum ChartOperation {
     TimeUnitChanged(chart::TimeSeriesUnit),
     AmplitudeUnitChanged(chart::AmplitudeUnit),
+    Scroll(
+        Option<Point>,
+        Option<ScrollDelta>,
+        Option<RangeInclusive<f32>>,
+    ),
+    ShiftKeyPressed,
+    ShiftKeyReleased,
 }
 
 pub enum Action {
@@ -136,8 +150,20 @@ impl ImpulseReponses {
                                 .width(Length::Fill)
                                 .height(Length::Fill)
                                 .x_range(
-                                    x_scale_fn(-44_10.0, sample_rate)
-                                        ..=x_scale_fn(44_100.0, sample_rate),
+                                    self.chart_data
+                                        .x_range
+                                        .as_ref()
+                                        .map(|r| {
+                                            x_scale_fn(*r.start(), sample_rate)
+                                                ..=x_scale_fn(*r.end(), sample_rate)
+                                        })
+                                        .unwrap_or_else(|| {
+                                            x_scale_fn(-sample_rate / 2.0, sample_rate)
+                                                ..=x_scale_fn(
+                                                    impulse_response.data.len() as f32,
+                                                    sample_rate,
+                                                )
+                                        }),
                                 )
                                 .y_labels(Labels::default().format(&|v| format!("{v:.2}")))
                                 .push_series(
@@ -151,6 +177,12 @@ impl ImpulseReponses {
                                     ))
                                     .color(iced::Color::from_rgb8(2, 125, 66)),
                                 )
+                                .on_scroll(|state: &pliced::chart::State<()>| {
+                                    let pos = state.get_coords();
+                                    let delta = state.scroll_delta();
+                                    let x_range = state.x_range();
+                                    Message::Chart(ChartOperation::Scroll(pos, delta, x_range))
+                                })
                         };
 
                         let footer = {
@@ -184,6 +216,23 @@ impl ImpulseReponses {
         .spacing(10)
         .into()
     }
+
+    pub(crate) fn subscription(&self) -> Subscription<Message> {
+        Subscription::batch(vec![
+            keyboard::on_key_press(|key, _modifiers| match key {
+                keyboard::Key::Named(keyboard::key::Named::Shift) => {
+                    Some(Message::Chart(ChartOperation::ShiftKeyPressed))
+                }
+                _ => None,
+            }),
+            keyboard::on_key_release(|key, _modifiers| match key {
+                keyboard::Key::Named(keyboard::key::Named::Shift) => {
+                    Some(Message::Chart(ChartOperation::ShiftKeyReleased))
+                }
+                _ => None,
+            }),
+        ])
+    }
 }
 
 impl ChartData {
@@ -193,7 +242,118 @@ impl ChartData {
             ChartOperation::AmplitudeUnitChanged(amplitude_unit) => {
                 self.amplitude_unit = amplitude_unit
             }
+            ChartOperation::Scroll(pos, scroll_delta, x_range) => {
+                let Some(pos) = pos else {
+                    return;
+                };
+
+                let Some(ScrollDelta::Lines { y, .. }) = scroll_delta else {
+                    return;
+                };
+
+                if self.x_range.is_none() {
+                    self.x_max = x_range.as_ref().map(|r| *r.end());
+                    self.x_range = x_range;
+                }
+
+                match (self.shift_key_pressed, y.is_sign_positive()) {
+                    (true, true) => self.scroll_right(),
+                    (true, false) => self.scroll_left(),
+                    (false, true) => self.zoom_in(pos),
+                    (false, false) => self.zoom_out(pos),
+                }
+            }
+            ChartOperation::ShiftKeyPressed => {
+                self.shift_key_pressed = true;
+            }
+            ChartOperation::ShiftKeyReleased => {
+                self.shift_key_pressed = false;
+            }
         }
+    }
+
+    fn scroll_right(&mut self) {
+        let Some(old_viewport) = self.x_range.clone() else {
+            return;
+        };
+
+        let length = old_viewport.end() - old_viewport.start();
+
+        const SCROLL_FACTOR: f32 = 0.2;
+        let offset = length * SCROLL_FACTOR;
+
+        let mut new_end = old_viewport.end() + offset;
+        if let Some(x_max) = self.x_max {
+            let viewport_max = x_max + length / 2.0;
+            if new_end > viewport_max {
+                new_end = viewport_max;
+            }
+        }
+
+        let new_start = new_end - length;
+
+        self.x_range = Some(new_start..=new_end);
+    }
+
+    fn scroll_left(&mut self) {
+        let Some(old_viewport) = self.x_range.clone() else {
+            return;
+        };
+        let length = old_viewport.end() - old_viewport.start();
+
+        const SCROLL_FACTOR: f32 = 0.2;
+        let offset = length * SCROLL_FACTOR;
+
+        let mut new_start = old_viewport.start() - offset;
+        let viewport_min = -(length / 2.0);
+        if new_start < viewport_min {
+            new_start = viewport_min;
+        }
+        let new_end = new_start + length;
+
+        self.x_range = Some(new_start..=new_end);
+    }
+
+    fn zoom_in(&mut self, position: iced::Point) {
+        let Some(old_viewport) = self.x_range.clone() else {
+            return;
+        };
+
+        let old_len = old_viewport.end() - old_viewport.start();
+
+        let center_scale: f32 = (position.x - old_viewport.start()) / old_len;
+
+        // FIXME make configurable
+        const ZOOM_FACTOR: f32 = 0.8;
+        const LOWER_BOUND: f32 = 50.0;
+        let mut new_len = old_len * ZOOM_FACTOR;
+        if new_len < LOWER_BOUND {
+            new_len = LOWER_BOUND;
+        }
+
+        let new_start = position.x - (new_len * center_scale);
+        let new_end = new_start + new_len;
+        self.x_range = Some(new_start..=new_end);
+    }
+
+    fn zoom_out(&mut self, position: iced::Point) {
+        let Some(old_viewport) = self.x_range.clone() else {
+            return;
+        };
+        let old_len = old_viewport.end() - old_viewport.start();
+
+        let center_scale = (position.x - old_viewport.start()) / old_len;
+
+        // FIXME make configurable
+        const ZOOM_FACTOR: f32 = 1.2;
+        let new_len = old_len * ZOOM_FACTOR;
+        //if new_len >= self.max_len {
+        //    new_len = self.max_len;
+        //}
+
+        let new_start = position.x - (new_len * center_scale);
+        let new_end = new_start + new_len;
+        self.x_range = Some(new_start..=new_end);
     }
 }
 
@@ -203,7 +363,7 @@ fn percent_full_scale(s: f32, max: f32) -> f32 {
 
 fn db_full_scale(s: f32, max: f32) -> f32 {
     let y = 20f32 * f32::log10(s.abs() / max);
-    y.clamp(-100.0, max)
+    y.clamp(-80.0, max)
 }
 
 fn sample_scale(index: f32, _sample_rate: f32) -> f32 {

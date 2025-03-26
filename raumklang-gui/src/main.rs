@@ -276,10 +276,16 @@ impl Raumklang {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        if let Screen::Main(main::Tab::Measurements(measurements)) = &self.screen {
-            measurements.subscription().map(Message::Measurements)
-        } else {
-            Subscription::none()
+        match &self.screen {
+            Screen::Loading | Screen::Landing => Subscription::none(),
+            Screen::Main(tab) => match tab {
+                main::Tab::Measurements(measurements) => {
+                    measurements.subscription().map(Message::Measurements)
+                }
+                main::Tab::ImpulseResponses(impulse_reponses) => impulse_reponses
+                    .subscription()
+                    .map(Message::ImpulseResponses),
+            },
         }
     }
 
