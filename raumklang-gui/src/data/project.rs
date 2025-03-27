@@ -3,7 +3,7 @@ pub mod file;
 use super::{
     impulse_response,
     measurement::{self, loopback},
-    Error, Measurement,
+    Error, Measurement, Window,
 };
 pub use file::File;
 
@@ -13,6 +13,7 @@ use std::path::Path;
 
 #[derive(Debug)]
 pub struct Project {
+    window: Window,
     loopback: Option<measurement::Loopback>,
     measurements: Vec<Measurement>,
 }
@@ -26,6 +27,7 @@ pub struct ImpulseResponseComputation {
 impl Project {
     pub fn new() -> Self {
         Self {
+            window: Window::default(),
             loopback: None,
             measurements: Vec::new(),
         }
@@ -52,6 +54,7 @@ impl Project {
         .collect();
 
         Ok(Self {
+            window: Window::default(),
             loopback,
             measurements,
         })
