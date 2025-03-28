@@ -138,7 +138,7 @@ impl Raumklang {
                 *tab = match tab_id {
                     main::TabId::Measurements => main::Tab::Measurements(Measurements::new()),
                     main::TabId::ImpulseResponses => {
-                        main::Tab::ImpulseResponses(ImpulseReponses::new())
+                        main::Tab::ImpulseResponses(ImpulseReponses::new(self.project.window()))
                     }
                 };
 
