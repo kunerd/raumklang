@@ -3,17 +3,18 @@ pub mod file;
 use super::{
     impulse_response,
     measurement::{self, loopback},
+    window::Samples,
     Error, Measurement, Window,
 };
 pub use file::File;
 
 use iced::futures::future::join_all;
 
-use std::path::Path;
+use std::{path::Path, time::Duration};
 
 #[derive(Debug)]
 pub struct Project {
-    window: Window,
+    window: Option<Window<Samples>>,
     loopback: Option<measurement::Loopback>,
     measurements: Vec<Measurement>,
 }
@@ -27,7 +28,7 @@ pub struct ImpulseResponseComputation {
 impl Project {
     pub fn new() -> Self {
         Self {
-            window: Window::default(),
+            window: None,
             loopback: None,
             measurements: Vec::new(),
         }
@@ -37,7 +38,7 @@ impl Project {
         let path = path.as_ref();
         let project_file = File::load(path).await?;
 
-        let loopback = match project_file.loopback {
+        let loopback: Option<measurement::Loopback> = match project_file.loopback {
             Some(loopback) => measurement::load_from_file(loopback.path()).await.ok(),
             None => None,
         };
@@ -53,11 +54,26 @@ impl Project {
         .flatten()
         .collect();
 
+        let window = loopback.as_ref().and_then(|l| {
+            if let loopback::State::Loaded(l) = &l.state {
+                Some(Window::from_duration(
+                    Window::<Duration>::default(),
+                    l.sample_rate(),
+                ))
+            } else {
+                None
+            }
+        });
+
         Ok(Self {
-            window: Window::default(),
+            window,
             loopback,
             measurements,
         })
+    }
+
+    pub fn window(&self) -> Option<&Window<Samples>> {
+        self.window.as_ref()
     }
 
     pub fn loopback(&self) -> Option<&measurement::Loopback> {
@@ -77,6 +93,17 @@ impl Project {
     }
 
     pub fn set_loopback(&mut self, loopback: Option<measurement::Loopback>) {
+        self.window = loopback.as_ref().and_then(|l| {
+            if let loopback::State::Loaded(l) = &l.state {
+                Some(Window::from_duration(
+                    Window::<Duration>::default(),
+                    l.sample_rate(),
+                ))
+            } else {
+                None
+            }
+        });
+
         self.loopback = loopback;
 
         self.measurements

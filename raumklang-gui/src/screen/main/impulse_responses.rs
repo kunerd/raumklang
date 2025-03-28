@@ -1,4 +1,9 @@
-use std::ops::RangeInclusive;
+use crate::data::{
+    self, chart, impulse_response,
+    window::{self, Samples},
+};
+
+use pliced::chart::{line_series, point_series, Chart, Labels};
 
 use iced::{
     keyboard,
@@ -9,13 +14,24 @@ use iced::{
     },
     Alignment, Element, Length, Point, Subscription,
 };
-use pliced::chart::{line_series, Chart, Labels};
 
-use crate::data::{self, chart, impulse_response};
+use std::ops::RangeInclusive;
 
 pub struct ImpulseReponses {
+    window_settings: Option<WindowSettings>,
     selected: Option<usize>,
     chart_data: ChartData,
+}
+
+struct WindowSettings {
+    window: data::Window<Samples>,
+    handles: window::Handles,
+}
+
+#[derive(Debug, Clone)]
+pub enum Message {
+    Select(usize),
+    Chart(ChartOperation),
 }
 
 #[derive(Default)]
@@ -25,12 +41,6 @@ pub struct ChartData {
     shift_key_pressed: bool,
     amplitude_unit: chart::AmplitudeUnit,
     time_unit: chart::TimeSeriesUnit,
-}
-
-#[derive(Debug, Clone)]
-pub enum Message {
-    Select(usize),
-    Chart(ChartOperation),
 }
 
 #[derive(Debug, Clone)]
@@ -52,8 +62,14 @@ pub enum Action {
 }
 
 impl ImpulseReponses {
-    pub fn new() -> Self {
+    pub fn new(window: Option<&data::Window<Samples>>) -> Self {
+        let window_settings = window.map(|window| WindowSettings {
+            window: window.clone(),
+            handles: window.into(),
+        });
+
         Self {
+            window_settings,
             selected: None,
             chart_data: ChartData::default(),
         }
@@ -146,7 +162,7 @@ impl ImpulseReponses {
 
                             let sample_rate = impulse_response.sample_rate as f32;
 
-                            Chart::new()
+                            let chart = Chart::new()
                                 .width(Length::Fill)
                                 .height(Length::Fill)
                                 .x_range(
@@ -165,6 +181,7 @@ impl ImpulseReponses {
                                                 )
                                         }),
                                 )
+                                .x_labels(Labels::default().format(&|v| format!("{v:.2}")))
                                 .y_labels(Labels::default().format(&|v| format!("{v:.2}")))
                                 .push_series(
                                     line_series(impulse_response.data.iter().enumerate().map(
@@ -182,7 +199,28 @@ impl ImpulseReponses {
                                     let delta = state.scroll_delta();
                                     let x_range = state.x_range();
                                     Message::Chart(ChartOperation::Scroll(pos, delta, x_range))
-                                })
+                                });
+
+                            if let Some(settings) = &self.window_settings {
+                                chart
+                                    .push_series(
+                                        line_series(settings.window.curve().map(move |(i, s)| {
+                                            (x_scale_fn(i, sample_rate), y_scale_fn(s, 1.0))
+                                        }))
+                                        .color(iced::Color::from_rgb8(255, 0, 0)),
+                                    )
+                                    .push_series(
+                                        point_series(settings.handles.iter().map(move |handle| {
+                                            (
+                                                x_scale_fn(handle.x(), sample_rate),
+                                                y_scale_fn(handle.y().into(), 1.0),
+                                            )
+                                        }))
+                                        .color(iced::Color::from_rgb8(255, 0, 0)),
+                                    )
+                            } else {
+                                chart
+                            }
                         };
 
                         let footer = {
@@ -356,6 +394,212 @@ impl ChartData {
         self.x_range = Some(new_start..=new_end);
     }
 }
+
+// impl Window {
+//     pub fn new(window: data::Window, sample_rate: u32) -> Self {
+//         // let max_size = max_size as f32;
+//         // let half_size = max_size as f32 / 2.0;
+
+//         // let sample_rate = sample_rate as f32;
+//         // let left_window_size =
+//         //     (sample_rate * (Self::DEFAULT_LEFT_DURATION / 1000.0)).min(half_size);
+//         // let right_window_size =
+//         //     (sample_rate * (Self::DEFAULT_RIGTH_DURATION / 1000.0)).min(half_size);
+
+//         // let left_side_left = 0.0;
+//         // let left_side_right = left_side_left + left_window_size as f32;
+//         // let right_side_left = left_side_right;
+//         // let right_side_right = right_side_left + right_window_size as f32;
+
+//         // let handles = vec![
+//         //     WindowHandle::new(left_side_left, 0.0),
+//         //     WindowHandle::new(left_side_right, 1.0),
+//         //     WindowHandle::new(right_side_left, 1.0),
+//         //     WindowHandle::new(right_side_right, 0.0),
+//         // ];
+
+//         // Self {
+//         //     max_size,
+//         //     sample_rate,
+//         //     handles,
+//         //     dragging: Dragging::None,
+//         //     hovered_item: None,
+//         // }
+//         //
+//         Self {}
+//     }
+
+//     fn apply(&mut self, operation: WindowOperation, time_unit: chart::TimeSeriesUnit) {
+//         let mut update_handle_pos =
+//             |id: usize, prev_pos: iced::Point, pos: iced::Point| -> iced::Point {
+//                 let min = match id {
+//                     0 => f32::MIN,
+//                     id => self.handles[id - 1].x,
+//                 };
+
+//                 let max = if let Some(handle) = self.handles.get(id + 1) {
+//                     handle.x
+//                 } else {
+//                     self.max_size
+//                 };
+
+//                 let Some(handle) = self.handles.get_mut(id) else {
+//                     return prev_pos;
+//                 };
+
+//                 let offset = prev_pos.x - pos.x;
+//                 let offset = match time_unit {
+//                     chart::TimeSeriesUnit::Time => offset / 1000.0 * self.sample_rate,
+//                     chart::TimeSeriesUnit::Samples => offset,
+//                 };
+
+//                 let new_pos = handle.x - offset;
+
+//                 if new_pos >= min {
+//                     if new_pos <= max {
+//                         handle.x = new_pos;
+//                         pos
+//                     } else {
+//                         let mut x_clamped = handle.x - max;
+//                         if matches!(time_unit, chart::TimeSeriesUnit::Time) {
+//                             x_clamped *= 1000.0 / self.sample_rate;
+//                         }
+//                         x_clamped = prev_pos.x - x_clamped;
+
+//                         handle.x = max;
+
+//                         iced::Point::new(x_clamped, pos.y)
+//                     }
+//                 } else {
+//                     let mut x_clamped = handle.x - min;
+//                     if matches!(time_unit, chart::TimeSeriesUnit::Time) {
+//                         x_clamped *= 1000.0 / self.sample_rate;
+//                     }
+//                     x_clamped = prev_pos.x - x_clamped;
+
+//                     handle.x = min;
+
+//                     iced::Point::new(x_clamped, pos.y)
+//                 }
+//             };
+
+//         match operation {
+//             WindowOperation::MouseDown(id, pos) => {
+//                 let Dragging::None = self.dragging else {
+//                     return;
+//                 };
+
+//                 if let (Some(id), Some(pos)) = (id, pos) {
+//                     self.dragging = Dragging::CouldStillBeClick(id, pos);
+//                 }
+//             }
+//             WindowOperation::OnMove(id, pos) => {
+//                 let Some(pos) = pos else {
+//                     return;
+//                 };
+
+//                 match self.dragging {
+//                     Dragging::CouldStillBeClick(id, prev_pos) => {
+//                         if prev_pos != pos {
+//                             let pos = update_handle_pos(id, prev_pos, pos);
+//                             self.dragging = Dragging::ForSure(id, pos);
+//                         }
+//                     }
+//                     Dragging::ForSure(id, prev_pos) => {
+//                         let pos = update_handle_pos(id, prev_pos, pos);
+//                         self.dragging = Dragging::ForSure(id, pos);
+//                     }
+//                     Dragging::None => {
+//                         if id.is_none() {
+//                             if let Some(handle) =
+//                                 self.hovered_item.and_then(|id| self.handles.get_mut(id))
+//                             {
+//                                 handle.style = PointStyle::default();
+//                             }
+//                         }
+//                         self.hovered_item = id;
+//                     }
+//                 }
+//             }
+//             WindowOperation::MouseUp(pos) => {
+//                 let Some(pos) = pos else {
+//                     return;
+//                 };
+
+//                 match self.dragging {
+//                     Dragging::CouldStillBeClick(id, _point) => {
+//                         if let Some(handle) = self.handles.get_mut(id) {
+//                             handle.style = PointStyle::default();
+//                         }
+//                         self.hovered_item = None;
+//                         self.dragging = Dragging::None;
+//                     }
+//                     Dragging::ForSure(id, prev_pos) => {
+//                         update_handle_pos(id, prev_pos, pos);
+//                         if let Some(handle) = self.handles.get_mut(id) {
+//                             handle.style = PointStyle::default();
+//                         }
+//                         self.dragging = Dragging::None;
+//                     }
+//                     Dragging::None => {}
+//                 }
+//             }
+//         }
+
+//         let yellow: iced::Color = iced::Color::from_rgb8(238, 230, 0);
+//         let green: iced::Color = iced::Color::from_rgb8(50, 205, 50);
+
+//         match self.dragging {
+//             Dragging::CouldStillBeClick(id, _point) | Dragging::ForSure(id, _point) => {
+//                 if let Some(handle) = self.handles.get_mut(id) {
+//                     handle.style = PointStyle {
+//                         color: Some(green),
+//                         radius: 10.0,
+//                         ..Default::default()
+//                     }
+//                 }
+//             }
+//             Dragging::None => {
+//                 if let Some(handle) = self.hovered_item.and_then(|id| self.handles.get_mut(id)) {
+//                     handle.style = PointStyle {
+//                         color: Some(yellow),
+//                         radius: 8.0,
+//                         ..Default::default()
+//                     }
+//                 }
+//             }
+//         }
+//     }
+
+//     fn curve(&self) -> impl Iterator<Item = (f32, f32)> + Clone {
+//         let left_side = raumklang_core::Window::Hann;
+//         let right_side = raumklang_core::Window::Hann;
+
+//         let left_side_width = (self.handles[1].x - self.handles[0].x).round() as usize;
+//         let offset = (self.handles[2].x - self.handles[1].x).round() as usize;
+//         let right_side_width = (self.handles[3].x - self.handles[2].x).round() as usize;
+//         let window: Vec<_> =
+//             WindowBuilder::new(left_side, left_side_width, right_side, right_side_width)
+//                 .set_offset(offset)
+//                 .build()
+//                 .into_iter()
+//                 .enumerate()
+//                 .map(|(x, y)| (x as f32 + self.handles[0].x, y))
+//                 .collect();
+
+//         window.into_iter()
+//     }
+// }
+
+// impl WindowHandle {
+//     pub fn new(x: f32, y: f32) -> Self {
+//         Self {
+//             x,
+//             y,
+//             style: PointStyle::default(),
+//         }
+//     }
+// }
 
 fn percent_full_scale(s: f32, max: f32) -> f32 {
     s / max * 100f32
