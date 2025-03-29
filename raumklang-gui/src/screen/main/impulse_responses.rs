@@ -1,8 +1,9 @@
 use crate::data::{
     self,
-    chart::{self, TimeSeriesUnit},
+    chart::{self},
     impulse_response,
-    window::{self, Samples},
+    window::{self},
+    Samples,
 };
 
 use pliced::chart::{line_series, point_series, Chart, Labels, PointStyle};
@@ -18,7 +19,7 @@ use iced::{
 };
 
 use core::panic;
-use std::ops::RangeInclusive;
+use std::{ops::RangeInclusive, time::Duration};
 
 pub struct ImpulseReponses {
     window_settings: WindowSettings,
@@ -27,8 +28,7 @@ pub struct ImpulseReponses {
 }
 
 struct WindowSettings {
-    window: data::Window<Samples>,
-    // handles: window::Handles,
+    window: data::Window<data::Samples>,
     hovered: Option<usize>,
     dragging: Dragging,
 }
@@ -91,7 +91,6 @@ impl ImpulseReponses {
     pub fn new(window: &data::Window<Samples>) -> Self {
         let window_settings = WindowSettings {
             window: window.clone(),
-            // handles: window.into(),
             hovered: None,
             dragging: Dragging::None,
         };
@@ -455,7 +454,7 @@ impl ChartData {
 }
 
 impl WindowSettings {
-    pub fn apply(&mut self, operation: WindowOperation, time_unit: TimeSeriesUnit) {
+    pub fn apply(&mut self, operation: WindowOperation, time_unit: chart::TimeSeriesUnit) {
         let mut update_handle = |id, prev_pos: iced::Point, pos: iced::Point| {
             let offset = pos.x - prev_pos.x;
 
@@ -467,7 +466,15 @@ impl WindowSettings {
                 n => panic!("there should be no handles with index: {n}"),
             }
 
-            self.window.update(handles);
+            match time_unit {
+                chart::TimeSeriesUnit::Time => {
+                    let mut window: data::Window<Duration> = self.window.clone().into();
+                    window.update(handles);
+                    self.window = window.into();
+                }
+
+                chart::TimeSeriesUnit::Samples => self.window.update(handles),
+            }
         };
         match operation {
             WindowOperation::MouseDown(id, pos) => {
@@ -515,7 +522,7 @@ impl WindowSettings {
                 };
 
                 match self.dragging {
-                    Dragging::CouldStillBeClick(id, _point) => {
+                    Dragging::CouldStillBeClick(_id, _point) => {
                         // if let Some(handle) = self.handles.get_mut(id) {
                         //     handle.style = PointStyle::default();
                         // }
