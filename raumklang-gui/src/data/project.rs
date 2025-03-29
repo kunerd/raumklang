@@ -3,14 +3,13 @@ pub mod file;
 use super::{
     impulse_response,
     measurement::{self, loopback},
-    window::Samples,
-    Error, Measurement, SampleRate, Window,
+    Error, Measurement, SampleRate, Samples, Window,
 };
 pub use file::File;
 
 use iced::futures::future::join_all;
 
-use std::{path::Path, time::Duration};
+use std::path::Path;
 
 #[derive(Debug)]
 pub struct Project {
@@ -28,7 +27,7 @@ pub struct ImpulseResponseComputation {
 
 impl Project {
     pub fn new(sample_rate: SampleRate) -> Self {
-        let window = Window::from_duration(Window::default(), sample_rate);
+        let window = Window::new(sample_rate).into();
 
         Self {
             sample_rate,
@@ -71,7 +70,7 @@ impl Project {
 
         Ok(Self {
             sample_rate,
-            window: Window::from_duration(Window::default(), sample_rate),
+            window: Window::new(sample_rate).into(),
             loopback,
             measurements,
         })
@@ -109,7 +108,7 @@ impl Project {
             })
             .unwrap_or_default();
 
-        self.window = Window::from_duration(Window::default(), sample_rate);
+        self.window = Window::new(sample_rate).into();
         self.loopback = loopback;
 
         self.measurements

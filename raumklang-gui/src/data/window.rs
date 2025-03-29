@@ -1,84 +1,14 @@
 pub mod handle;
 
-use std::{
-    ops::{AddAssign, Mul, Sub},
-    time::Duration,
-};
+pub use handle::Handle;
 
-use handle::Handle;
+use super::{SampleRate, Samples};
 
-#[derive(Debug, Clone, Copy)]
-pub struct Samples(usize);
-
-impl From<Samples> for f32 {
-    fn from(samples: Samples) -> Self {
-        samples.0 as f32
-    }
-}
-
-impl Samples {
-    pub fn from_duration(duration: Duration, sample_rate: SampleRate) -> Self {
-        sample_rate * duration
-    }
-
-    pub fn from_f32(samples: f32) -> Self {
-        Self(samples.round() as usize)
-    }
-}
-
-impl AddAssign for Samples {
-    fn add_assign(&mut self, rhs: Self) {
-        self.0 += rhs.0;
-    }
-}
-
-impl Sub for Samples {
-    type Output = Samples;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        Samples(self.0.saturating_sub(rhs.0))
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct SampleRate(u32);
-
-impl SampleRate {
-    pub fn new(sample_rate: u32) -> Self {
-        Self(sample_rate)
-    }
-}
-
-impl Mul<Duration> for SampleRate {
-    type Output = Samples;
-
-    fn mul(self, rhs: Duration) -> Self::Output {
-        Samples::from_f32(self.0 as f32 * rhs.as_secs_f32())
-    }
-}
-
-impl Mul<SampleRate> for Duration {
-    type Output = Samples;
-
-    fn mul(self, rhs: SampleRate) -> Self::Output {
-        rhs * self
-    }
-}
-
-impl From<SampleRate> for f32 {
-    fn from(value: SampleRate) -> Self {
-        value.0 as f32
-    }
-}
-
-impl Default for SampleRate {
-    fn default() -> Self {
-        Self(44_100)
-    }
-}
+use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct Window<D> {
+    sample_rate: SampleRate,
     left_type: raumklang_core::Window,
     left_width: D,
     position: D,
@@ -99,9 +29,10 @@ pub struct Handles {
     right: Handle,
 }
 
-impl Default for Window<Duration> {
-    fn default() -> Self {
+impl Window<Duration> {
+    pub fn new(sample_rate: SampleRate) -> Self {
         Self {
+            sample_rate,
             left_type: raumklang_core::Window::Tukey(0.25),
             left_width: Duration::from_millis(125),
             position: Duration::from_millis(0),
@@ -109,11 +40,22 @@ impl Default for Window<Duration> {
             right_width: Duration::from_millis(500),
         }
     }
+
+    pub fn update(&mut self, handles: Handles) {
+        let left_width = handles.center.x() - handles.left.x();
+        self.left_width = Samples::from_f32(left_width, self.sample_rate).into();
+        self.position = Samples::from_f32(handles.center.x(), self.sample_rate).into();
+        let right_width = handles.right.x() - handles.center.x();
+        self.right_width = Samples::from_f32(right_width, self.sample_rate).into();
+    }
 }
 
-impl Window<Samples> {
-    pub fn from_duration(window: Window<Duration>, sample_rate: SampleRate) -> Self {
+impl From<Window<Duration>> for Window<Samples> {
+    fn from(window: Window<Duration>) -> Self {
+        let sample_rate = window.sample_rate;
+
         Self {
+            sample_rate,
             left_type: window.left_type,
             left_width: Samples::from_duration(window.left_width, sample_rate),
             position: Samples::from_duration(window.position, sample_rate),
@@ -121,13 +63,15 @@ impl Window<Samples> {
             right_width: Samples::from_duration(window.right_width, sample_rate),
         }
     }
+}
 
+impl Window<Samples> {
     pub fn curve(&self) -> impl Iterator<Item = (f32, f32)> + Clone + use<'_> {
         let builder = raumklang_core::WindowBuilder::new(
             self.left_type,
-            self.left_width.0,
+            self.left_width.into(),
             self.right_type,
-            self.right_width.0,
+            self.right_width.into(),
         );
 
         builder.build().into_iter().enumerate().map(|(i, s)| {
@@ -141,9 +85,24 @@ impl Window<Samples> {
 
     pub fn update(&mut self, handles: Handles) {
         let left_width = handles.center.x() - handles.left.x();
-        self.left_width = Samples::from_f32(left_width);
-        self.position = Samples::from_f32(handles.center.x());
-        self.right_width = Samples::from_f32(handles.right.x() - handles.center.x());
+        self.left_width = Samples::from_f32(left_width, self.sample_rate);
+        self.position = Samples::from_f32(handles.center.x(), self.sample_rate);
+        self.right_width =
+            Samples::from_f32(handles.right.x() - handles.center.x(), self.sample_rate);
+    }
+}
+
+impl From<Window<Samples>> for Window<Duration> {
+    fn from(window: Window<Samples>) -> Self {
+        let sample_rate = window.sample_rate;
+        Self {
+            sample_rate,
+            left_type: window.left_type,
+            left_width: Duration::from(window.left_width),
+            position: Duration::from(window.position),
+            right_type: window.right_type,
+            right_width: Duration::from(window.right_width),
+        }
     }
 }
 
