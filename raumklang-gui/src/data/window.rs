@@ -43,10 +43,10 @@ impl Window<Duration> {
 
     pub fn update(&mut self, handles: Handles) {
         let left_width = handles.center.x() - handles.left.x();
-        self.left_width = Samples::from_f32(left_width, self.sample_rate).into();
-        self.position = Samples::from_f32(handles.center.x(), self.sample_rate).into();
+        self.left_width = Duration::from_millis(left_width as u64).into();
+        self.position = Duration::from_millis(handles.center.x() as u64).into();
         let right_width = handles.right.x() - handles.center.x();
-        self.right_width = Samples::from_f32(right_width, self.sample_rate).into();
+        self.right_width = Duration::from_millis(right_width as u64).into();
     }
 }
 
@@ -178,6 +178,28 @@ impl From<&Window<Samples>> for Handles {
         let center = Handle::new(position, handle::Alignment::Top);
 
         let right_width: f32 = window.right_width.into();
+        let right_pos = position + right_width;
+        let right = Handle::new(right_pos, handle::Alignment::Bottom);
+
+        Self {
+            left,
+            center,
+            right,
+        }
+    }
+}
+
+impl From<&Window<Duration>> for Handles {
+    fn from(window: &Window<Duration>) -> Self {
+        let position: f32 = window.position.as_millis() as f32;
+        let left_width: f32 = window.left_width.as_millis() as f32;
+
+        let start_pos: f32 = position - left_width;
+        let left = Handle::new(start_pos, handle::Alignment::Bottom);
+
+        let center = Handle::new(position, handle::Alignment::Top);
+
+        let right_width: f32 = window.right_width.as_millis() as f32;
         let right_pos = position + right_width;
         let right = Handle::new(right_pos, handle::Alignment::Bottom);
 

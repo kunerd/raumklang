@@ -458,22 +458,33 @@ impl WindowSettings {
         let mut update_handle = |id, prev_pos: iced::Point, pos: iced::Point| {
             let offset = pos.x - prev_pos.x;
 
-            let mut handles: window::Handles = Into::into(&self.window);
-            match id {
-                0 => handles.move_left(offset),
-                1 => handles.move_center(offset),
-                2 => handles.move_right(offset),
-                n => panic!("there should be no handles with index: {n}"),
-            }
-
             match time_unit {
                 chart::TimeSeriesUnit::Time => {
                     let mut window: data::Window<Duration> = self.window.clone().into();
+
+                    let mut handles: window::Handles = Into::into(&window);
+                    match id {
+                        0 => handles.move_left(offset),
+                        1 => handles.move_center(offset),
+                        2 => handles.move_right(offset),
+                        n => panic!("there should be no handles with index: {n}"),
+                    }
                     window.update(handles);
+
                     self.window = window.into();
                 }
 
-                chart::TimeSeriesUnit::Samples => self.window.update(handles),
+                chart::TimeSeriesUnit::Samples => {
+                    let mut handles: window::Handles = Into::into(&self.window);
+                    match id {
+                        0 => handles.move_left(offset),
+                        1 => handles.move_center(offset),
+                        2 => handles.move_right(offset),
+                        n => panic!("there should be no handles with index: {n}"),
+                    }
+
+                    self.window.update(handles);
+                }
             }
         };
         match operation {
