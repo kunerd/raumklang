@@ -1,3 +1,5 @@
+use std::ops::{AddAssign, SubAssign};
+
 #[derive(Debug, Clone)]
 pub struct Handle {
     x: f32,
@@ -38,5 +40,16 @@ impl From<&Alignment> for f32 {
             Alignment::Center => 0.5,
             Alignment::Top => 1.0,
         }
+    }
+}
+impl SubAssign<f32> for Handle {
+    fn sub_assign(&mut self, offset: f32) {
+        self.x -= offset;
+    }
+}
+
+impl AddAssign<f32> for Handle {
+    fn add_assign(&mut self, offset: f32) {
+        self.x += offset;
     }
 }

@@ -1,9 +1,11 @@
 use crate::data::{
-    self, chart, impulse_response,
+    self,
+    chart::{self, TimeSeriesUnit},
+    impulse_response,
     window::{self, Samples},
 };
 
-use pliced::chart::{line_series, point_series, Chart, Labels};
+use pliced::chart::{line_series, point_series, Chart, Labels, PointStyle};
 
 use iced::{
     keyboard,
@@ -15,23 +17,32 @@ use iced::{
     Alignment, Element, Length, Point, Subscription,
 };
 
+use core::panic;
 use std::ops::RangeInclusive;
 
 pub struct ImpulseReponses {
-    window_settings: Option<WindowSettings>,
+    window_settings: WindowSettings,
     selected: Option<usize>,
     chart_data: ChartData,
 }
 
 struct WindowSettings {
     window: data::Window<Samples>,
-    handles: window::Handles,
+    // handles: window::Handles,
+    hovered: Option<usize>,
+    dragging: Dragging,
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Select(usize),
     Chart(ChartOperation),
+    Window(WindowOperation),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SeriesId {
+    Handles,
 }
 
 #[derive(Default)]
@@ -41,6 +52,14 @@ pub struct ChartData {
     shift_key_pressed: bool,
     amplitude_unit: chart::AmplitudeUnit,
     time_unit: chart::TimeSeriesUnit,
+}
+
+#[derive(Debug, Default)]
+enum Dragging {
+    CouldStillBeClick(usize, iced::Point),
+    ForSure(usize, iced::Point),
+    #[default]
+    None,
 }
 
 #[derive(Debug, Clone)]
@@ -56,17 +75,26 @@ pub enum ChartOperation {
     ShiftKeyReleased,
 }
 
+#[derive(Debug, Clone)]
+pub enum WindowOperation {
+    OnMove(Option<usize>, Option<iced::Point>),
+    MouseDown(Option<usize>, Option<iced::Point>),
+    MouseUp(Option<iced::Point>),
+}
+
 pub enum Action {
     ComputeImpulseResponse(usize),
     None,
 }
 
 impl ImpulseReponses {
-    pub fn new(window: Option<&data::Window<Samples>>) -> Self {
-        let window_settings = window.map(|window| WindowSettings {
+    pub fn new(window: &data::Window<Samples>) -> Self {
+        let window_settings = WindowSettings {
             window: window.clone(),
-            handles: window.into(),
-        });
+            // handles: window.into(),
+            hovered: None,
+            dragging: Dragging::None,
+        };
 
         Self {
             window_settings,
@@ -84,6 +112,12 @@ impl ImpulseReponses {
             }
             Message::Chart(operation) => {
                 self.chart_data.apply(operation);
+
+                Action::None
+            }
+            Message::Window(operation) => {
+                self.window_settings
+                    .apply(operation, self.chart_data.time_unit);
 
                 Action::None
             }
@@ -148,7 +182,7 @@ impl ImpulseReponses {
                         .align_y(Alignment::Center)
                         .spacing(10);
 
-                        let chart: Chart<_, (), _> = {
+                        let chart = {
                             let x_scale_fn = match self.chart_data.time_unit {
                                 chart::TimeSeriesUnit::Samples => sample_scale,
                                 chart::TimeSeriesUnit::Time => time_scale,
@@ -194,33 +228,58 @@ impl ImpulseReponses {
                                     ))
                                     .color(iced::Color::from_rgb8(2, 125, 66)),
                                 )
-                                .on_scroll(|state: &pliced::chart::State<()>| {
+                                .on_scroll(|state: &pliced::chart::State<SeriesId>| {
                                     let pos = state.get_coords();
                                     let delta = state.scroll_delta();
                                     let x_range = state.x_range();
                                     Message::Chart(ChartOperation::Scroll(pos, delta, x_range))
                                 });
 
-                            if let Some(settings) = &self.window_settings {
-                                chart
-                                    .push_series(
-                                        line_series(settings.window.curve().map(move |(i, s)| {
-                                            (x_scale_fn(i, sample_rate), y_scale_fn(s, 1.0))
-                                        }))
-                                        .color(iced::Color::from_rgb8(255, 0, 0)),
-                                    )
-                                    .push_series(
-                                        point_series(settings.handles.iter().map(move |handle| {
-                                            (
-                                                x_scale_fn(handle.x(), sample_rate),
-                                                y_scale_fn(handle.y().into(), 1.0),
-                                            )
-                                        }))
-                                        .color(iced::Color::from_rgb8(255, 0, 0)),
-                                    )
-                            } else {
-                                chart
-                            }
+                            let window_curve = self.window_settings.window.curve();
+                            let handles: window::Handles = Into::into(&self.window_settings.window);
+                            chart
+                                .push_series(
+                                    line_series(window_curve.map(move |(i, s)| {
+                                        (x_scale_fn(i, sample_rate), y_scale_fn(s, 1.0))
+                                    }))
+                                    .color(iced::Color::from_rgb8(255, 0, 0)),
+                                )
+                                .push_series(
+                                    point_series(handles.into_iter().map(move |handle| {
+                                        (
+                                            x_scale_fn(handle.x(), sample_rate),
+                                            y_scale_fn(handle.y().into(), 1.0),
+                                        )
+                                    }))
+                                    .with_id(SeriesId::Handles)
+                                    .style_for_each(|index, _handle| {
+                                        if self.window_settings.hovered.is_some_and(|i| i == index)
+                                        {
+                                            PointStyle {
+                                                color: Some(iced::Color::from_rgb8(127, 127, 127)),
+                                                radius: 10.0,
+                                                ..Default::default()
+                                            }
+                                        } else {
+                                            PointStyle::default()
+                                        }
+                                    })
+                                    .color(iced::Color::from_rgb8(255, 0, 0)),
+                                )
+                                .on_press(|state: &pliced::chart::State<SeriesId>| {
+                                    let id = state.items().and_then(|l| l.first().map(|i| i.1));
+                                    Message::Window(WindowOperation::MouseDown(
+                                        id,
+                                        state.get_offset(),
+                                    ))
+                                })
+                                .on_move(|state: &pliced::chart::State<SeriesId>| {
+                                    let id = state.items().and_then(|l| l.first().map(|i| i.1));
+                                    Message::Window(WindowOperation::OnMove(id, state.get_offset()))
+                                })
+                                .on_release(|state: &pliced::chart::State<SeriesId>| {
+                                    Message::Window(WindowOperation::MouseUp(state.get_offset()))
+                                })
                         };
 
                         let footer = {
@@ -392,6 +451,88 @@ impl ChartData {
         let new_start = position.x - (new_len * center_scale);
         let new_end = new_start + new_len;
         self.x_range = Some(new_start..=new_end);
+    }
+}
+
+impl WindowSettings {
+    pub fn apply(&mut self, operation: WindowOperation, time_unit: TimeSeriesUnit) {
+        let mut update_handle = |id, prev_pos: iced::Point, pos: iced::Point| {
+            let offset = pos.x - prev_pos.x;
+
+            let mut handles: window::Handles = Into::into(&self.window);
+            match id {
+                0 => handles.move_left(offset),
+                1 => handles.move_center(offset),
+                2 => handles.move_right(offset),
+                n => panic!("there should be no handles with index: {n}"),
+            }
+
+            self.window.update(handles);
+        };
+        match operation {
+            WindowOperation::MouseDown(id, pos) => {
+                let Dragging::None = self.dragging else {
+                    return;
+                };
+
+                if let (Some(id), Some(pos)) = (id, pos) {
+                    self.dragging = Dragging::CouldStillBeClick(id, pos);
+                }
+            }
+            WindowOperation::OnMove(id, pos) => {
+                let Some(pos) = pos else {
+                    return;
+                };
+
+                match self.dragging {
+                    Dragging::CouldStillBeClick(id, prev_pos) => {
+                        if prev_pos != pos {
+                            // let pos = update_handle(id, prev_pos, pos);
+                            update_handle(id, prev_pos, pos);
+                            self.dragging = Dragging::ForSure(id, pos);
+                        }
+                    }
+                    Dragging::ForSure(id, prev_pos) => {
+                        // let pos = update_handle(id, prev_pos, pos);
+                        update_handle(id, prev_pos, pos);
+                        self.dragging = Dragging::ForSure(id, pos);
+                    }
+                    Dragging::None => {
+                        if id.is_none() {
+                            // if let Some(handle) =
+                            //     self.hovered.and_then(|id| self.handles.get_mut(id))
+                            // {
+                            //     handle.style = PointStyle::default();
+                            // }
+                        }
+                        self.hovered = id;
+                    }
+                }
+            }
+            WindowOperation::MouseUp(pos) => {
+                let Some(pos) = pos else {
+                    return;
+                };
+
+                match self.dragging {
+                    Dragging::CouldStillBeClick(id, _point) => {
+                        // if let Some(handle) = self.handles.get_mut(id) {
+                        //     handle.style = PointStyle::default();
+                        // }
+                        self.hovered = None;
+                        self.dragging = Dragging::None;
+                    }
+                    Dragging::ForSure(id, prev_pos) => {
+                        update_handle(id, prev_pos, pos);
+                        // if let Some(handle) = self.handles.get_mut(id) {
+                        //     handle.style = PointStyle::default();
+                        // }
+                        self.dragging = Dragging::None;
+                    }
+                    Dragging::None => {}
+                }
+            }
+        }
     }
 }
 

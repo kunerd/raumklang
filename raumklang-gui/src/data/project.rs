@@ -4,7 +4,7 @@ use super::{
     impulse_response,
     measurement::{self, loopback},
     window::Samples,
-    Error, Measurement, Window,
+    Error, Measurement, SampleRate, Window,
 };
 pub use file::File;
 
@@ -14,7 +14,8 @@ use std::{path::Path, time::Duration};
 
 #[derive(Debug)]
 pub struct Project {
-    window: Option<Window<Samples>>,
+    sample_rate: SampleRate,
+    window: Window<Samples>,
     loopback: Option<measurement::Loopback>,
     measurements: Vec<Measurement>,
 }
@@ -26,9 +27,12 @@ pub struct ImpulseResponseComputation {
 }
 
 impl Project {
-    pub fn new() -> Self {
+    pub fn new(sample_rate: SampleRate) -> Self {
+        let window = Window::from_duration(Window::default(), sample_rate);
+
         Self {
-            window: None,
+            sample_rate,
+            window,
             loopback: None,
             measurements: Vec::new(),
         }
@@ -54,26 +58,27 @@ impl Project {
         .flatten()
         .collect();
 
-        let window = loopback.as_ref().and_then(|l| {
-            if let loopback::State::Loaded(l) = &l.state {
-                Some(Window::from_duration(
-                    Window::<Duration>::default(),
-                    l.sample_rate(),
-                ))
-            } else {
-                None
-            }
-        });
+        let sample_rate = loopback
+            .as_ref()
+            .and_then(|l| {
+                if let loopback::State::Loaded(l) = &l.state {
+                    Some(SampleRate::new(l.sample_rate()))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
 
         Ok(Self {
-            window,
+            sample_rate,
+            window: Window::from_duration(Window::default(), sample_rate),
             loopback,
             measurements,
         })
     }
 
-    pub fn window(&self) -> Option<&Window<Samples>> {
-        self.window.as_ref()
+    pub fn window(&self) -> &Window<Samples> {
+        &self.window
     }
 
     pub fn loopback(&self) -> Option<&measurement::Loopback> {
@@ -93,17 +98,18 @@ impl Project {
     }
 
     pub fn set_loopback(&mut self, loopback: Option<measurement::Loopback>) {
-        self.window = loopback.as_ref().and_then(|l| {
-            if let loopback::State::Loaded(l) = &l.state {
-                Some(Window::from_duration(
-                    Window::<Duration>::default(),
-                    l.sample_rate(),
-                ))
-            } else {
-                None
-            }
-        });
+        let sample_rate = loopback
+            .as_ref()
+            .and_then(|l| {
+                if let loopback::State::Loaded(l) = &l.state {
+                    Some(SampleRate::new(l.sample_rate()))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
 
+        self.window = Window::from_duration(Window::default(), sample_rate);
         self.loopback = loopback;
 
         self.measurements
@@ -122,6 +128,12 @@ impl Project {
 
     pub fn remove_measurement(&mut self, index: usize) -> Measurement {
         self.measurements.remove(index)
+    }
+}
+
+impl Default for Project {
+    fn default() -> Self {
+        Self::new(SampleRate::default())
     }
 }
 
