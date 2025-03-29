@@ -64,7 +64,7 @@ impl Raumklang {
     fn new() -> (Self, Task<Message>) {
         let app = Self {
             screen: Screen::Loading,
-            project: data::Project::new(),
+            project: data::Project::default(),
             recent_projects: RecentProjects::new(MAX_RECENT_PROJECTS_ENTRIES),
         };
         let task = Task::perform(RecentProjects::load(), Message::RecentProjectsLoaded);

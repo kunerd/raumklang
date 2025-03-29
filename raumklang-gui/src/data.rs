@@ -9,7 +9,7 @@ pub use impulse_response::ImpulseResponse;
 pub use measurement::Measurement;
 pub use project::Project;
 pub use recent_projects::RecentProjects;
-pub use window::Window;
+pub use window::{SampleRate, Window};
 
 use std::{io, sync::Arc};
 

@@ -1,8 +1,11 @@
 pub mod handle;
 
-pub use handle::Handle;
+use std::{
+    ops::{AddAssign, Mul, Sub},
+    time::Duration,
+};
 
-use std::time::Duration;
+use handle::Handle;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Samples(usize);
@@ -13,19 +16,64 @@ impl From<Samples> for f32 {
     }
 }
 
-// pub enum TimeScale{
-//     Samples(usize),
-//     Duration{
-//         duration: Duration,
-//         sample_rate: u32
-//     }
-// }
-
 impl Samples {
-    pub fn from_duration(duration: Duration, sample_rate: u32) -> Self {
-        let samples = duration.as_secs_f32() * sample_rate as f32;
+    pub fn from_duration(duration: Duration, sample_rate: SampleRate) -> Self {
+        sample_rate * duration
+    }
 
+    pub fn from_f32(samples: f32) -> Self {
         Self(samples.round() as usize)
+    }
+}
+
+impl AddAssign for Samples {
+    fn add_assign(&mut self, rhs: Self) {
+        self.0 += rhs.0;
+    }
+}
+
+impl Sub for Samples {
+    type Output = Samples;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Samples(self.0.saturating_sub(rhs.0))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SampleRate(u32);
+
+impl SampleRate {
+    pub fn new(sample_rate: u32) -> Self {
+        Self(sample_rate)
+    }
+}
+
+impl Mul<Duration> for SampleRate {
+    type Output = Samples;
+
+    fn mul(self, rhs: Duration) -> Self::Output {
+        Samples::from_f32(self.0 as f32 * rhs.as_secs_f32())
+    }
+}
+
+impl Mul<SampleRate> for Duration {
+    type Output = Samples;
+
+    fn mul(self, rhs: SampleRate) -> Self::Output {
+        rhs * self
+    }
+}
+
+impl From<SampleRate> for f32 {
+    fn from(value: SampleRate) -> Self {
+        value.0 as f32
+    }
+}
+
+impl Default for SampleRate {
+    fn default() -> Self {
+        Self(44_100)
     }
 }
 
@@ -44,6 +92,7 @@ pub struct Window<D> {
 //     Tukey(f32),
 // }
 
+#[derive(Debug)]
 pub struct Handles {
     left: Handle,
     center: Handle,
@@ -63,7 +112,7 @@ impl Default for Window<Duration> {
 }
 
 impl Window<Samples> {
-    pub fn from_duration(window: Window<Duration>, sample_rate: u32) -> Self {
+    pub fn from_duration(window: Window<Duration>, sample_rate: SampleRate) -> Self {
         Self {
             left_type: window.left_type,
             left_width: Samples::from_duration(window.left_width, sample_rate),
@@ -82,11 +131,19 @@ impl Window<Samples> {
         );
 
         builder.build().into_iter().enumerate().map(|(i, s)| {
+            let position: f32 = self.position.into();
             let left_width: f32 = self.left_width.into();
-            let x = i as f32 - left_width;
+            let x = i as f32 + position - left_width;
 
             (x, s)
         })
+    }
+
+    pub fn update(&mut self, handles: Handles) {
+        let left_width = handles.center.x() - handles.left.x();
+        self.left_width = Samples::from_f32(left_width);
+        self.position = Samples::from_f32(handles.center.x());
+        self.right_width = Samples::from_f32(handles.right.x() - handles.center.x());
     }
 }
 
@@ -117,16 +174,39 @@ impl Handles {
     pub fn iter(&self) -> std::array::IntoIter<&Handle, 3> {
         [&self.left, &self.center, &self.right].into_iter()
     }
+
+    pub fn move_left(&mut self, offset: f32) {
+        self.left += offset;
+    }
+
+    pub fn move_center(&mut self, offset: f32) {
+        self.left += offset;
+        self.center += offset;
+        self.right += offset;
+    }
+
+    pub fn move_right(&mut self, offset: f32) {
+        self.right += offset;
+    }
 }
 
-// impl<'a> IntoIterator for &'a Handles {
-//     type Item = &'a Handle;
-//     type IntoIter = std::array::IntoIter<Self::Item, 3>;
+impl IntoIterator for Handles {
+    type Item = Handle;
+    type IntoIter = std::array::IntoIter<Self::Item, 3>;
 
-//     fn into_iter(self) -> Self::IntoIter {
-//         self.iter()
-//     }
-// }
+    fn into_iter(self) -> Self::IntoIter {
+        [self.left, self.center, self.right].into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a Handles {
+    type Item = &'a Handle;
+    type IntoIter = std::array::IntoIter<Self::Item, 3>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
 
 impl From<&Window<Samples>> for Handles {
     fn from(window: &Window<Samples>) -> Self {
