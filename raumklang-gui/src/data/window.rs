@@ -16,12 +16,6 @@ pub struct Window<D> {
     right_width: D,
 }
 
-// #[derive(Debug, Clone, Copy, PartialEq)]
-// pub enum Type {
-//     Hann,
-//     Tukey(f32),
-// }
-
 #[derive(Debug)]
 pub struct Handles {
     left: Handle,
@@ -44,7 +38,9 @@ impl Window<Duration> {
     pub fn update(&mut self, handles: Handles) {
         let left_width = handles.center.x() - handles.left.x();
         self.left_width = Duration::from_millis(left_width as u64).into();
+
         self.position = Duration::from_millis(handles.center.x() as u64).into();
+
         let right_width = handles.right.x() - handles.center.x();
         self.right_width = Duration::from_millis(right_width as u64).into();
     }
@@ -86,7 +82,9 @@ impl Window<Samples> {
     pub fn update(&mut self, handles: Handles) {
         let left_width = handles.center.x() - handles.left.x();
         self.left_width = Samples::from_f32(left_width, self.sample_rate);
+
         self.position = Samples::from_f32(handles.center.x(), self.sample_rate);
+
         self.right_width =
             Samples::from_f32(handles.right.x() - handles.center.x(), self.sample_rate);
     }
@@ -105,29 +103,6 @@ impl From<Window<Samples>> for Window<Duration> {
         }
     }
 }
-
-// impl Type {
-//     pub const ALL: [Self; 2] = [Self::Hann, Self::Tukey(0.25)];
-// }
-
-// impl Default for Type {
-//     fn default() -> Self {
-//         Self::Tukey(0.25)
-//     }
-// }
-
-// impl std::fmt::Display for Type {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         write!(
-//             f,
-//             "{}",
-//             match self {
-//                 Type::Hann => "Hann",
-//                 Type::Tukey(_) => "Tukey",
-//             }
-//         )
-//     }
-// }
 
 impl Handles {
     pub fn iter(&self) -> std::array::IntoIter<&Handle, 3> {

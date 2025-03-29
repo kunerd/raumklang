@@ -13,7 +13,6 @@ use std::path::Path;
 
 #[derive(Debug)]
 pub struct Project {
-    sample_rate: SampleRate,
     window: Window<Samples>,
     loopback: Option<measurement::Loopback>,
     measurements: Vec<Measurement>,
@@ -30,7 +29,6 @@ impl Project {
         let window = Window::new(sample_rate).into();
 
         Self {
-            sample_rate,
             window,
             loopback: None,
             measurements: Vec::new(),
@@ -69,7 +67,6 @@ impl Project {
             .unwrap_or_default();
 
         Ok(Self {
-            sample_rate,
             window: Window::new(sample_rate).into(),
             loopback,
             measurements,
