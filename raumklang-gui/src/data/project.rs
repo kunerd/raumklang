@@ -125,6 +125,10 @@ impl Project {
     pub fn remove_measurement(&mut self, index: usize) -> Measurement {
         self.measurements.remove(index)
     }
+
+    pub fn set_window(&mut self, window: Window<Samples>) {
+        self.window = window;
+    }
 }
 
 impl Default for Project {

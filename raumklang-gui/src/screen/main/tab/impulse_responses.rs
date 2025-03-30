@@ -84,6 +84,7 @@ pub enum WindowOperation {
 
 pub enum Action {
     ComputeImpulseResponse(usize),
+    WindowModified(data::Window<data::Samples>),
     None,
 }
 
@@ -118,7 +119,7 @@ impl ImpulseReponses {
                 self.window_settings
                     .apply(operation, self.chart_data.time_unit);
 
-                Action::None
+                Action::WindowModified(self.window_settings.window.clone())
             }
         }
     }
