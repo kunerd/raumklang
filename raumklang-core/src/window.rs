@@ -117,21 +117,6 @@ impl WindowBuilder {
     }
 }
 
-impl Default for WindowBuilder {
-    fn default() -> Self {
-        // FIXME: depends on sample rate of impulse response
-        let left_side_width = 5512;
-        let right_side_width = 22050;
-        Self {
-            left_side: Window::Tukey(0.25),
-            left_side_width,
-            right_side: Window::Tukey(0.25),
-            right_side_width,
-            offset: 0,
-        }
-    }
-}
-
 fn create_window(window_type: &Window, width: usize) -> Vec<f32> {
     match window_type {
         Window::Hann => HannWindow::new(width).data,
