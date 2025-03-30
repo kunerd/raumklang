@@ -2,6 +2,7 @@ pub mod landing;
 pub mod main;
 
 pub use landing::landing;
+pub use main::Main;
 
 use iced::{
     widget::{container, text},
@@ -11,7 +12,7 @@ use iced::{
 pub enum Screen {
     Loading,
     Landing,
-    Main(main::Tab),
+    Main(Main),
 }
 
 pub fn loading<'a, Message: 'a>() -> Element<'a, Message> {
