@@ -43,7 +43,7 @@ pub enum Message {
     FrequencyResponses(frequency_responses::Message),
     ImpulseResponseComputed(Result<(usize, data::ImpulseResponse), data::Error>),
     PendingWindowModal(PendingWindowAction),
-    FrequencyResponseComputed(Option<(usize, raumklang_core::FrequencyResponse)>),
+    FrequencyResponseComputed((usize, data::FrequencyResponse)),
 }
 
 #[derive(Debug, Clone)]
@@ -182,7 +182,7 @@ impl Main {
 
                 Task::none()
             }
-            Message::FrequencyResponseComputed(Some((id, frequency_response))) => {
+            Message::FrequencyResponseComputed((id, frequency_response)) => {
                 self.project
                     .measurements_mut()
                     .get_mut(id)
@@ -195,7 +195,6 @@ impl Main {
 
                 Task::none()
             }
-            Message::FrequencyResponseComputed(None) => Task::none(),
         }
     }
 
@@ -207,37 +206,20 @@ impl Main {
                 Task::none(),
             ),
             TabId::FrequencyResponses => {
-                let (ids, computations): (Vec<_>, Vec<_>) = self
+                let ids: Vec<_> = self
                     .project
-                    .all_impulse_response_computations()
-                    .unwrap()
-                    .into_iter()
-                    .unzip();
+                    .measurements()
+                    .iter()
+                    .enumerate()
+                    .map(|(id, _)| id)
+                    .collect();
 
-                let tasks = computations.into_iter().flatten().map(|c| {
-                    let window = self.project.window().clone();
+                let computations = self.project.all_frequency_response_computations().unwrap();
 
+                let tasks = computations.into_iter().map(|computation| {
                     Task::sip(
-                        iced::task::sipper(async move |mut progress| {
-                            let impulse_response = c.run().await;
-
-                            let res = impulse_response.as_ref().ok().cloned();
-                            progress.send(impulse_response).await;
-
-                            if let Some((id, impulse_response)) = res {
-                                Some(
-                                    compute_frequency_response(
-                                        id,
-                                        impulse_response.origin,
-                                        window.curve().map(|(_, s)| s).collect(),
-                                    )
-                                    .await,
-                                )
-                            } else {
-                                None
-                            }
-                        }),
-                        Message::ImpulseResponseComputed,
+                        computation.run(),
+                        |res| Message::ImpulseResponseComputed(Ok(res)),
                         Message::FrequencyResponseComputed,
                     )
                 });
@@ -380,18 +362,4 @@ where
         }))
     ]
     .into()
-}
-
-async fn compute_frequency_response(
-    id: usize,
-    impulse_response: raumklang_core::ImpulseResponse,
-    window: Vec<f32>,
-) -> (usize, raumklang_core::FrequencyResponse) {
-    let frequency_response = tokio::task::spawn_blocking(move || {
-        raumklang_core::FrequencyResponse::new(impulse_response, &window)
-    })
-    .await
-    .unwrap();
-
-    (id, frequency_response)
 }

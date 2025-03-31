@@ -1,7 +1,7 @@
 pub mod file;
 
 use super::{
-    impulse_response,
+    frequency_response, impulse_response,
     measurement::{self, loopback},
     Error, Samples, Window,
 };
@@ -102,6 +102,11 @@ impl Project {
 
     pub fn set_window(&mut self, window: Window<Samples>) {
         self.window = window;
+
+        self.measurements.iter_mut().for_each(|state| match state {
+            measurement::State::NotLoaded(_details) => {}
+            measurement::State::Loaded(measurement) => measurement.reset_frequency_responses(),
+        });
     }
 
     fn reset_impulse_responses(&mut self) {
@@ -136,9 +141,9 @@ impl Project {
         Ok(computation)
     }
 
-    pub fn all_impulse_response_computations(
+    pub fn all_frequency_response_computations(
         &mut self,
-    ) -> Result<Vec<(usize, Option<impulse_response::Computation>)>, Error> {
+    ) -> Result<Vec<frequency_response::Computation>, Error> {
         let Some(loopback) = self.loopback.as_ref() else {
             return Err(Error::ImpulseResponseComputationFailed);
         };
@@ -147,6 +152,7 @@ impl Project {
             return Err(Error::ImpulseResponseComputationFailed);
         };
 
+        let window: Vec<f32> = self.window.curve().into_iter().map(|(_x, y)| y).collect();
         Ok(self
             .measurements
             .iter_mut()
@@ -158,10 +164,29 @@ impl Project {
                     None
                 }
             })
-            .flat_map(|(id, measurement)| {
-                let measurement = measurement.impulse_response_computation(id, loopback.clone());
-
-                Some((id, measurement))
+            .flat_map(|(id, measurement)| match &measurement.analysis {
+                measurement::Analysis::None => {
+                    let computation = measurement
+                        .impulse_response_computation(id, loopback.clone())
+                        .unwrap();
+                    Some(
+                        frequency_response::Computation::from_impulse_response_computation(
+                            computation,
+                            window.clone(),
+                        ),
+                    )
+                }
+                measurement::Analysis::ImpulseResponse(impulse_response::State::Computing) => None,
+                measurement::Analysis::ImpulseResponse(impulse_response::State::Computed(
+                    impulse_response,
+                ))
+                | measurement::Analysis::FrequencyResponse(impulse_response, _) => {
+                    Some(frequency_response::Computation::from_impulse_response(
+                        id,
+                        impulse_response.clone(),
+                        window.clone(),
+                    ))
+                }
             })
             .collect())
     }

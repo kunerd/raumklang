@@ -115,10 +115,7 @@ impl Measurement {
         }
     }
 
-    pub fn frequency_response_computed(
-        &mut self,
-        frequency_response: raumklang_core::FrequencyResponse,
-    ) {
+    pub fn frequency_response_computed(&mut self, frequency_response: FrequencyResponse) {
         let analysis = std::mem::replace(&mut self.analysis, Analysis::None);
 
         self.analysis = match analysis {
@@ -129,10 +126,20 @@ impl Measurement {
             Analysis::ImpulseResponse(impulse_response::State::Computed(impulse_response))
             | Analysis::FrequencyResponse(impulse_response, _) => Analysis::FrequencyResponse(
                 impulse_response,
-                frequency_response::State::Computed(super::FrequencyResponse::new(
-                    frequency_response,
-                )),
+                frequency_response::State::Computed(frequency_response),
             ),
+        }
+    }
+
+    pub fn reset_frequency_responses(&mut self) {
+        let analysis = std::mem::replace(&mut self.analysis, Analysis::None);
+
+        self.analysis = match analysis {
+            Analysis::None => Analysis::None,
+            Analysis::ImpulseResponse(state) => Analysis::ImpulseResponse(state),
+            Analysis::FrequencyResponse(impulse_response, _) => {
+                Analysis::ImpulseResponse(impulse_response::State::Computed(impulse_response))
+            }
         }
     }
 }
