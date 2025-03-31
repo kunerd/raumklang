@@ -135,6 +135,36 @@ impl Project {
 
         Ok(computation)
     }
+
+    pub fn all_impulse_response_computations(
+        &mut self,
+    ) -> Result<Vec<(usize, Option<impulse_response::Computation>)>, Error> {
+        let Some(loopback) = self.loopback.as_ref() else {
+            return Err(Error::ImpulseResponseComputationFailed);
+        };
+
+        let loopback::State::Loaded(loopback) = &loopback.state else {
+            return Err(Error::ImpulseResponseComputationFailed);
+        };
+
+        Ok(self
+            .measurements
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(id, state)| {
+                if let measurement::State::Loaded(measurement) = state {
+                    Some((id, measurement))
+                } else {
+                    None
+                }
+            })
+            .flat_map(|(id, measurement)| {
+                let measurement = measurement.impulse_response_computation(id, loopback.clone());
+
+                Some((id, measurement))
+            })
+            .collect())
+    }
 }
 
 impl Default for Project {

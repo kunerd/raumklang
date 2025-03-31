@@ -2,7 +2,7 @@ pub mod loopback;
 
 pub use loopback::Loopback;
 
-use super::{frequency_response, impulse_response, ImpulseResponse};
+use super::{frequency_response, impulse_response, FrequencyResponse, ImpulseResponse};
 
 use raumklang_core::WavLoadError;
 
@@ -12,51 +12,23 @@ use std::{
 };
 
 #[derive(Debug)]
-pub struct Measurement {
-    details: Details,
-    signal: raumklang_core::Measurement,
-    analysis: Analysis,
-}
-
-impl Measurement {
-    pub fn reset_analysis(&mut self) {
-        self.analysis = Analysis::None
-    }
-
-    pub fn signal(&self) -> &raumklang_core::Measurement {
-        &self.signal
-    }
-
-    pub fn impulse_response_computation(
-        &mut self,
-        id: usize,
-        loopback: raumklang_core::Loopback,
-    ) -> Option<impulse_response::Computation> {
-        match self.analysis {
-            Analysis::None => {
-                self.analysis = Analysis::ImpulseResponse(impulse_response::State::Computing);
-
-                Some(impulse_response::Computation::new(
-                    id,
-                    loopback,
-                    self.signal.clone(),
-                ))
-            }
-            Analysis::ImpulseResponse(_) => None,
-            Analysis::FrequencyResponse(_, _) => None,
-        }
-    }
-
-    pub fn impulse_response_computed(&mut self, impulse_response: ImpulseResponse) {
-        self.analysis =
-            Analysis::ImpulseResponse(impulse_response::State::Computed(impulse_response))
-    }
-}
-
-#[derive(Debug)]
 pub enum State {
     NotLoaded(Details),
     Loaded(Measurement),
+}
+
+#[derive(Debug)]
+pub struct Measurement {
+    pub details: Details,
+    signal: raumklang_core::Measurement,
+    pub analysis: Analysis,
+}
+
+#[derive(Debug)]
+pub enum Analysis {
+    None,
+    ImpulseResponse(impulse_response::State),
+    FrequencyResponse(ImpulseResponse, frequency_response::State),
 }
 
 #[derive(Debug, Clone)]
@@ -92,12 +64,77 @@ impl State {
         }
     }
 }
+impl Measurement {
+    pub fn reset_analysis(&mut self) {
+        self.analysis = Analysis::None
+    }
 
-#[derive(Debug)]
-pub enum Analysis {
-    None,
-    ImpulseResponse(impulse_response::State),
-    FrequencyResponse(ImpulseResponse, frequency_response::State),
+    pub fn signal(&self) -> &raumklang_core::Measurement {
+        &self.signal
+    }
+
+    pub fn impulse_response_computation(
+        &mut self,
+        id: usize,
+        loopback: raumklang_core::Loopback,
+    ) -> Option<impulse_response::Computation> {
+        match self.analysis {
+            Analysis::None => {
+                self.analysis = Analysis::ImpulseResponse(impulse_response::State::Computing);
+
+                Some(impulse_response::Computation::new(
+                    id,
+                    loopback,
+                    self.signal.clone(),
+                ))
+            }
+            Analysis::ImpulseResponse(_) => None,
+            Analysis::FrequencyResponse(_, _) => None,
+        }
+    }
+
+    pub fn impulse_response_computed(&mut self, impulse_response: ImpulseResponse) {
+        self.analysis =
+            // Analysis::ImpulseResponse(impulse_response::State::Computed(impulse_response))
+        Analysis::FrequencyResponse(impulse_response, frequency_response::State::Computing)
+    }
+
+    pub fn frequency_response(&self) -> Option<&FrequencyResponse> {
+        let state = self.frequency_response_state()?;
+
+        match state {
+            frequency_response::State::Computing => None,
+            frequency_response::State::Computed(frequency_response) => Some(frequency_response),
+        }
+    }
+    pub fn frequency_response_state(&self) -> Option<&frequency_response::State> {
+        match &self.analysis {
+            Analysis::None => None,
+            Analysis::ImpulseResponse(_state) => None,
+            Analysis::FrequencyResponse(_impulse_response, state) => Some(state),
+        }
+    }
+
+    pub fn frequency_response_computed(
+        &mut self,
+        frequency_response: raumklang_core::FrequencyResponse,
+    ) {
+        let analysis = std::mem::replace(&mut self.analysis, Analysis::None);
+
+        self.analysis = match analysis {
+            Analysis::None => Analysis::None,
+            Analysis::ImpulseResponse(impulse_response::State::Computing) => {
+                Analysis::ImpulseResponse(impulse_response::State::Computing)
+            }
+            Analysis::ImpulseResponse(impulse_response::State::Computed(impulse_response))
+            | Analysis::FrequencyResponse(impulse_response, _) => Analysis::FrequencyResponse(
+                impulse_response,
+                frequency_response::State::Computed(super::FrequencyResponse::new(
+                    frequency_response,
+                )),
+            ),
+        }
+    }
 }
 
 pub trait FromFile {

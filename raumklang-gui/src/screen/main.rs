@@ -43,6 +43,7 @@ pub enum Message {
     FrequencyResponses(frequency_responses::Message),
     ImpulseResponseComputed(Result<(usize, data::ImpulseResponse), data::Error>),
     PendingWindowModal(PendingWindowAction),
+    FrequencyResponseComputed(Option<(usize, raumklang_core::FrequencyResponse)>),
 }
 
 #[derive(Debug, Clone)]
@@ -70,17 +71,7 @@ impl Main {
                     return Task::none();
                 }
 
-                self.active_tab = match tab_id {
-                    TabId::Measurements => Tab::Measurements(tab::Measurements::new()),
-                    TabId::ImpulseResponses => {
-                        Tab::ImpulseResponses(tab::ImpulseReponses::new(self.project.window()))
-                    }
-                    TabId::FrequencyResponses => {
-                        Tab::FrequencyResponses(tab::FrequencyResponses::new())
-                    }
-                };
-
-                Task::none()
+                self.goto_tab(tab_id)
             }
             Message::Measurements(message) => {
                 let Tab::Measurements(measurements) = &mut self.active_tab else {
@@ -180,19 +171,85 @@ impl Main {
                     PendingWindowAction::Apply => self.project.set_window(pending_window),
                 }
 
-                self.active_tab = match goto_tab {
-                    TabId::Measurements => Tab::Measurements(tab::Measurements::new()),
-                    TabId::ImpulseResponses => {
-                        Tab::ImpulseResponses(tab::ImpulseReponses::new(self.project.window()))
-                    }
-                    TabId::FrequencyResponses => {
-                        Tab::FrequencyResponses(tab::FrequencyResponses::new())
-                    }
+                self.goto_tab(goto_tab)
+            }
+            Message::FrequencyResponses(message) => {
+                let Tab::FrequencyResponses(tab) = &mut self.active_tab else {
+                    return Task::none();
                 };
+
+                tab.update(message);
 
                 Task::none()
             }
+            Message::FrequencyResponseComputed(Some((id, frequency_response))) => {
+                self.project
+                    .measurements_mut()
+                    .get_mut(id)
+                    .map(|m| match m {
+                        data::measurement::State::NotLoaded(_) => {}
+                        data::measurement::State::Loaded(measurement) => {
+                            measurement.frequency_response_computed(frequency_response)
+                        }
+                    });
+
+                Task::none()
+            }
+            Message::FrequencyResponseComputed(None) => Task::none(),
         }
+    }
+
+    fn goto_tab(&mut self, tab_id: TabId) -> Task<Message> {
+        let (tab, task) = match tab_id {
+            TabId::Measurements => (Tab::Measurements(tab::Measurements::new()), Task::none()),
+            TabId::ImpulseResponses => (
+                Tab::ImpulseResponses(tab::ImpulseReponses::new(self.project.window())),
+                Task::none(),
+            ),
+            TabId::FrequencyResponses => {
+                let (ids, computations): (Vec<_>, Vec<_>) = self
+                    .project
+                    .all_impulse_response_computations()
+                    .unwrap()
+                    .into_iter()
+                    .unzip();
+
+                let tasks = computations.into_iter().flatten().map(|c| {
+                    let window = self.project.window().clone();
+
+                    Task::sip(
+                        iced::task::sipper(async move |mut progress| {
+                            let impulse_response = c.run().await;
+
+                            let res = impulse_response.as_ref().ok().cloned();
+                            progress.send(impulse_response).await;
+
+                            if let Some((id, impulse_response)) = res {
+                                Some(
+                                    compute_frequency_response(
+                                        id,
+                                        impulse_response.origin,
+                                        window.curve().map(|(_, s)| s).collect(),
+                                    )
+                                    .await,
+                                )
+                            } else {
+                                None
+                            }
+                        }),
+                        Message::ImpulseResponseComputed,
+                        Message::FrequencyResponseComputed,
+                    )
+                });
+
+                let tab = Tab::FrequencyResponses(tab::FrequencyResponses::new(ids.into_iter()));
+
+                (tab, Task::batch(tasks))
+            }
+        };
+
+        self.active_tab = tab;
+        task
     }
 
     pub fn view(&self) -> Element<Message> {
@@ -232,7 +289,22 @@ impl Main {
                 Tab::ImpulseResponses(irs) => irs
                     .view(self.project.measurements())
                     .map(Message::ImpulseResponses),
-                Tab::FrequencyResponses(frs) => frs.view().map(Message::FrequencyResponses),
+                Tab::FrequencyResponses(frs) => {
+                    let loaded: Vec<_> = self
+                        .project
+                        .measurements()
+                        .iter()
+                        .filter_map(|state| {
+                            if let data::measurement::State::Loaded(measurement) = state {
+                                Some(measurement)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
+                    frs.view(&loaded).map(Message::FrequencyResponses)
+                }
             };
 
             container(column![header, content].spacing(10))
@@ -308,4 +380,18 @@ where
         }))
     ]
     .into()
+}
+
+async fn compute_frequency_response(
+    id: usize,
+    impulse_response: raumklang_core::ImpulseResponse,
+    window: Vec<f32>,
+) -> (usize, raumklang_core::FrequencyResponse) {
+    let frequency_response = tokio::task::spawn_blocking(move || {
+        raumklang_core::FrequencyResponse::new(impulse_response, &window)
+    })
+    .await
+    .unwrap();
+
+    (id, frequency_response)
 }
