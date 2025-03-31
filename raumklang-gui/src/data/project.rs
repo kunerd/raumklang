@@ -3,11 +3,12 @@ pub mod file;
 use super::{
     impulse_response,
     measurement::{self, loopback},
-    Error, Measurement, SampleRate, Samples, Window,
+    Error, Measurement, Samples, Window,
 };
 pub use file::File;
 
 use iced::futures::future::join_all;
+use raumklang_core::{FrequencyResponse, ImpulseResponse};
 
 use std::path::Path;
 
@@ -25,13 +26,18 @@ pub struct ImpulseResponseComputation {
 }
 
 impl Project {
-    pub fn new(sample_rate: SampleRate) -> Self {
+    pub fn new(loopback: Option<measurement::Loopback>, measurements: Vec<Measurement>) -> Self {
+        let sample_rate = loopback
+            .as_ref()
+            .and_then(measurement::Loopback::sample_rate)
+            .unwrap_or_default();
+
         let window = Window::new(sample_rate).into();
 
         Self {
             window,
-            loopback: None,
-            measurements: Vec::new(),
+            loopback,
+            measurements,
         }
     }
 
@@ -55,16 +61,7 @@ impl Project {
         .flatten()
         .collect();
 
-        let sample_rate = loopback
-            .as_ref()
-            .and_then(measurement::Loopback::sample_rate)
-            .unwrap_or_default();
-
-        Ok(Self {
-            window: Window::new(sample_rate).into(),
-            loopback,
-            measurements,
-        })
+        Ok(Self::new(loopback, measurements))
     }
 
     pub fn window(&self) -> &Window<Samples> {
@@ -125,7 +122,10 @@ impl Project {
 
 impl Default for Project {
     fn default() -> Self {
-        Self::new(SampleRate::default())
+        let loopback = None;
+        let measurements = Vec::new();
+
+        Self::new(loopback, measurements)
     }
 }
 
