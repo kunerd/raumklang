@@ -1,7 +1,7 @@
 pub mod tab;
 
 pub use tab::Tab;
-use tab::{impulse_responses, measurements};
+use tab::{frequency_responses, impulse_responses, measurements};
 
 use crate::data::{self, project};
 
@@ -40,6 +40,7 @@ pub enum Message {
     TabSelected(TabId),
     Measurements(measurements::Message),
     ImpulseResponses(impulse_responses::Message),
+    FrequencyResponses(frequency_responses::Message),
     ImpulseResponseComputed(Result<(usize, data::ImpulseResponse), data::Error>),
     PendingWindowModal(PendingWindowAction),
 }
@@ -48,6 +49,7 @@ pub enum Message {
 pub enum TabId {
     Measurements,
     ImpulseResponses,
+    FrequencyResponses,
 }
 
 impl Main {
@@ -72,6 +74,9 @@ impl Main {
                     TabId::Measurements => Tab::Measurements(tab::Measurements::new()),
                     TabId::ImpulseResponses => {
                         Tab::ImpulseResponses(tab::ImpulseReponses::new(self.project.window()))
+                    }
+                    TabId::FrequencyResponses => {
+                        Tab::FrequencyResponses(tab::FrequencyResponses::new())
                     }
                 };
 
@@ -184,6 +189,9 @@ impl Main {
                     TabId::ImpulseResponses => {
                         Tab::ImpulseResponses(tab::ImpulseReponses::new(self.project.window()))
                     }
+                    TabId::FrequencyResponses => {
+                        Tab::FrequencyResponses(tab::FrequencyResponses::new())
+                    }
                 };
 
                 Task::none()
@@ -212,6 +220,11 @@ impl Main {
                     "Impulse Responses",
                     matches!(self.active_tab, Tab::ImpulseResponses(_)),
                     Message::TabSelected(TabId::ImpulseResponses)
+                ),
+                tab_button(
+                    "Frequency Responses",
+                    matches!(self.active_tab, Tab::FrequencyResponses(_)),
+                    Message::TabSelected(TabId::FrequencyResponses)
                 )
             ]
             .spacing(5);
@@ -220,9 +233,10 @@ impl Main {
                 Tab::Measurements(measurements) => {
                     measurements.view(&self.project).map(Message::Measurements)
                 }
-                Tab::ImpulseResponses(impulse_responses) => impulse_responses
+                Tab::ImpulseResponses(irs) => irs
                     .view(self.project.measurements())
                     .map(Message::ImpulseResponses),
+                Tab::FrequencyResponses(frs) => frs.view().map(Message::FrequencyResponses),
             };
 
             container(column![header, content].spacing(10))
@@ -270,6 +284,7 @@ impl Main {
             Tab::ImpulseResponses(impulse_reponses) => impulse_reponses
                 .subscription()
                 .map(Message::ImpulseResponses),
+            Tab::FrequencyResponses(_frs) => Subscription::none(),
         }
     }
 }
