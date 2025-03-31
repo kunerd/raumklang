@@ -2,27 +2,102 @@ pub mod loopback;
 
 pub use loopback::Loopback;
 
-use super::impulse_response;
+use super::{frequency_response, impulse_response, ImpulseResponse};
 
 use raumklang_core::WavLoadError;
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    slice,
+};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Measurement {
-    pub name: String,
-    pub path: PathBuf,
-    pub state: State,
+    details: Details,
+    signal: raumklang_core::Measurement,
+    analysis: Analysis,
 }
 
-#[derive(Debug, Default, Clone)]
+impl Measurement {
+    pub fn reset_analysis(&mut self) {
+        self.analysis = Analysis::None
+    }
+
+    pub fn signal(&self) -> &raumklang_core::Measurement {
+        &self.signal
+    }
+
+    pub fn impulse_response_computation(
+        &mut self,
+        id: usize,
+        loopback: raumklang_core::Loopback,
+    ) -> Option<impulse_response::Computation> {
+        match self.analysis {
+            Analysis::None => {
+                self.analysis = Analysis::ImpulseResponse(impulse_response::State::Computing);
+
+                Some(impulse_response::Computation::new(
+                    id,
+                    loopback,
+                    self.signal.clone(),
+                ))
+            }
+            Analysis::ImpulseResponse(_) => None,
+            Analysis::FrequencyResponse(_, _) => None,
+        }
+    }
+
+    pub fn impulse_response_computed(&mut self, impulse_response: ImpulseResponse) {
+        self.analysis =
+            Analysis::ImpulseResponse(impulse_response::State::Computed(impulse_response))
+    }
+}
+
+#[derive(Debug)]
 pub enum State {
-    #[default]
-    NotLoaded,
-    Loaded {
-        data: raumklang_core::Measurement,
-        impulse_response: impulse_response::State,
-    },
+    NotLoaded(Details),
+    Loaded(Measurement),
+}
+
+#[derive(Debug, Clone)]
+pub struct Details {
+    pub name: String,
+    pub path: PathBuf,
+}
+
+impl State {
+    pub fn signal(&self) -> Option<slice::Iter<f32>> {
+        if let State::Loaded(measurement) = self {
+            Some(measurement.signal.iter())
+        } else {
+            None
+        }
+    }
+    pub fn details(&self) -> &Details {
+        match self {
+            State::NotLoaded(details) => details,
+            State::Loaded(measurement) => &measurement.details,
+        }
+    }
+
+    pub fn impulse_response(&self) -> Option<&super::ImpulseResponse> {
+        match self {
+            State::NotLoaded(_details) => None,
+            State::Loaded(measurement) => match &measurement.analysis {
+                Analysis::None => None,
+                Analysis::ImpulseResponse(impulse_response::State::Computing) => None,
+                Analysis::ImpulseResponse(impulse_response::State::Computed(impulse_response))
+                | Analysis::FrequencyResponse(impulse_response, _) => Some(impulse_response),
+            },
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum Analysis {
+    None,
+    ImpulseResponse(impulse_response::State),
+    FrequencyResponse(ImpulseResponse, frequency_response::State),
 }
 
 pub trait FromFile {
@@ -42,7 +117,7 @@ where
         .map_err(|_err| WavLoadError::Other)?
 }
 
-impl FromFile for Measurement {
+impl FromFile for State {
     fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError> {
         let path = path.as_ref();
         let name = path
@@ -50,18 +125,20 @@ impl FromFile for Measurement {
             .and_then(|n| n.to_os_string().into_string().ok())
             .unwrap_or("Unknown".to_string());
 
-        let state = match raumklang_core::Measurement::from_file(path) {
-            Ok(data) => State::Loaded {
-                data,
-                impulse_response: impulse_response::State::NotComputed,
-            },
-            Err(_) => State::NotLoaded,
-        };
-
-        Ok(Self {
+        let details = Details {
             name,
             path: path.to_path_buf(),
-            state,
-        })
+        };
+
+        let state = match raumklang_core::Measurement::from_file(path) {
+            Ok(data) => State::Loaded(Measurement {
+                details,
+                signal: data,
+                analysis: Analysis::None,
+            }),
+            Err(_) => State::NotLoaded(details),
+        };
+
+        Ok(state)
     }
 }

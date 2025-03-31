@@ -37,7 +37,7 @@ pub enum Message {
     LoopbackSignalLoaded(Result<Arc<data::measurement::Loopback>, Error>),
     AddMeasurement,
     RemoveMeasurement(usize),
-    MeasurementSignalLoaded(Result<Arc<data::Measurement>, Error>),
+    MeasurementSignalLoaded(Result<Arc<data::measurement::State>, Error>),
     Select(Selected),
     ChartScroll(
         Option<Point>,
@@ -57,7 +57,7 @@ pub enum Selected {
 pub enum Action {
     LoopbackAdded(data::measurement::Loopback),
     RemoveLoopback,
-    MeasurementAdded(data::Measurement),
+    MeasurementAdded(data::measurement::State),
     RemoveMeasurement(usize),
     Task(Task<Message>),
     None,
@@ -203,15 +203,10 @@ impl Measurements {
                                 None
                             }
                         }),
-                        Selected::Measurement(id) => {
-                            project.measurements().get(*id).and_then(|s| {
-                                if let measurement::State::Loaded { data, .. } = &s.state {
-                                    Some(data.iter())
-                                } else {
-                                    None
-                                }
-                            })
-                        }
+                        Selected::Measurement(id) => project
+                            .measurements()
+                            .get(*id)
+                            .and_then(measurement::State::signal),
                     });
 
                 if let Some(signal) = signal {
@@ -410,14 +405,14 @@ fn loopback_list_entry<'a>(
 
 fn measurement_list_entry<'a>(
     index: usize,
-    signal: &'a data::Measurement,
+    signal: &'a data::measurement::State,
     selected: Option<&Selected>,
 ) -> Element<'a, Message> {
-    let (data_info, select_msg) = match &signal.state {
-        measurement::State::NotLoaded => (None, None),
-        measurement::State::Loaded { data, .. } => {
-            let samples = data.duration();
-            let sample_rate = data.sample_rate() as f32;
+    let (data_info, select_msg) = match &signal {
+        measurement::State::NotLoaded(_) => (None, None),
+        measurement::State::Loaded(measurement) => {
+            let samples = measurement.signal().duration();
+            let sample_rate = measurement.signal().sample_rate() as f32;
             let info = column![
                 text(format!("Samples: {}", samples)).size(12),
                 text(format!("Duration: {} s", samples as f32 / sample_rate)).size(12),
@@ -431,7 +426,7 @@ fn measurement_list_entry<'a>(
     };
 
     let content = column![
-        column![text(&signal.name).size(16),]
+        column![text(&signal.details().name).size(16),]
             .push_maybe(data_info)
             .spacing(5),
         horizontal_rule(3),

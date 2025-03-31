@@ -1,7 +1,6 @@
 use crate::data::{
     self,
     chart::{self},
-    impulse_response,
     window::{self},
     Samples,
 };
@@ -124,7 +123,10 @@ impl ImpulseReponses {
         }
     }
 
-    pub fn view<'a>(&'a self, measurements: &'a [data::Measurement]) -> Element<'a, Message> {
+    pub fn view<'a>(
+        &'a self,
+        measurements: &'a [data::measurement::State],
+    ) -> Element<'a, Message> {
         let sidebar = {
             let header = {
                 column!(text("For Measurements"), horizontal_rule(1))
@@ -133,7 +135,7 @@ impl ImpulseReponses {
             };
 
             let measurements = measurements.iter().enumerate().map(|(id, entry)| {
-                let content = column![text(&entry.name).size(16),]
+                let content = column![text(&entry.details().name).size(16),]
                     .spacing(5)
                     .clip(true)
                     .spacing(3);
@@ -161,16 +163,7 @@ impl ImpulseReponses {
 
         let content: Element<_> = {
             if let Some(id) = self.selected {
-                let state = measurements
-                    .get(id)
-                    .map(|m| &m.state)
-                    .and_then(|s| match s {
-                        data::measurement::State::Loaded {
-                            impulse_response: impulse_response::State::Computed(impulse_response),
-                            ..
-                        } => Some(impulse_response),
-                        _ => None,
-                    });
+                let state = measurements.get(id).and_then(|s| s.impulse_response());
 
                 match state {
                     Some(impulse_response) => {
