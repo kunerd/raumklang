@@ -9,7 +9,7 @@ use iced::{
     widget::{
         button, center, column, container, horizontal_space, opaque, row, stack, text, Button,
     },
-    Color, Element, Length, Subscription, Task,
+    Color, Element, Subscription, Task,
 };
 
 #[derive(Default)]
@@ -135,6 +135,8 @@ impl Main {
                     impulse_responses::Action::WindowModified(modified) => {
                         if self.project.window() != &modified {
                             self.pending_window = Some(modified);
+                        } else {
+                            self.pending_window = None;
                         }
                         Task::none()
                     }
