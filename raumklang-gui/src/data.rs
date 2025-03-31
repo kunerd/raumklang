@@ -10,6 +10,7 @@ pub mod window;
 
 pub use frequency_response::FrequencyResponse;
 pub use impulse_response::ImpulseResponse;
+pub use measurement::Measurement;
 pub use project::Project;
 pub use recent_projects::RecentProjects;
 pub use sample_rate::SampleRate;

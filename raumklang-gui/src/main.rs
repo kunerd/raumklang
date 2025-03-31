@@ -1,6 +1,6 @@
 mod data;
 mod screen;
-// mod widgets;
+mod widgets;
 
 use std::{
     path::{Path, PathBuf},

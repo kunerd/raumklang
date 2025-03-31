@@ -12,6 +12,7 @@ pub struct ImpulseResponse {
     pub max: f32,
     pub sample_rate: u32,
     pub data: Vec<f32>,
+    pub origin: raumklang_core::ImpulseResponse,
 }
 
 pub struct Computation {
@@ -34,6 +35,7 @@ impl From<raumklang_core::ImpulseResponse> for ImpulseResponse {
             max,
             sample_rate: impulse_response.sample_rate,
             data,
+            origin: impulse_response,
         }
     }
 }
