@@ -3,12 +3,11 @@ pub mod file;
 use super::{
     impulse_response,
     measurement::{self, loopback},
-    Error, Measurement, Samples, Window,
+    Error, Samples, Window,
 };
 pub use file::File;
 
 use iced::futures::future::join_all;
-use raumklang_core::{FrequencyResponse, ImpulseResponse};
 
 use std::path::Path;
 
@@ -16,17 +15,14 @@ use std::path::Path;
 pub struct Project {
     window: Window<Samples>,
     loopback: Option<measurement::Loopback>,
-    measurements: Vec<Measurement>,
-}
-
-pub struct ImpulseResponseComputation {
-    id: usize,
-    loopback: raumklang_core::Loopback,
-    measurement: raumklang_core::Measurement,
+    measurements: Vec<measurement::State>,
 }
 
 impl Project {
-    pub fn new(loopback: Option<measurement::Loopback>, measurements: Vec<Measurement>) -> Self {
+    pub fn new(
+        loopback: Option<measurement::Loopback>,
+        measurements: Vec<measurement::State>,
+    ) -> Self {
         let sample_rate = loopback
             .as_ref()
             .and_then(measurement::Loopback::sample_rate)
@@ -72,11 +68,11 @@ impl Project {
         self.loopback.as_ref()
     }
 
-    pub fn measurements(&self) -> &[Measurement] {
+    pub fn measurements(&self) -> &[measurement::State] {
         &self.measurements
     }
 
-    pub fn measurements_mut(&mut self) -> &mut [Measurement] {
+    pub fn measurements_mut(&mut self) -> &mut [measurement::State] {
         &mut self.measurements
     }
 
@@ -96,11 +92,11 @@ impl Project {
         self.reset_impulse_responses();
     }
 
-    pub fn push_measurements(&mut self, measurement: Measurement) {
+    pub fn push_measurements(&mut self, measurement: measurement::State) {
         self.measurements.push(measurement);
     }
 
-    pub fn remove_measurement(&mut self, index: usize) -> Measurement {
+    pub fn remove_measurement(&mut self, index: usize) -> measurement::State {
         self.measurements.remove(index)
     }
 
@@ -109,14 +105,35 @@ impl Project {
     }
 
     fn reset_impulse_responses(&mut self) {
-        self.measurements
-            .iter_mut()
-            .for_each(|m| match &mut m.state {
-                measurement::State::NotLoaded => {}
-                measurement::State::Loaded {
-                    impulse_response, ..
-                } => *impulse_response = impulse_response::State::NotComputed,
-            });
+        self.measurements.iter_mut().for_each(|state| match state {
+            measurement::State::NotLoaded(_details) => {}
+            measurement::State::Loaded(measurement) => measurement.reset_analysis(),
+        });
+    }
+
+    pub fn impulse_response_computation(
+        &mut self,
+        id: usize,
+    ) -> Result<Option<impulse_response::Computation>, Error> {
+        let Some(loopback) = self.loopback.as_ref() else {
+            return Err(Error::ImpulseResponseComputationFailed);
+        };
+
+        let Some(measurement) = self.measurements.get_mut(id) else {
+            return Err(Error::ImpulseResponseComputationFailed);
+        };
+
+        let loopback::State::Loaded(loopback) = &loopback.state else {
+            return Err(Error::ImpulseResponseComputationFailed);
+        };
+
+        let computation = if let measurement::State::Loaded(measurement) = measurement {
+            measurement.impulse_response_computation(id, loopback.clone())
+        } else {
+            None
+        };
+
+        Ok(computation)
     }
 }
 
@@ -126,53 +143,5 @@ impl Default for Project {
         let measurements = Vec::new();
 
         Self::new(loopback, measurements)
-    }
-}
-
-impl ImpulseResponseComputation {
-    pub fn new(measurement_id: usize, project: &mut Project) -> Result<Option<Self>, Error> {
-        let Some(loopback) = project.loopback.as_ref() else {
-            return Err(Error::ImpulseResponseComputationFailed);
-        };
-
-        let Some(measurement) = project.measurements.get_mut(measurement_id) else {
-            return Err(Error::ImpulseResponseComputationFailed);
-        };
-
-        let loopback::State::Loaded(loopback) = &loopback.state else {
-            return Err(Error::ImpulseResponseComputationFailed);
-        };
-
-        let measurement::State::Loaded {
-            data: measurement,
-            impulse_response: impulse_response @ impulse_response::State::NotComputed,
-        } = &mut measurement.state
-        else {
-            return Ok(None);
-        };
-
-        *impulse_response = impulse_response::State::Computing;
-
-        let loopback = loopback.clone();
-        let measurement = measurement.clone();
-
-        Ok(Some(ImpulseResponseComputation {
-            id: measurement_id,
-            loopback,
-            measurement,
-        }))
-    }
-
-    pub async fn run(self) -> Result<(usize, super::ImpulseResponse), Error> {
-        let id = self.id;
-
-        let impulse_response = tokio::task::spawn_blocking(move || {
-            raumklang_core::ImpulseResponse::from_signals(&self.loopback, &self.measurement)
-                .unwrap()
-        })
-        .await
-        .unwrap();
-
-        Ok((id, impulse_response.into()))
     }
 }

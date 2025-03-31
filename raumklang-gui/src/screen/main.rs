@@ -3,7 +3,7 @@ pub mod tab;
 pub use tab::Tab;
 use tab::{frequency_responses, impulse_responses, measurements};
 
-use crate::data::{self, project};
+use crate::data::{self};
 
 use iced::{
     widget::{
@@ -123,15 +123,14 @@ impl Main {
 
                 match action {
                     impulse_responses::Action::ComputeImpulseResponse(id) => {
-                        let computation =
-                            match project::ImpulseResponseComputation::new(id, &mut self.project) {
-                                Ok(Some(computation)) => computation,
-                                Ok(None) => return Task::none(),
-                                Err(err) => {
-                                    dbg!(err);
-                                    return Task::none();
-                                }
-                            };
+                        let computation = match self.project.impulse_response_computation(id) {
+                            Ok(Some(computation)) => computation,
+                            Ok(None) => return Task::none(),
+                            Err(err) => {
+                                dbg!(err);
+                                return Task::none();
+                            }
+                        };
 
                         Task::perform(computation.run(), Message::ImpulseResponseComputed)
                     }
@@ -151,13 +150,10 @@ impl Main {
                 self.project
                     .measurements_mut()
                     .get_mut(id)
-                    .map(|m| match &mut m.state {
-                        data::measurement::State::NotLoaded => {}
-                        data::measurement::State::Loaded {
-                            impulse_response: ir,
-                            ..
-                        } => {
-                            *ir = data::impulse_response::State::Computed(impulse_response);
+                    .map(|m| match m {
+                        data::measurement::State::NotLoaded(_) => {}
+                        data::measurement::State::Loaded(measurement) => {
+                            measurement.impulse_response_computed(impulse_response)
                         }
                     });
 

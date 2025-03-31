@@ -3,6 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::data::measurement;
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct File {
     pub loopback: Option<Loopback>,
@@ -44,10 +46,10 @@ impl Loopback {
     }
 }
 
-impl From<&super::Measurement> for Measurement {
-    fn from(value: &super::Measurement) -> Self {
+impl From<&measurement::State> for Measurement {
+    fn from(state: &measurement::State) -> Self {
         Self {
-            path: value.path.to_path_buf(),
+            path: state.details().path.to_path_buf(),
         }
     }
 }
