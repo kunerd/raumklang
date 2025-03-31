@@ -57,13 +57,7 @@ impl Project {
 
         let sample_rate = loopback
             .as_ref()
-            .and_then(|l| {
-                if let loopback::State::Loaded(l) = &l.state {
-                    Some(SampleRate::new(l.sample_rate()))
-                } else {
-                    None
-                }
-            })
+            .and_then(measurement::Loopback::sample_rate)
             .unwrap_or_default();
 
         Ok(Self {
@@ -96,26 +90,13 @@ impl Project {
     pub fn set_loopback(&mut self, loopback: Option<measurement::Loopback>) {
         let sample_rate = loopback
             .as_ref()
-            .and_then(|l| {
-                if let loopback::State::Loaded(l) = &l.state {
-                    Some(SampleRate::new(l.sample_rate()))
-                } else {
-                    None
-                }
-            })
+            .and_then(measurement::Loopback::sample_rate)
             .unwrap_or_default();
 
         self.window = Window::new(sample_rate).into();
         self.loopback = loopback;
 
-        self.measurements
-            .iter_mut()
-            .for_each(|m| match &mut m.state {
-                measurement::State::NotLoaded => {}
-                measurement::State::Loaded {
-                    impulse_response, ..
-                } => *impulse_response = impulse_response::State::NotComputed,
-            });
+        self.reset_impulse_responses();
     }
 
     pub fn push_measurements(&mut self, measurement: Measurement) {
@@ -128,6 +109,17 @@ impl Project {
 
     pub fn set_window(&mut self, window: Window<Samples>) {
         self.window = window;
+    }
+
+    fn reset_impulse_responses(&mut self) {
+        self.measurements
+            .iter_mut()
+            .for_each(|m| match &mut m.state {
+                measurement::State::NotLoaded => {}
+                measurement::State::Loaded {
+                    impulse_response, ..
+                } => *impulse_response = impulse_response::State::NotComputed,
+            });
     }
 }
 

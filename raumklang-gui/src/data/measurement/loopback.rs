@@ -1,8 +1,9 @@
+use super::FromFile;
+use crate::data::SampleRate;
+
 use raumklang_core::WavLoadError;
 
 use std::path::{Path, PathBuf};
-
-use super::FromFile;
 
 #[derive(Debug, Clone)]
 pub struct Loopback {
@@ -15,6 +16,16 @@ pub enum State {
     #[default]
     NotLoaded,
     Loaded(raumklang_core::Loopback),
+}
+
+impl Loopback {
+    pub fn sample_rate(&self) -> Option<SampleRate> {
+        if let State::Loaded(signal) = &self.state {
+            Some(SampleRate::new(signal.sample_rate()))
+        } else {
+            None
+        }
+    }
 }
 
 impl FromFile for Loopback {
