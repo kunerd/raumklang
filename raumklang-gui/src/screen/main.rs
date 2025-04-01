@@ -334,7 +334,7 @@ impl Main {
             Tab::ImpulseResponses(impulse_reponses) => impulse_reponses
                 .subscription()
                 .map(Message::ImpulseResponses),
-            Tab::FrequencyResponses(_frs) => Subscription::none(),
+            Tab::FrequencyResponses(tab) => tab.subscription().map(Message::FrequencyResponses),
         }
     }
 }
