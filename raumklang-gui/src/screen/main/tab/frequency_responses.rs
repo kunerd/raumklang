@@ -1,4 +1,6 @@
-use std::ops::RangeInclusive;
+use raumklang_core::dbfs;
+
+use pliced::chart::{line_series, Chart, Labels};
 
 use iced::{
     keyboard,
@@ -8,14 +10,14 @@ use iced::{
     Length::{self, FillPortion},
     Point, Subscription,
 };
-use pliced::chart::{line_series, Chart, Labels, Margin};
 use rand::Rng;
-use raumklang_core::dbfs;
 
 use crate::{
     data::{self, frequency_response, measurement},
     widgets::colored_circle,
 };
+
+use std::ops::RangeInclusive;
 
 pub struct FrequencyResponses {
     chart: ChartData,
@@ -126,12 +128,6 @@ impl FrequencyResponses {
             let chart: Chart<Message, ()> = Chart::new()
                 .x_range(self.chart.x_range.clone().unwrap_or(length))
                 .y_labels(Labels::default().format(&|v| format!("{v:.0}")))
-                .margin(Margin {
-                    top: 0.0,
-                    bottom: 0.0,
-                    left: 50.0,
-                    right: 0.0,
-                })
                 .extend_series(series_list)
                 .on_scroll(|state| {
                     let pos = state.get_coords();
