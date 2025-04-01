@@ -1,4 +1,4 @@
-use super::{impulse_response, ImpulseResponse};
+use super::{impulse_response, ImpulseResponse, Samples, Window};
 
 use iced::task::Sipper;
 
@@ -15,7 +15,7 @@ pub enum State {
 
 pub struct Computation {
     from: CompputationType,
-    window: Vec<f32>,
+    window: Window<Samples>,
 }
 
 enum CompputationType {
@@ -27,7 +27,7 @@ impl Computation {
     pub fn from_impulse_response(
         id: usize,
         impulse_response: ImpulseResponse,
-        window: Vec<f32>,
+        window: Window<Samples>,
     ) -> Self {
         Self {
             from: CompputationType::ImpulseResponse(id, impulse_response),
@@ -37,7 +37,7 @@ impl Computation {
 
     pub fn from_impulse_response_computation(
         computation: impulse_response::Computation,
-        window: Vec<f32>,
+        window: Window<Samples>,
     ) -> Self {
         Self {
             from: CompputationType::Computation(computation),
@@ -54,9 +54,14 @@ impl Computation {
 
             progress.send((id, impulse_response.clone())).await;
 
-            let impulse_response = impulse_response.origin;
+            let mut impulse_response = impulse_response.origin;
+            let offset = self.window.offset().into();
+
+            impulse_response.data.rotate_right(offset);
+
+            let window: Vec<_> = self.window.curve().map(|(_x, y)| y).collect();
             let frequency_response = tokio::task::spawn_blocking(move || {
-                raumklang_core::FrequencyResponse::new(impulse_response, &self.window)
+                raumklang_core::FrequencyResponse::new(impulse_response, &window)
             })
             .await
             .unwrap();

@@ -152,7 +152,6 @@ impl Project {
             return Err(Error::ImpulseResponseComputationFailed);
         };
 
-        let window: Vec<f32> = self.window.curve().into_iter().map(|(_x, y)| y).collect();
         Ok(self
             .measurements
             .iter_mut()
@@ -172,7 +171,7 @@ impl Project {
                     Some(
                         frequency_response::Computation::from_impulse_response_computation(
                             computation,
-                            window.clone(),
+                            self.window.clone(),
                         ),
                     )
                 }
@@ -184,7 +183,7 @@ impl Project {
                     Some(frequency_response::Computation::from_impulse_response(
                         id,
                         impulse_response.clone(),
-                        window.clone(),
+                        self.window.clone(),
                     ))
                 }
             })

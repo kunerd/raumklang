@@ -88,6 +88,10 @@ impl Window<Samples> {
         self.right_width =
             Samples::from_f32(handles.right.x() - handles.center.x(), self.sample_rate);
     }
+
+    pub fn offset(&self) -> Samples {
+        self.left_width - self.position
+    }
 }
 
 impl From<Window<Samples>> for Window<Duration> {
