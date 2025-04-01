@@ -996,7 +996,7 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330c60081dcc4c72131f8eb70510f1ac07223e5d4163db481a04a0befcffa412"
 dependencies = [
- "libloading 0.8.6",
+ "libloading 0.7.4",
 ]
 
 [[package]]
@@ -3171,6 +3171,7 @@ checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 [[package]]
 name = "pliced"
 version = "0.1.0"
+source = "git+https://github.com/kunerd/pliced.git?branch=bump_up_iced#39253dbaffa98a4d614d4081f7fe757dec0079ef"
 dependencies = [
  "iced",
  "once_cell",
