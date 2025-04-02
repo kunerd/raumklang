@@ -1,3 +1,6 @@
+mod recording;
+pub use recording::{recording_button, Recording};
+
 use crate::{
     data::{
         self,
@@ -10,6 +13,7 @@ use pliced::chart::{line_series, Chart, Labels};
 use raumklang_core::WavLoadError;
 
 use iced::{
+    alignment::{Horizontal, Vertical},
     keyboard,
     mouse::ScrollDelta,
     widget::{
@@ -23,6 +27,8 @@ use rfd::FileHandle;
 use std::{ops::RangeInclusive, path::PathBuf, sync::Arc};
 
 pub struct Measurements {
+    recording: Option<Recording>,
+
     selected: Option<Selected>,
 
     shift_key_pressed: bool,
@@ -39,6 +45,7 @@ pub enum Message {
     RemoveMeasurement(usize),
     MeasurementSignalLoaded(Result<Arc<data::measurement::State>, Error>),
     Select(Selected),
+    RecordingSelected,
     ChartScroll(
         Option<Point>,
         Option<ScrollDelta>,
@@ -46,6 +53,7 @@ pub enum Message {
     ),
     ShiftKeyPressed,
     ShiftKeyReleased,
+    Recording(recording::Message),
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +82,7 @@ pub enum Error {
 impl Measurements {
     pub fn new() -> Self {
         Self {
+            recording: None,
             selected: None,
             shift_key_pressed: false,
             x_max: None,
@@ -145,6 +154,21 @@ impl Measurements {
                 self.shift_key_pressed = false;
                 Action::None
             }
+            Message::RecordingSelected => {
+                self.recording = Some(Recording);
+                Action::None
+            }
+            Message::Recording(message) => {
+                let Some(recording) = &mut self.recording else {
+                    return Action::None;
+                };
+
+                match recording.update(message) {
+                    recording::Action::Back => self.recording = None,
+                }
+
+                Action::None
+            }
         }
     }
 
@@ -185,12 +209,37 @@ impl Measurements {
                     column![loopback, measurements].spacing(20).padding(10),
                 ))
                 .style(container::rounded_box)
-            }
-            .width(Length::FillPortion(1));
+            };
 
-        let content = {
+        let content = 'content: {
+            if let Some(recording) = &self.recording {
+                break 'content recording.view().map(Message::Recording);
+            }
+
+            let welcome_text = |base_text| {
+                column![
+                    text("Welcome").size(24),
+                    column![
+                        base_text,
+                        row![
+                            text("You can load signals from file by pressing [+] or"),
+                            recording_button(Message::RecordingSelected)
+                        ]
+                        .spacing(8)
+                        .align_y(Vertical::Center)
+                    ]
+                    .align_x(Horizontal::Center)
+                    .spacing(10)
+                ]
+                .spacing(16)
+                .align_x(Horizontal::Center)
+                .into()
+            };
+
             let content: Element<_> = if project.has_no_measurements() {
-                text("You need to load one loopback or measurement signal at least.").into()
+                welcome_text(text(
+                    "You need to load at least one loopback or measurement signal.",
+                ))
             } else {
                 let signal = self
                     .selected
@@ -228,18 +277,26 @@ impl Measurements {
                         })
                         .into()
                 } else {
-                    text("Select a signal to view its data.").into()
+                    welcome_text(text("Select a signal to view its data."))
                 }
             };
 
-            container(content).center(Length::FillPortion(4))
+            container(content).center(Length::Fill).into()
         };
 
-        column!(row![sidebar, content]).padding(10).into()
+        column!(row![
+            container(sidebar).width(Length::FillPortion(1)),
+            container(content).width(Length::FillPortion(4))
+        ]
+        .spacing(8))
+        .padding(10)
+        .into()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        Subscription::batch(vec![
+        let mut subscriptions = vec![];
+
+        subscriptions.extend([
             keyboard::on_key_press(|key, _modifiers| match key {
                 keyboard::Key::Named(keyboard::key::Named::Shift) => Some(Message::ShiftKeyPressed),
                 _ => None,
@@ -250,7 +307,13 @@ impl Measurements {
                 }
                 _ => None,
             }),
-        ])
+        ]);
+
+        if let Some(recording) = &self.recording {
+            subscriptions.push(recording.subscription().map(Message::Recording));
+        }
+
+        Subscription::batch(subscriptions)
     }
 
     fn scroll_right(&mut self) {

@@ -64,6 +64,7 @@ impl State {
         }
     }
 }
+
 impl Measurement {
     pub fn reset_analysis(&mut self) {
         self.analysis = Analysis::None
