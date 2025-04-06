@@ -155,7 +155,7 @@ impl Measurements {
                 Action::None
             }
             Message::RecordingSelected => {
-                self.recording = Some(Recording);
+                self.recording = Some(Recording::new());
                 Action::None
             }
             Message::Recording(message) => {
@@ -163,11 +163,17 @@ impl Measurements {
                     return Action::None;
                 };
 
-                match recording.update(message) {
-                    recording::Action::Back => self.recording = None,
+                let task = match recording.update(message) {
+                    recording::Action::Back => {
+                        self.recording = None;
+                        Task::none()
+                    }
+                    recording::Action::None => Task::none(),
+                    recording::Action::Task(task) => task,
                 }
+                .map(Message::Recording);
 
-                Action::None
+                Action::Task(task)
             }
         }
     }

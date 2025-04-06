@@ -1,4 +1,4 @@
-use std::{ops::Mul, time::Duration};
+use std::{fmt::Display, ops::Mul, time::Duration};
 
 use super::Samples;
 
@@ -37,9 +37,27 @@ impl From<SampleRate> for f32 {
     }
 }
 
+impl From<usize> for SampleRate {
+    fn from(value: usize) -> Self {
+        Self(value as u32)
+    }
+}
+
+impl From<u32> for SampleRate {
+    fn from(value: u32) -> Self {
+        Self(value)
+    }
+}
+
 impl Default for SampleRate {
     fn default() -> Self {
         Self(44_100)
+    }
+}
+
+impl Display for SampleRate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
