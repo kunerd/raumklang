@@ -1,4 +1,3 @@
-use audio_backend::AudioBackend;
 use iced::{
     widget::{button, column, container, pick_list, row, text, Button},
     Color, Element, Length, Subscription, Task,
@@ -16,9 +15,10 @@ enum BackendState {
     NotConnected,
     Connected {
         sample_rate: data::SampleRate,
-        backend: AudioBackend,
+        // backend: AudioBackend,
     },
     Retrying(std::time::Duration),
+    Error(audio_backend::Error),
 }
 
 #[derive(Debug, Clone)]
@@ -27,7 +27,7 @@ pub enum Message {
     OutPortSelected(String),
     PlayPinkNoise,
     AudioBackend(audio_backend::Event),
-    SampleRateChanged(data::SampleRate),
+    // SampleRateChanged(data::SampleRate),
 }
 
 pub enum Action {
@@ -54,15 +54,16 @@ impl Recording {
             }
             Message::PlayPinkNoise => Action::None,
             Message::AudioBackend(event) => match event {
-                audio_backend::Event::Ready(backend, sample_rate) => {
+                audio_backend::Event::Ready(sample_rate) => {
                     self.audio_backend = BackendState::Connected {
-                        backend: backend.clone(),
+                        // backend: backend.clone(),
                         sample_rate,
                     };
                     Action::None
                 }
                 audio_backend::Event::Error(err) => {
                     println!("{err}");
+                    self.audio_backend = BackendState::Error(err);
                     Action::None
                 }
                 audio_backend::Event::RetryIn(duration) => {
@@ -70,15 +71,6 @@ impl Recording {
                     Action::None
                 }
             },
-            Message::SampleRateChanged(new_sample_rate) => {
-                let BackendState::Connected { sample_rate, .. } = &mut self.audio_backend else {
-                    return Action::None;
-                };
-
-                *sample_rate = new_sample_rate;
-
-                Action::None
-            }
         }
     }
 
@@ -113,6 +105,12 @@ impl Recording {
                 ])
                 .center(Length::Fill)
                 .into(),
+                BackendState::Error(error) => container(column![
+                    text("Something went wrong."),
+                    text!("Error: {error}")
+                ])
+                .center(Length::Fill)
+                .into(),
             }
         };
 
@@ -130,11 +128,11 @@ pub fn recording_button<'a, Message: 'a>(msg: Message) -> Button<'a, Message> {
 
 mod audio_backend {
 
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
     use std::time::Duration;
 
-    // use iced::futures::channel::{mpsc};
-    use iced::futures::sink::SinkExt;
-    use iced::futures::{self, Stream, StreamExt};
+    use iced::futures::{SinkExt, Stream};
     use iced::stream;
     use tokio::sync::mpsc;
 
@@ -142,138 +140,98 @@ mod audio_backend {
 
     #[derive(Debug, Clone)]
     pub enum Event {
-        Ready(AudioBackend, data::SampleRate),
+        Ready(data::SampleRate),
         Error(Error),
         RetryIn(Duration),
     }
 
-    #[derive(Debug, Clone)]
-    pub struct AudioBackend(mpsc::Sender<ActorMessage>);
-
-    impl AudioBackend {
-        fn new(
-            notification_sender: mpsc::Sender<JackNotification>,
-        ) -> Result<(Self, BackendActor), Error> {
-            let (sender, receiver) = mpsc::channel(42);
-
-            let actor = BackendActor::new(notification_sender, receiver)?;
-
-            Ok((Self(sender), actor))
-        }
-
-        // pub async fn sample_rate(mut self) -> data::SampleRate {
-        //     let (sender, receiver) = oneshot::channel();
-
-        //     let _ = self.0.send(ActorMessage::GetSampleRate(sender)).await;
-
-        //     receiver.await.unwrap()
-        // }
-    }
-
-    struct BackendActor {
-        receiver: mpsc::Receiver<ActorMessage>,
-        client: jack::AsyncClient<Notifications, ProcessHandler>,
-    }
-
-    enum ActorMessage {
-        // GetSampleRate(channel::oneshot::Sender<data::SampleRate>),
-    }
-
-    impl BackendActor {
-        fn new(
-            sender: mpsc::Sender<JackNotification>,
-            receiver: mpsc::Receiver<ActorMessage>,
-        ) -> Result<Self, Error> {
-            let jack_client_name = env!("CARGO_BIN_NAME");
-
-            // TODO check status
-            let (client, _status) =
-                jack::Client::new(&jack_client_name, jack::ClientOptions::NO_START_SERVER)?;
-
-            let handler = ProcessHandler {};
-            let client = client.activate_async(Notifications(sender), handler)?;
-
-            Ok(Self { receiver, client })
-        }
-
-        async fn sample_rate(&self) -> data::SampleRate {
-            self.client.as_client().sample_rate().into()
-        }
-
-        async fn handle_message(&mut self, message: ActorMessage) {
-            match message {
-                // ActorMessage::GetSampleRate(sender) => {
-                //     let _ = sender.send(self.sample_rate().await);
-                // }
-            }
-        }
-    }
-
     enum State {
         NotConnected(u64),
-        Connected(mpsc::Receiver<JackNotification>, BackendActor),
+        Connected(
+            jack::AsyncClient<Notifications, ProcessHandler>,
+            Arc<AtomicBool>,
+        ),
         Error(u64),
     }
 
     pub fn run() -> impl Stream<Item = Event> {
         stream::channel(100, async |mut output| {
-            let mut state = State::NotConnected(0);
+            let (sender, mut receiver) = mpsc::channel(100);
 
-            loop {
-                match &mut state {
-                    State::NotConnected(retry_count) => {
-                        let (notification_sender, notification_receiver) = mpsc::channel(64);
-                        match AudioBackend::new(notification_sender) {
-                            Ok((backend, actor)) => {
-                                let sample_rate = actor.sample_rate().await;
-                                let _ = output.send(Event::Ready(backend, sample_rate)).await;
-                                state = State::Connected(notification_receiver, actor)
-                            }
-                            Err(err) => {
-                                let _ = output.send(Event::Error(err)).await;
-                                state = State::Error(*retry_count);
-                            }
-                        }
-                    }
-                    State::Connected(notification_receiver, actor) => {
-                        tokio::select! {
-                            Some(message) = actor.receiver.recv() => {
-                                actor.handle_message(message).await;
-                            },
-                            maybe_notification = notification_receiver.recv() => {
-                                match maybe_notification {
-                                    Some(JackNotification::Shutdown) => {
-                                        state = State::Error(0);
-                                    }
-                                    Some(JackNotification::SampleRateChanged(srate)) => {
-                                        println!("srate: {srate}");
-                                    }
-                                    None => state = State::Error(0)
-                                }
-                                println!("Something went wrong");
-                            }
-                            else => {
-                                println!("Something went wrong");
-                            }
-                        }
-                        // if let Some(message) = actor.receiver.next().await {
-                        //     actor.handle_message(message).await;
-                        // }
-                    }
-                    State::Error(retry_count) => {
-                        const SLEEP_TIME_BASE: u64 = 3;
+            std::thread::spawn(|| run_audio_backend(sender));
 
-                        let timeout = *retry_count * SLEEP_TIME_BASE;
-                        let timeout = Duration::from_secs(timeout);
-
-                        let _ = output.send(Event::RetryIn(timeout)).await;
-                        tokio::time::sleep(timeout).await;
-
-                        state = State::NotConnected(*retry_count + 1);
-                    }
-                }
+            while let Some(event) = receiver.recv().await {
+                let _ = output.send(event).await;
             }
         })
+    }
+
+    fn run_audio_backend(sender: mpsc::Sender<Event>) {
+        let mut state = State::NotConnected(0);
+
+        loop {
+            match state {
+                State::NotConnected(retry_count) => {
+                    let is_server_shutdown = Arc::new(AtomicBool::new(false));
+
+                    match start_jack_client(is_server_shutdown.clone()) {
+                        Ok(client) => {
+                            let sample_rate = client.as_client().sample_rate().into();
+                            let _ = sender.blocking_send(Event::Ready(sample_rate));
+
+                            state = State::Connected(client, is_server_shutdown);
+                        }
+                        Err(err) => {
+                            let _ = sender.blocking_send(Event::Error(err));
+                            state = State::Error(retry_count);
+                        }
+                    }
+                }
+                State::Connected(client, is_server_shutdown) => {
+                    while is_server_shutdown.load(std::sync::atomic::Ordering::Relaxed) != true {
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+
+                    match client.deactivate() {
+                        Ok(_) => {
+                            let _ = sender.blocking_send(Event::Error(Error::ConnectionLost));
+                            state = State::Error(0);
+                        }
+                        Err(err) => {
+                            dbg!(err);
+                            state = State::Error(0);
+                        }
+                    }
+                }
+                State::Error(retry_count) => {
+                    const SLEEP_TIME_BASE: u64 = 3;
+
+                    let timeout = retry_count * SLEEP_TIME_BASE;
+                    let timeout = Duration::from_secs(timeout);
+
+                    let _ = sender.blocking_send(Event::RetryIn(timeout));
+                    std::thread::sleep(timeout);
+
+                    state = State::NotConnected(retry_count + 1);
+                }
+            }
+        }
+    }
+
+    fn start_jack_client(
+        // close: Arc<signal_hook::low_level::channel::Channel<bool>>,
+        close: Arc<AtomicBool>,
+    ) -> Result<jack::AsyncClient<Notifications, ProcessHandler>, Error> {
+        println!("start jack client");
+
+        let (client, _status) =
+            jack::Client::new("threading_test", jack::ClientOptions::default())?;
+
+        println!("start jack client, register port");
+        client.register_port("rust_in_l", jack::AudioIn::default())?;
+
+        println!("start jack client, activate async");
+        Ok(client.activate_async(Notifications(close), ProcessHandler {})?)
     }
 
     pub struct ProcessHandler {
@@ -331,93 +289,50 @@ mod audio_backend {
         }
     }
 
-    enum JackNotification {
-        Shutdown,
-        SampleRateChanged(data::SampleRate),
-    }
-
-    struct Notifications(mpsc::Sender<JackNotification>);
+    struct Notifications(Arc<AtomicBool>);
 
     impl jack::NotificationHandler for Notifications {
-        fn thread_init(&self, _: &jack::Client) {
-            println!("JACK: thread init");
-        }
+        fn thread_init(&self, _: &jack::Client) {}
 
         /// Not much we can do here, see https://man7.org/linux/man-pages/man7/signal-safety.7.html.
         unsafe fn shutdown(&mut self, _: jack::ClientStatus, _: &str) {
-            println!("JACK: shutdown");
-            // let _ = self.0.blocking_send(JackNotification::Shutdown);
-            let _ = self.0.try_send(JackNotification::Shutdown);
+            self.0.store(true, std::sync::atomic::Ordering::Relaxed);
         }
 
-        fn freewheel(&mut self, _: &jack::Client, is_enabled: bool) {
-            println!(
-                "JACK: freewheel mode is {}",
-                if is_enabled { "on" } else { "off" }
-            );
-        }
+        fn freewheel(&mut self, _: &jack::Client, _is_enabled: bool) {}
 
-        fn sample_rate(&mut self, _: &jack::Client, srate: jack::Frames) -> jack::Control {
-            println!("JACK: sample rate changed to {srate}");
-            let _ = self
-                .0
-                .try_send(JackNotification::SampleRateChanged(srate.into()));
+        fn sample_rate(&mut self, _: &jack::Client, _srate: jack::Frames) -> jack::Control {
             jack::Control::Continue
         }
 
-        fn client_registration(&mut self, _: &jack::Client, name: &str, is_reg: bool) {
-            println!(
-                "JACK: {} client with name \"{}\"",
-                if is_reg { "registered" } else { "unregistered" },
-                name
-            );
-        }
+        fn client_registration(&mut self, _: &jack::Client, _name: &str, _is_reg: bool) {}
 
-        fn port_registration(&mut self, _: &jack::Client, port_id: jack::PortId, is_reg: bool) {
-            println!(
-                "JACK: {} port with id {}",
-                if is_reg { "registered" } else { "unregistered" },
-                port_id
-            );
-        }
+        fn port_registration(&mut self, _: &jack::Client, _port_id: jack::PortId, _is_reg: bool) {}
 
         fn port_rename(
             &mut self,
             _: &jack::Client,
-            port_id: jack::PortId,
-            old_name: &str,
-            new_name: &str,
+            _port_id: jack::PortId,
+            _old_name: &str,
+            _new_name: &str,
         ) -> jack::Control {
-            println!("JACK: port with id {port_id} renamed from {old_name} to {new_name}",);
             jack::Control::Continue
         }
 
         fn ports_connected(
             &mut self,
             _: &jack::Client,
-            port_id_a: jack::PortId,
-            port_id_b: jack::PortId,
-            are_connected: bool,
+            _port_id_a: jack::PortId,
+            _port_id_b: jack::PortId,
+            _are_connected: bool,
         ) {
-            println!(
-                "JACK: ports with id {} and {} are {}",
-                port_id_a,
-                port_id_b,
-                if are_connected {
-                    "connected"
-                } else {
-                    "disconnected"
-                }
-            );
         }
 
         fn graph_reorder(&mut self, _: &jack::Client) -> jack::Control {
-            println!("JACK: graph reordered");
             jack::Control::Continue
         }
 
         fn xrun(&mut self, _: &jack::Client) -> jack::Control {
-            println!("JACK: xrun occurred");
             jack::Control::Continue
         }
     }
@@ -426,5 +341,7 @@ mod audio_backend {
     pub enum Error {
         #[error("jack audio server failed: {0}")]
         Jack(#[from] jack::Error),
+        #[error("lost connection to jack audio server")]
+        ConnectionLost,
     }
 }
