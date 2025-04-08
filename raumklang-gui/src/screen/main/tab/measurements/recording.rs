@@ -1,33 +1,55 @@
+use std::time::Duration;
+
 use iced::{
-    widget::{button, column, container, pick_list, row, text, Button},
+    alignment::Vertical,
+    time,
+    widget::{
+        button, column, container, horizontal_rule, horizontal_space, pick_list, row, text, Button,
+    },
     Color, Element, Length, Subscription, Task,
 };
 
 use crate::{data, widgets::colored_circle};
 
 pub struct Recording {
-    audio_backend: BackendState,
-    out_ports: Vec<String>,
+    state: State,
     selected_out_port: Option<String>,
+    selected_in_port: Option<String>,
 }
 
-enum BackendState {
+enum State {
     NotConnected,
     Connected {
         sample_rate: data::SampleRate,
-        // backend: AudioBackend,
+        out_ports: Vec<String>,
+        in_ports: Vec<String>,
+        measurement: MeasurementState,
     },
-    Retrying(std::time::Duration),
+    Retrying {
+        err: Option<audio_backend::Error>,
+        end: std::time::Instant,
+        remaining: std::time::Duration,
+    },
     Error(audio_backend::Error),
+}
+
+enum MeasurementState {
+    Init,
+    ReadyForTest,
+    //     Testing,
+    //     ReadyForMeasurement,
+    //     MeasurementRunning,
+    //     Done,
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Back,
     OutPortSelected(String),
-    PlayPinkNoise,
+    InPortSelected(String),
+    RunTest,
     AudioBackend(audio_backend::Event),
-    // SampleRateChanged(data::SampleRate),
+    RetryTick(time::Instant),
 }
 
 pub enum Action {
@@ -39,73 +61,206 @@ pub enum Action {
 impl Recording {
     pub fn new() -> Self {
         Self {
-            audio_backend: BackendState::NotConnected,
+            state: State::NotConnected,
             selected_out_port: None,
-            out_ports: vec![],
+            selected_in_port: None,
         }
     }
 
     pub fn update(&mut self, message: Message) -> Action {
         match message {
             Message::Back => Action::Back,
-            Message::OutPortSelected(port) => {
-                self.selected_out_port = Some(port);
-                Action::None
-            }
-            Message::PlayPinkNoise => Action::None,
+            Message::RunTest => Action::None,
             Message::AudioBackend(event) => match event {
-                audio_backend::Event::Ready(sample_rate) => {
-                    self.audio_backend = BackendState::Connected {
-                        // backend: backend.clone(),
+                audio_backend::Event::Ready {
+                    sample_rate,
+                    in_ports,
+                    out_ports,
+                } => {
+                    self.state = State::Connected {
                         sample_rate,
+                        in_ports,
+                        out_ports,
+                        measurement: MeasurementState::Init,
                     };
                     Action::None
                 }
                 audio_backend::Event::Error(err) => {
                     println!("{err}");
-                    self.audio_backend = BackendState::Error(err);
+                    self.state = State::Error(err);
                     Action::None
                 }
-                audio_backend::Event::RetryIn(duration) => {
-                    self.audio_backend = BackendState::Retrying(duration);
+                audio_backend::Event::RetryIn(timeout) => {
+                    let err = if let State::Error(err) = &self.state {
+                        Some(err.clone())
+                    } else {
+                        None
+                    };
+
+                    self.state = State::Retrying {
+                        err,
+                        end: time::Instant::now() + timeout,
+                        remaining: timeout,
+                    };
                     Action::None
                 }
+                audio_backend::Event::Notification(notification) => {
+                    let State::Connected { .. } = self.state else {
+                        return Action::None;
+                    };
+
+                    match notification {
+                        audio_backend::Notification::OutPortConnected(port) => {
+                            self.selected_out_port = Some(port)
+                        }
+                        audio_backend::Notification::OutPortDisconnected(_) => {
+                            self.selected_out_port = None
+                        }
+                        audio_backend::Notification::InPortConnected(port) => {
+                            self.selected_in_port = Some(port)
+                        }
+                        audio_backend::Notification::InPortDisconnected(_) => {
+                            self.selected_in_port = None
+                        }
+                    }
+
+                    self.check_port_state();
+
+                    Action::None
+                }
+                audio_backend::Event::Heartbeat => Action::None,
             },
+            Message::OutPortSelected(port) => {
+                self.selected_out_port = Some(port);
+                self.check_port_state();
+
+                Action::None
+            }
+            Message::InPortSelected(port) => {
+                self.selected_in_port = Some(port);
+                self.check_port_state();
+
+                Action::None
+            }
+            Message::RetryTick(instant) => {
+                let State::Retrying { end, remaining, .. } = &mut self.state else {
+                    return Action::None;
+                };
+
+                *remaining = *end - instant;
+
+                Action::None
+            }
         }
     }
 
     pub fn view(&self) -> Element<'_, Message> {
         let content: Element<_> = {
-            match &self.audio_backend {
-                BackendState::NotConnected => container(text("Jack is not connected."))
+            match &self.state {
+                State::NotConnected => container(text("Jack is not connected."))
                     .center(Length::Fill)
                     .into(),
-                BackendState::Connected { sample_rate, .. } => {
-                    let header = row![text!("Sample rate: {}", sample_rate)];
-
-                    column![
-                        header,
-                        text("Recording").size(24),
+                State::Connected {
+                    sample_rate,
+                    out_ports,
+                    in_ports,
+                    measurement,
+                } => {
+                    let header = column![
                         row![
-                            pick_list(
-                                self.out_ports.as_slice(),
-                                self.selected_out_port.as_ref(),
-                                Message::OutPortSelected
-                            ),
-                            button("Play test signal").on_press(Message::PlayPinkNoise)
-                        ],
-                        column![button("Cancel").on_press(Message::Back)]
+                            text("Recording").size(24),
+                            horizontal_space(),
+                            text!("Sample rate: {}", sample_rate).size(14)
+                        ]
+                        .align_y(Vertical::Bottom),
+                        horizontal_rule(1),
                     ]
-                    .spacing(10)
-                    .into()
+                    .spacing(4);
+
+                    match measurement {
+                        MeasurementState::Init => container(
+                            column![
+                                header,
+                                row![
+                                    column![
+                                        text("Out port"),
+                                        pick_list(
+                                            out_ports.as_slice(),
+                                            self.selected_out_port.as_ref(),
+                                            Message::OutPortSelected
+                                        )
+                                    ]
+                                    .spacing(6),
+                                    column![
+                                        text("In port"),
+                                        pick_list(
+                                            in_ports.as_slice(),
+                                            self.selected_in_port.as_ref(),
+                                            Message::InPortSelected
+                                        )
+                                    ]
+                                    .spacing(6),
+                                ]
+                                .spacing(12),
+                                row![
+                                    button("Cancel").on_press(Message::Back),
+                                    button("Start test"),
+                                    horizontal_space(),
+                                ]
+                                .spacing(12)
+                            ]
+                            .spacing(18),
+                        )
+                        .style(container::bordered_box)
+                        .padding(18)
+                        .into(),
+                        MeasurementState::ReadyForTest => container(
+                            column![
+                                header,
+                                row![
+                                    column![
+                                        text("Out port"),
+                                        pick_list(
+                                            out_ports.as_slice(),
+                                            self.selected_out_port.as_ref(),
+                                            Message::OutPortSelected
+                                        )
+                                    ]
+                                    .spacing(6),
+                                    column![
+                                        text("In port"),
+                                        pick_list(
+                                            in_ports.as_slice(),
+                                            self.selected_in_port.as_ref(),
+                                            Message::InPortSelected
+                                        )
+                                    ]
+                                    .spacing(6),
+                                ]
+                                .spacing(12),
+                                row![
+                                    button("Cancel").on_press(Message::Back),
+                                    button("Start test").on_press(Message::RunTest),
+                                    horizontal_space(),
+                                ]
+                                .spacing(12)
+                            ]
+                            .spacing(18),
+                        )
+                        .style(container::bordered_box)
+                        .padding(18)
+                        .into(),
+                    }
                 }
-                BackendState::Retrying(duration) => container(column![
-                    text("Something went wrong."),
-                    text!("Retrying in: {}s", duration.as_secs())
-                ])
-                .center(Length::Fill)
+                State::Retrying { err, remaining, .. } => container(
+                    column![text("Something went wrong."),]
+                        .push_maybe(err.as_ref().map(|err| text!("{err}")))
+                        .push(text!("Retrying in: {}s", remaining.as_secs()))
+                        .spacing(8),
+                )
+                .center_x(Length::Fill)
                 .into(),
-                BackendState::Error(error) => container(column![
+                State::Error(error) => container(column![
                     text("Something went wrong."),
                     text!("Error: {error}")
                 ])
@@ -118,7 +273,34 @@ impl Recording {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        Subscription::run(audio_backend::run).map(Message::AudioBackend)
+        let audio_backend = Subscription::run(audio_backend::run).map(Message::AudioBackend);
+
+        let mut subscriptions = vec![audio_backend];
+
+        if let State::Retrying { .. } = &self.state {
+            subscriptions.push(time::every(Duration::from_millis(500)).map(Message::RetryTick));
+        }
+
+        Subscription::batch(subscriptions)
+    }
+
+    fn check_port_state(&mut self) {
+        let State::Connected { measurement, .. } = &mut self.state else {
+            return;
+        };
+
+        match measurement {
+            MeasurementState::Init => {
+                if self.selected_in_port.is_some() && self.selected_out_port.is_some() {
+                    *measurement = MeasurementState::ReadyForTest;
+                }
+            }
+            MeasurementState::ReadyForTest => {
+                if self.selected_in_port.is_none() || self.selected_out_port.is_none() {
+                    *measurement = MeasurementState::Init;
+                }
+            }
+        }
     }
 }
 
@@ -129,26 +311,43 @@ pub fn recording_button<'a, Message: 'a>(msg: Message) -> Button<'a, Message> {
 mod audio_backend {
 
     use std::sync::atomic::AtomicBool;
+    use std::sync::mpsc::RecvTimeoutError;
     use std::sync::Arc;
     use std::time::Duration;
 
     use iced::futures::{SinkExt, Stream};
     use iced::stream;
+    use jack::PortFlags;
     use tokio::sync::mpsc;
 
     use crate::data::{self};
 
     #[derive(Debug, Clone)]
     pub enum Event {
-        Ready(data::SampleRate),
+        Ready {
+            sample_rate: data::SampleRate,
+            in_ports: Vec<String>,
+            out_ports: Vec<String>,
+        },
+        Notification(Notification),
         Error(Error),
         RetryIn(Duration),
+        Heartbeat,
+    }
+
+    #[derive(Debug, Clone)]
+    pub enum Notification {
+        OutPortConnected(String),
+        OutPortDisconnected(String),
+        InPortConnected(String),
+        InPortDisconnected(String),
     }
 
     enum State {
         NotConnected(u64),
         Connected(
             jack::AsyncClient<Notifications, ProcessHandler>,
+            std::sync::mpsc::Receiver<Notification>,
             Arc<AtomicBool>,
         ),
         Error(u64),
@@ -161,6 +360,10 @@ mod audio_backend {
             std::thread::spawn(|| run_audio_backend(sender));
 
             while let Some(event) = receiver.recv().await {
+                if let Event::Heartbeat = event {
+                    continue;
+                }
+
                 let _ = output.send(event).await;
             }
         })
@@ -173,13 +376,29 @@ mod audio_backend {
             match state {
                 State::NotConnected(retry_count) => {
                     let is_server_shutdown = Arc::new(AtomicBool::new(false));
+                    let (notify_sender, notify_receiver) = std::sync::mpsc::sync_channel(64);
 
-                    match start_jack_client(is_server_shutdown.clone()) {
+                    match start_jack_client(notify_sender, is_server_shutdown.clone()) {
                         Ok(client) => {
                             let sample_rate = client.as_client().sample_rate().into();
-                            let _ = sender.blocking_send(Event::Ready(sample_rate));
+                            let out_ports = client.as_client().ports(
+                                None,
+                                Some("32 bit float mono audio"),
+                                PortFlags::IS_INPUT,
+                            );
+                            let in_ports = client.as_client().ports(
+                                None,
+                                Some("32 bit float mono audio"),
+                                PortFlags::IS_OUTPUT,
+                            );
 
-                            state = State::Connected(client, is_server_shutdown);
+                            let _ = sender.blocking_send(Event::Ready {
+                                sample_rate,
+                                in_ports,
+                                out_ports,
+                            });
+
+                            state = State::Connected(client, notify_receiver, is_server_shutdown);
                         }
                         Err(err) => {
                             let _ = sender.blocking_send(Event::Error(err));
@@ -187,9 +406,22 @@ mod audio_backend {
                         }
                     }
                 }
-                State::Connected(client, is_server_shutdown) => {
+                State::Connected(client, notify_receiver, is_server_shutdown) => {
                     while is_server_shutdown.load(std::sync::atomic::Ordering::Relaxed) != true {
-                        std::thread::sleep(Duration::from_millis(50));
+                        match notify_receiver.recv_timeout(Duration::from_millis(50)) {
+                            Ok(notificytion) => {
+                                let _ = sender.blocking_send(Event::Notification(notificytion));
+                            }
+                            Err(RecvTimeoutError::Disconnected) => {
+                                break;
+                            }
+                            Err(RecvTimeoutError::Timeout) => {
+                                if sender.blocking_send(Event::Heartbeat).is_err() {
+                                    // their is no receiver anymore
+                                    return;
+                                }
+                            }
+                        }
                     }
 
                     match client.deactivate() {
@@ -219,19 +451,28 @@ mod audio_backend {
     }
 
     fn start_jack_client(
-        // close: Arc<signal_hook::low_level::channel::Channel<bool>>,
-        close: Arc<AtomicBool>,
+        notify_sender: std::sync::mpsc::SyncSender<Notification>,
+        has_server_shutdown: Arc<AtomicBool>,
     ) -> Result<jack::AsyncClient<Notifications, ProcessHandler>, Error> {
-        println!("start jack client");
-
+        let client_name = env!("CARGO_BIN_NAME");
         let (client, _status) =
-            jack::Client::new("threading_test", jack::ClientOptions::default())?;
+            jack::Client::new(client_name, jack::ClientOptions::NO_START_SERVER)?;
 
-        println!("start jack client, register port");
-        client.register_port("rust_in_l", jack::AudioIn::default())?;
+        // TODO: make configureable
+        let out_port = client.register_port("measurement_out", jack::AudioOut::default())?;
+        let in_port = client.register_port("measurement_in", jack::AudioIn::default())?;
 
-        println!("start jack client, activate async");
-        Ok(client.activate_async(Notifications(close), ProcessHandler {})?)
+        let out_port_name = out_port.name()?.to_string();
+        let in_port_name = in_port.name()?.to_string();
+
+        let notification_handler = Notifications::new(
+            in_port_name,
+            out_port_name,
+            notify_sender,
+            has_server_shutdown,
+        );
+
+        Ok(client.activate_async(notification_handler, ProcessHandler {})?)
     }
 
     pub struct ProcessHandler {
@@ -289,14 +530,35 @@ mod audio_backend {
         }
     }
 
-    struct Notifications(Arc<AtomicBool>);
+    struct Notifications {
+        in_port_name: String,
+        out_port_name: String,
+        notification_sender: std::sync::mpsc::SyncSender<Notification>,
+        has_server_shutdown: Arc<AtomicBool>,
+    }
+
+    impl Notifications {
+        pub fn new(
+            in_port_name: String,
+            out_port_name: String,
+            notification_sender: std::sync::mpsc::SyncSender<Notification>,
+            has_server_shutdown: Arc<AtomicBool>,
+        ) -> Self {
+            Self {
+                in_port_name,
+                out_port_name,
+                notification_sender,
+                has_server_shutdown,
+            }
+        }
+    }
 
     impl jack::NotificationHandler for Notifications {
         fn thread_init(&self, _: &jack::Client) {}
 
-        /// Not much we can do here, see https://man7.org/linux/man-pages/man7/signal-safety.7.html.
         unsafe fn shutdown(&mut self, _: jack::ClientStatus, _: &str) {
-            self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.has_server_shutdown
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
 
         fn freewheel(&mut self, _: &jack::Client, _is_enabled: bool) {}
@@ -321,11 +583,42 @@ mod audio_backend {
 
         fn ports_connected(
             &mut self,
-            _: &jack::Client,
-            _port_id_a: jack::PortId,
-            _port_id_b: jack::PortId,
-            _are_connected: bool,
+            client: &jack::Client,
+            port_id_a: jack::PortId,
+            port_id_b: jack::PortId,
+            are_connected: bool,
         ) {
+            let Some(port_a) = client.port_by_id(port_id_a).and_then(|p| p.name().ok()) else {
+                return;
+            };
+            let Some(port_b) = client.port_by_id(port_id_b).and_then(|p| p.name().ok()) else {
+                return;
+            };
+
+            let ports = [port_a, port_b];
+            let (src, dest): (Vec<_>, Vec<_>) =
+                ports.iter().partition(|p| **p == self.out_port_name);
+
+            if let (Some(_src), Some(dest)) = (src.first(), dest.first()) {
+                let notification = match are_connected {
+                    true => Notification::OutPortConnected(dest.to_string()),
+                    false => Notification::OutPortDisconnected(dest.to_string()),
+                };
+
+                let _ = self.notification_sender.send(notification);
+            }
+
+            let (src, dest): (Vec<_>, Vec<_>) =
+                ports.into_iter().partition(|p| p == &self.in_port_name);
+
+            if let (Some(_src), Some(dest)) = (src.first(), dest.first()) {
+                let notification = match are_connected {
+                    true => Notification::InPortConnected(dest.to_string()),
+                    false => Notification::InPortDisconnected(dest.to_string()),
+                };
+
+                let _ = self.notification_sender.send(notification);
+            }
         }
 
         fn graph_reorder(&mut self, _: &jack::Client) -> jack::Control {
@@ -338,6 +631,7 @@ mod audio_backend {
     }
 
     #[derive(Debug, Clone, thiserror::Error)]
+    #[error("audio backend failed")]
     pub enum Error {
         #[error("jack audio server failed: {0}")]
         Jack(#[from] jack::Error),
