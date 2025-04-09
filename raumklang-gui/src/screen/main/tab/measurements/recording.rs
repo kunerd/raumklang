@@ -1,18 +1,21 @@
 use std::time::Duration;
 
+use crate::widgets::colored_circle;
+use audio_backend::AudioBackend;
 use iced::{
     alignment::Vertical,
     time,
     widget::{
-        button, column, container, horizontal_rule, horizontal_space, pick_list, row, text, Button,
+        button, column, container, horizontal_rule, horizontal_space, pick_list, row, slider, text,
+        Button,
     },
     Color, Element, Length, Subscription, Task,
 };
-
-use crate::{data, widgets::colored_circle};
+use tokio::sync::mpsc;
 
 pub struct Recording {
     state: State,
+    volume: f32,
     selected_out_port: Option<String>,
     selected_in_port: Option<String>,
 }
@@ -20,9 +23,7 @@ pub struct Recording {
 enum State {
     NotConnected,
     Connected {
-        sample_rate: data::SampleRate,
-        out_ports: Vec<String>,
-        in_ports: Vec<String>,
+        backend: AudioBackend,
         measurement: MeasurementState,
     },
     Retrying {
@@ -36,10 +37,10 @@ enum State {
 enum MeasurementState {
     Init,
     ReadyForTest,
-    //     Testing,
-    //     ReadyForMeasurement,
-    //     MeasurementRunning,
-    //     Done,
+    Testing(mpsc::Sender<f32>), //     Testing,
+                                //     ReadyForMeasurement,
+                                //     MeasurementRunning,
+                                //     Done,
 }
 
 #[derive(Debug, Clone)]
@@ -50,6 +51,8 @@ pub enum Message {
     RunTest,
     AudioBackend(audio_backend::Event),
     RetryTick(time::Instant),
+    VolumeChanged(f32),
+    StopTesting,
 }
 
 pub enum Action {
@@ -62,6 +65,7 @@ impl Recording {
     pub fn new() -> Self {
         Self {
             state: State::NotConnected,
+            volume: 0.8,
             selected_out_port: None,
             selected_in_port: None,
         }
@@ -70,17 +74,34 @@ impl Recording {
     pub fn update(&mut self, message: Message) -> Action {
         match message {
             Message::Back => Action::Back,
-            Message::RunTest => Action::None,
+            Message::RunTest => {
+                let State::Connected {
+                    backend,
+                    measurement: measurement @ MeasurementState::ReadyForTest,
+                } = &mut self.state
+                else {
+                    return Action::None;
+                };
+
+                let Some(out_port) = &self.selected_out_port else {
+                    return Action::None;
+                };
+
+                let Some(in_port) = &self.selected_in_port else {
+                    return Action::None;
+                };
+
+                let duration = Duration::from_secs(3);
+                let (_rms_receiver, volume_sender) = backend.run_test(out_port, in_port, duration);
+
+                *measurement = MeasurementState::Testing(volume_sender);
+
+                Action::None
+            }
             Message::AudioBackend(event) => match event {
-                audio_backend::Event::Ready {
-                    sample_rate,
-                    in_ports,
-                    out_ports,
-                } => {
+                audio_backend::Event::Ready(backend) => {
                     self.state = State::Connected {
-                        sample_rate,
-                        in_ports,
-                        out_ports,
+                        backend,
                         measurement: MeasurementState::Init,
                     };
                     Action::None
@@ -128,7 +149,6 @@ impl Recording {
 
                     Action::None
                 }
-                audio_backend::Event::Heartbeat => Action::None,
             },
             Message::OutPortSelected(port) => {
                 self.selected_out_port = Some(port);
@@ -151,6 +171,24 @@ impl Recording {
 
                 Action::None
             }
+            Message::VolumeChanged(volume) => {
+                self.volume = volume;
+
+                Action::None
+            }
+            Message::StopTesting => {
+                let State::Connected {
+                    backend: _,
+                    measurement: measurement @ MeasurementState::Testing(_),
+                } = &mut self.state
+                else {
+                    return Action::None;
+                };
+
+                *measurement = MeasurementState::ReadyForTest;
+
+                Action::None
+            }
         }
     }
 
@@ -161,16 +199,14 @@ impl Recording {
                     .center(Length::Fill)
                     .into(),
                 State::Connected {
-                    sample_rate,
-                    out_ports,
-                    in_ports,
+                    backend,
                     measurement,
                 } => {
                     let header = column![
                         row![
                             text("Recording").size(24),
                             horizontal_space(),
-                            text!("Sample rate: {}", sample_rate).size(14)
+                            text!("Sample rate: {}", backend.sample_rate).size(14)
                         ]
                         .align_y(Vertical::Bottom),
                         horizontal_rule(1),
@@ -185,7 +221,7 @@ impl Recording {
                                     column![
                                         text("Out port"),
                                         pick_list(
-                                            out_ports.as_slice(),
+                                            backend.out_ports.as_slice(),
                                             self.selected_out_port.as_ref(),
                                             Message::OutPortSelected
                                         )
@@ -194,7 +230,7 @@ impl Recording {
                                     column![
                                         text("In port"),
                                         pick_list(
-                                            in_ports.as_slice(),
+                                            backend.in_ports.as_slice(),
                                             self.selected_in_port.as_ref(),
                                             Message::InPortSelected
                                         )
@@ -221,7 +257,7 @@ impl Recording {
                                     column![
                                         text("Out port"),
                                         pick_list(
-                                            out_ports.as_slice(),
+                                            backend.out_ports.as_slice(),
                                             self.selected_out_port.as_ref(),
                                             Message::OutPortSelected
                                         )
@@ -230,7 +266,7 @@ impl Recording {
                                     column![
                                         text("In port"),
                                         pick_list(
-                                            in_ports.as_slice(),
+                                            backend.in_ports.as_slice(),
                                             self.selected_in_port.as_ref(),
                                             Message::InPortSelected
                                         )
@@ -249,6 +285,13 @@ impl Recording {
                         )
                         .style(container::bordered_box)
                         .padding(18)
+                        .into(),
+                        MeasurementState::Testing(_sender) => container(column![
+                            text("Test running ..."),
+                            slider(0.0..=1.0, self.volume, Message::VolumeChanged).step(0.01),
+                            button("Stop").on_press(Message::StopTesting)
+                        ])
+                        .center_x(Length::Fill)
                         .into(),
                     }
                 }
@@ -300,6 +343,7 @@ impl Recording {
                     *measurement = MeasurementState::Init;
                 }
             }
+            MeasurementState::Testing(_sender) => {}
         }
     }
 }
@@ -324,15 +368,10 @@ mod audio_backend {
 
     #[derive(Debug, Clone)]
     pub enum Event {
-        Ready {
-            sample_rate: data::SampleRate,
-            in_ports: Vec<String>,
-            out_ports: Vec<String>,
-        },
+        Ready(AudioBackend),
         Notification(Notification),
         Error(Error),
         RetryIn(Duration),
-        Heartbeat,
     }
 
     #[derive(Debug, Clone)]
@@ -343,14 +382,36 @@ mod audio_backend {
         InPortDisconnected(String),
     }
 
-    enum State {
-        NotConnected(u64),
-        Connected(
-            jack::AsyncClient<Notifications, ProcessHandler>,
-            std::sync::mpsc::Receiver<Notification>,
-            Arc<AtomicBool>,
-        ),
-        Error(u64),
+    #[derive(Debug, Clone)]
+    pub struct AudioBackend {
+        pub sample_rate: data::SampleRate,
+        pub in_ports: Vec<String>,
+        pub out_ports: Vec<String>,
+        sender: mpsc::Sender<Command>,
+    }
+
+    impl AudioBackend {
+        pub fn run_test(
+            &self,
+            out_port: &str,
+            in_port: &str,
+            duration: Duration,
+        ) -> (mpsc::Receiver<f32>, mpsc::Sender<f32>) {
+            let (rms_sender, rms_receiver) = mpsc::channel(100);
+            let (volume_sender, volume_receiver) = mpsc::channel(100);
+
+            let command = Command::RunTest {
+                out_port: out_port.to_string(),
+                in_port: in_port.to_string(),
+                duration,
+                rms: rms_sender,
+                volume: volume_receiver,
+            };
+
+            self.sender.try_send(command);
+
+            (rms_receiver, volume_sender)
+        }
     }
 
     pub fn run() -> impl Stream<Item = Event> {
@@ -360,13 +421,30 @@ mod audio_backend {
             std::thread::spawn(|| run_audio_backend(sender));
 
             while let Some(event) = receiver.recv().await {
-                if let Event::Heartbeat = event {
-                    continue;
-                }
-
                 let _ = output.send(event).await;
             }
         })
+    }
+
+    enum Command {
+        RunTest {
+            out_port: String,
+            in_port: String,
+            duration: Duration,
+            rms: mpsc::Sender<f32>,
+            volume: mpsc::Receiver<f32>,
+        },
+    }
+
+    enum State {
+        NotConnected(u64),
+        Connected {
+            client: jack::AsyncClient<Notifications, ProcessHandler>,
+            commands: mpsc::Receiver<Command>,
+            events: std::sync::mpsc::Receiver<Notification>,
+            is_server_shutdown: Arc<AtomicBool>,
+        },
+        Error(u64),
     }
 
     fn run_audio_backend(sender: mpsc::Sender<Event>) {
@@ -376,7 +454,7 @@ mod audio_backend {
             match state {
                 State::NotConnected(retry_count) => {
                     let is_server_shutdown = Arc::new(AtomicBool::new(false));
-                    let (notify_sender, notify_receiver) = std::sync::mpsc::sync_channel(64);
+                    let (notify_sender, events_receiver) = std::sync::mpsc::sync_channel(64);
 
                     match start_jack_client(notify_sender, is_server_shutdown.clone()) {
                         Ok(client) => {
@@ -392,13 +470,21 @@ mod audio_backend {
                                 PortFlags::IS_OUTPUT,
                             );
 
-                            let _ = sender.blocking_send(Event::Ready {
+                            let (command_sender, command_receiver) = mpsc::channel(64);
+                            let backend = AudioBackend {
                                 sample_rate,
                                 in_ports,
                                 out_ports,
-                            });
+                                sender: command_sender,
+                            };
+                            let _ = sender.blocking_send(Event::Ready(backend));
 
-                            state = State::Connected(client, notify_receiver, is_server_shutdown);
+                            state = State::Connected {
+                                client,
+                                commands: command_receiver,
+                                events: events_receiver,
+                                is_server_shutdown,
+                            };
                         }
                         Err(err) => {
                             let _ = sender.blocking_send(Event::Error(err));
@@ -406,20 +492,33 @@ mod audio_backend {
                         }
                     }
                 }
-                State::Connected(client, notify_receiver, is_server_shutdown) => {
+                State::Connected {
+                    client,
+                    mut commands,
+                    events,
+                    is_server_shutdown,
+                } => {
                     while is_server_shutdown.load(std::sync::atomic::Ordering::Relaxed) != true {
-                        match notify_receiver.recv_timeout(Duration::from_millis(50)) {
-                            Ok(notificytion) => {
-                                let _ = sender.blocking_send(Event::Notification(notificytion));
+                        match events.recv_timeout(Duration::from_millis(50)) {
+                            Ok(event) => {
+                                let _ = sender.blocking_send(Event::Notification(event));
                             }
                             Err(RecvTimeoutError::Disconnected) => {
                                 break;
                             }
                             Err(RecvTimeoutError::Timeout) => {
-                                if sender.blocking_send(Event::Heartbeat).is_err() {
+                                if sender.is_closed() {
                                     // their is no receiver anymore
                                     return;
                                 }
+                            }
+                        }
+
+                        match commands.blocking_recv() {
+                            Some(_) => todo!(),
+                            None => {
+                                // their is no receiver anymore
+                                return;
                             }
                         }
                     }
