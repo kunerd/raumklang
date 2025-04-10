@@ -117,6 +117,7 @@ where
     Infinite(I),
 }
 
+#[derive(Debug, Clone)]
 pub struct LinearSineSweep {
     sample_rate: usize,
     sample_index: usize,

@@ -7,11 +7,12 @@ use iced::{
     time,
     widget::{
         button, column, container, horizontal_rule, horizontal_space, pick_list, row, slider, text,
-        Button,
+        text_input, Button,
     },
     Color, Element, Length, Subscription, Task,
 };
-use tokio::sync::mpsc;
+use raumklang_core::Measurement;
+use tokio::sync::{mpsc, oneshot::Receiver};
 use tokio_stream::wrappers::ReceiverStream;
 
 pub struct Recording {
@@ -41,10 +42,14 @@ enum MeasurementState {
     Testing {
         loudness: audio_backend::Loudness,
         volume: mpsc::Sender<f32>,
-    }, //     Testing,
-       //     ReadyForMeasurement,
-       //     MeasurementRunning,
-       //     Done,
+    },
+    PreparingMeasurement {
+        duration: Duration,
+    },
+    MeasurementRunning {
+        loudness: audio_backend::Loudness,
+        data: Vec<f32>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -57,7 +62,10 @@ pub enum Message {
     RetryTick(time::Instant),
     VolumeChanged(f32),
     StopTesting,
+    TestOk,
     RmsChanged(audio_backend::Loudness),
+    RunMeasurement,
+    RecordingChunk(Box<[f32]>),
 }
 
 pub enum Action {
@@ -199,20 +207,29 @@ impl Recording {
             Message::StopTesting => {
                 let State::Connected {
                     backend,
-                    measurement: measurement @ MeasurementState::Testing { .. },
+                    measurement,
                 } = &mut self.state
                 else {
                     return Action::None;
                 };
 
                 backend.stop_test();
-                *measurement = MeasurementState::ReadyForTest;
+
+                *measurement = match measurement {
+                    MeasurementState::Init => MeasurementState::Init,
+                    MeasurementState::ReadyForTest => MeasurementState::ReadyForTest,
+                    MeasurementState::Testing { .. } => MeasurementState::ReadyForTest,
+                    MeasurementState::PreparingMeasurement { .. } => MeasurementState::ReadyForTest,
+                    MeasurementState::MeasurementRunning { .. } => MeasurementState::ReadyForTest,
+                };
 
                 Action::None
             }
             Message::RmsChanged(new_loudness) => {
                 let State::Connected {
-                    measurement: MeasurementState::Testing { loudness, .. },
+                    measurement:
+                        MeasurementState::Testing { loudness, .. }
+                        | MeasurementState::MeasurementRunning { loudness, .. },
                     ..
                 } = &mut self.state
                 else {
@@ -220,6 +237,65 @@ impl Recording {
                 };
 
                 *loudness = new_loudness;
+
+                Action::None
+            }
+            Message::TestOk => {
+                let State::Connected {
+                    backend,
+                    measurement: measurement @ MeasurementState::Testing { .. },
+                } = &mut self.state
+                else {
+                    return Action::None;
+                };
+
+                backend.stop_test();
+                *measurement = MeasurementState::PreparingMeasurement {
+                    duration: Duration::from_secs(3),
+                };
+
+                Action::None
+            }
+            Message::RunMeasurement => {
+                let State::Connected {
+                    backend,
+                    measurement,
+                } = &mut self.state
+                else {
+                    return Action::None;
+                };
+
+                let state = std::mem::replace(measurement, MeasurementState::Init);
+                if let MeasurementState::PreparingMeasurement { duration } = state {
+                    let (loudness_receiver, data_receiver) =
+                        backend.run_measurement(duration, self.volume);
+
+                    *measurement = MeasurementState::MeasurementRunning {
+                        loudness: audio_backend::Loudness::default(),
+                        data: vec![],
+                    };
+
+                    Action::Task(Task::batch(vec![
+                        Task::stream(ReceiverStream::new(loudness_receiver))
+                            .map(Message::RmsChanged),
+                        Task::stream(ReceiverStream::new(data_receiver))
+                            .map(Message::RecordingChunk),
+                    ]))
+                } else {
+                    *measurement = state;
+                    Action::None
+                }
+            }
+            Message::RecordingChunk(chunk) => {
+                let State::Connected {
+                    backend: _,
+                    measurement: MeasurementState::MeasurementRunning { loudness: _, data },
+                } = &mut self.state
+                else {
+                    return Action::None;
+                };
+
+                data.extend_from_slice(&chunk);
 
                 Action::None
             }
@@ -236,21 +312,23 @@ impl Recording {
                     backend,
                     measurement,
                 } => {
-                    let header = column![
-                        row![
-                            text("Recording").size(24),
-                            horizontal_space(),
-                            text!("Sample rate: {}", backend.sample_rate).size(14)
+                    let header = |subsection| {
+                        column![
+                            row![
+                                text!("Recording - {subsection}").size(24),
+                                horizontal_space(),
+                                text!("Sample rate: {}", backend.sample_rate).size(14)
+                            ]
+                            .align_y(Vertical::Bottom),
+                            horizontal_rule(1),
                         ]
-                        .align_y(Vertical::Bottom),
-                        horizontal_rule(1),
-                    ]
-                    .spacing(4);
+                        .spacing(4)
+                    };
 
                     match measurement {
                         MeasurementState::Init => container(
                             column![
-                                header,
+                                header("Setup"),
                                 row![
                                     column![
                                         text("Out port"),
@@ -286,7 +364,7 @@ impl Recording {
                         .into(),
                         MeasurementState::ReadyForTest => container(
                             column![
-                                header,
+                                header("Ready for Test"),
                                 row![
                                     column![
                                         text("Out port"),
@@ -321,12 +399,105 @@ impl Recording {
                         .padding(18)
                         .into(),
                         MeasurementState::Testing { loudness, .. } => container(column![
-                            text("Test running ..."),
+                            header("Loudness Test..."),
                             text!("RMS: {}, Peak: {}", loudness.rms, loudness.peak),
                             slider(0.0..=1.0, self.volume, Message::VolumeChanged).step(0.01),
-                            button("Stop").on_press(Message::StopTesting)
+                            row![
+                                button("Stop").on_press(Message::StopTesting),
+                                // TODO: enable button when loudness levels are ok
+                                button("Ok").on_press(Message::TestOk)
+                            ]
                         ])
-                        .center_x(Length::Fill)
+                        .style(container::bordered_box)
+                        .padding(18)
+                        .into(),
+                        MeasurementState::PreparingMeasurement { duration } => container(
+                            column![
+                                header("Prepare Measurement"),
+                                row![
+                                    column![
+                                        text("Out port"),
+                                        container(text!(
+                                            "{}",
+                                            self.selected_in_port.as_ref().unwrap()
+                                        ))
+                                        .padding(3)
+                                        .style(container::rounded_box)
+                                    ]
+                                    .spacing(6),
+                                    column![
+                                        text("In port"),
+                                        container(text!(
+                                            "{}",
+                                            self.selected_in_port.as_ref().unwrap()
+                                        ))
+                                        .padding(3)
+                                    ]
+                                    .spacing(6),
+                                    column![
+                                        text("Duration"),
+                                        text_input("Duration", &format!("{}", duration.as_secs()))
+                                    ]
+                                    .spacing(6),
+                                ]
+                                .spacing(12),
+                                row![
+                                    button("Cancel").on_press(Message::Back),
+                                    button("Start Measurement").on_press(Message::RunMeasurement),
+                                    horizontal_space(),
+                                ]
+                                .spacing(12)
+                            ]
+                            .spacing(18),
+                        )
+                        .style(container::bordered_box)
+                        .padding(18)
+                        .into(),
+                        MeasurementState::MeasurementRunning { loudness, data } => container(
+                            column![
+                                header("Measurement Running ..."),
+                                row![
+                                    column![
+                                        text("Out port"),
+                                        container(text!(
+                                            "{}",
+                                            self.selected_in_port.as_ref().unwrap()
+                                        ))
+                                        .padding(3)
+                                        .style(container::rounded_box)
+                                    ]
+                                    .spacing(6),
+                                    column![
+                                        text("In port"),
+                                        container(text!(
+                                            "{}",
+                                            self.selected_in_port.as_ref().unwrap()
+                                        ))
+                                        .padding(3)
+                                    ]
+                                    .spacing(6),
+                                    // column![
+                                    //     text("Duration"),
+                                    //     text_input("Duration", &format!("{}", duration.as_secs()))
+                                    // ]
+                                    // .spacing(6),
+                                    column![
+                                        text!("Rms: {}, Peak: {}", loudness.rms, loudness.peak),
+                                        text!("Data len: {}", data.len())
+                                    ]
+                                    .spacing(6),
+                                ]
+                                .spacing(12),
+                                row![
+                                    button("Stop").on_press(Message::StopTesting),
+                                    horizontal_space(),
+                                ]
+                                .spacing(12)
+                            ]
+                            .spacing(18),
+                        )
+                        .style(container::bordered_box)
+                        .padding(18)
                         .into(),
                     }
                 }
@@ -379,6 +550,8 @@ impl Recording {
                 }
             }
             MeasurementState::Testing { .. } => {}
+            MeasurementState::PreparingMeasurement { .. } => {}
+            MeasurementState::MeasurementRunning { .. } => {}
         }
     }
 }
@@ -449,8 +622,8 @@ mod audio_backend {
             &self,
             duration: Duration,
         ) -> (mpsc::Receiver<Loudness>, mpsc::Sender<f32>) {
-            let (loudness_sender, loudness_receiver) = mpsc::channel(100);
-            let (volume_sender, volume_receiver) = mpsc::channel(100);
+            let (loudness_sender, loudness_receiver) = mpsc::channel(128);
+            let (volume_sender, volume_receiver) = mpsc::channel(128);
 
             let command = Command::RunTest {
                 duration,
@@ -461,6 +634,26 @@ mod audio_backend {
             self.sender.try_send(command);
 
             (loudness_receiver, volume_sender)
+        }
+
+        pub fn run_measurement(
+            &self,
+            duration: Duration,
+            volume: f32,
+        ) -> (mpsc::Receiver<Loudness>, mpsc::Receiver<Box<[f32]>>) {
+            let (loudness_sender, loudness_receiver) = mpsc::channel(128);
+            let (data_sender, data_receiver) = mpsc::channel(128);
+
+            let command = Command::RunMeasurement {
+                duration,
+                volume,
+                loudness_sender,
+                data_sender,
+            };
+
+            self.sender.try_send(command);
+
+            (loudness_receiver, data_receiver)
         }
 
         pub async fn connect_out_port(self, dest_port: String) {
@@ -501,6 +694,12 @@ mod audio_backend {
         ConnectOutPort(String),
         ConnectInPort(String),
         Stop,
+        RunMeasurement {
+            duration: Duration,
+            volume: f32,
+            loudness_sender: mpsc::Sender<Loudness>,
+            data_sender: mpsc::Sender<Box<[f32]>>,
+        },
     }
 
     enum State {
@@ -571,7 +770,9 @@ mod audio_backend {
                     enum WorkerState {
                         Idle,
                         LoudnessTest(LoudnessTest),
+                        Measurement(Measurement),
                     }
+
                     struct LoudnessTest {
                         last_rms: Instant,
                         last_peak: Instant,
@@ -583,6 +784,17 @@ mod audio_backend {
                         volume_receiver: mpsc::Receiver<f32>,
                         sender: mpsc::Sender<Loudness>,
                     }
+
+                    struct Measurement {
+                        last_rms: Instant,
+                        last_peak: Instant,
+                        meter: LoudnessMeter,
+                        recording: HeapCons<f32>,
+                        loudness_sender: mpsc::Sender<Loudness>,
+                        data_sender: mpsc::Sender<Box<[f32]>>,
+                        stop_receiver: std::sync::mpsc::Receiver<()>,
+                    }
+
                     let mut worker_state = WorkerState::Idle;
 
                     while is_server_shutdown.load(std::sync::atomic::Ordering::Relaxed) != true {
@@ -640,13 +852,6 @@ mod audio_backend {
                                 let (recording_prod, recording_cons) =
                                     HeapRb::new(buf_size).split();
 
-                                let process_msg = ProcessHandlerMessage::LoudnessMeasurement {
-                                    in_buf: signal_cons,
-                                    out_buf: recording_prod,
-                                };
-
-                                process.send(process_msg);
-
                                 let test = LoudnessTest {
                                     last_rms,
                                     last_peak,
@@ -666,7 +871,63 @@ mod audio_backend {
                                     volume: volume.try_recv().unwrap_or(0.5),
                                     volume_receiver: volume,
                                 };
+
+                                let process_msg = ProcessHandlerMessage::LoudnessMeasurement {
+                                    in_buf: signal_cons,
+                                    out_buf: recording_prod,
+                                };
+
+                                process.send(process_msg);
+
                                 worker_state = WorkerState::LoudnessTest(test);
+                            }
+                            Ok(Command::RunMeasurement {
+                                duration,
+                                volume,
+                                loudness_sender,
+                                data_sender,
+                            }) => {
+                                let last_rms = Instant::now();
+                                let last_peak = Instant::now();
+                                // FIXME hardcoded sample rate dependency
+                                let meter = LoudnessMeter::new(13230); // 44100samples / 1000ms * 300ms
+
+                                let buf_size = client.as_client().buffer_size() as usize;
+                                let (recording_prod, recording_cons) =
+                                    HeapRb::new(buf_size).split();
+
+                                let (stop_sender, stop_receiver) = std::sync::mpsc::sync_channel(1);
+
+                                let sample_rate = client.as_client().sample_rate();
+                                let start_frequency = 20;
+                                let end_frequency = sample_rate as u16 / 2 - 1;
+                                let measurement = Measurement {
+                                    last_rms,
+                                    last_peak,
+                                    meter,
+                                    recording: recording_cons,
+                                    loudness_sender,
+                                    data_sender,
+                                    stop_receiver,
+                                };
+
+                                let sweep = raumklang_core::LinearSineSweep::new(
+                                    start_frequency,
+                                    end_frequency,
+                                    duration.as_secs() as usize,
+                                    raumklang_core::volume_to_amplitude(volume),
+                                    sample_rate,
+                                );
+
+                                let process_msg = ProcessHandlerMessage::Measurement {
+                                    sweep,
+                                    out_buf: recording_prod,
+                                    stop: stop_sender,
+                                };
+
+                                process.send(process_msg);
+
+                                worker_state = WorkerState::Measurement(measurement);
                             }
                             Ok(Command::Stop) => {
                                 process.send(ProcessHandlerMessage::Stop);
@@ -708,6 +969,39 @@ mod audio_backend {
                                 if test.last_peak.elapsed() > Duration::from_millis(500) {
                                     test.meter.reset_peak();
                                     test.last_peak = Instant::now();
+                                }
+                            }
+                            WorkerState::Measurement(ref mut measurement) => {
+                                let iter = measurement.recording.pop_iter();
+                                let data: Vec<f32> = iter.collect();
+                                if measurement.meter.update_from_iter(data.iter().copied()) {
+                                    measurement.last_peak = Instant::now();
+                                }
+
+                                measurement
+                                    .data_sender
+                                    .blocking_send(data.into_boxed_slice());
+
+                                if measurement.last_rms.elapsed() > Duration::from_millis(150) {
+                                    measurement.loudness_sender.try_send(Loudness {
+                                        rms: dbfs(measurement.meter.rms()),
+                                        peak: dbfs(measurement.meter.peak()),
+                                    });
+
+                                    measurement.last_rms = Instant::now();
+                                }
+
+                                if measurement.last_peak.elapsed() > Duration::from_millis(500) {
+                                    measurement.meter.reset_peak();
+                                    measurement.last_peak = Instant::now();
+                                }
+
+                                match measurement.stop_receiver.try_recv() {
+                                    Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                                        process.send(ProcessHandlerMessage::Stop);
+                                        worker_state = WorkerState::Idle;
+                                    }
+                                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
                                 }
                             }
                         }
@@ -788,6 +1082,11 @@ mod audio_backend {
             in_buf: HeapCons<f32>,
             out_buf: HeapProd<f32>,
         },
+        Measurement {
+            sweep: raumklang_core::LinearSineSweep,
+            out_buf: HeapProd<f32>,
+            stop: std::sync::mpsc::SyncSender<()>,
+        },
     }
 
     enum ProcessHandlerState {
@@ -795,6 +1094,11 @@ mod audio_backend {
         LoudnessMeasurement {
             in_buf: HeapCons<f32>,
             out_buf: HeapProd<f32>,
+        },
+        Measurement {
+            sweep: raumklang_core::LinearSineSweep,
+            out_buf: HeapProd<f32>,
+            stop: std::sync::mpsc::SyncSender<()>,
         },
     }
 
@@ -830,6 +1134,18 @@ mod audio_backend {
                     ProcessHandlerMessage::LoudnessMeasurement { in_buf, out_buf } => {
                         self.state = ProcessHandlerState::LoudnessMeasurement { in_buf, out_buf }
                     }
+                    ProcessHandlerMessage::Measurement {
+                        sweep,
+                        out_buf,
+                        stop,
+                    } => {
+                        dbg!("Start measurement");
+                        self.state = ProcessHandlerState::Measurement {
+                            sweep,
+                            out_buf,
+                            stop,
+                        }
+                    }
                 }
             }
 
@@ -842,6 +1158,24 @@ mod audio_backend {
                 ProcessHandlerState::LoudnessMeasurement { in_buf, out_buf } => {
                     let out_port = self.out_port.as_mut_slice(process_scope);
                     in_buf.pop_slice(out_port);
+
+                    let in_port = self.in_port.as_slice(process_scope);
+                    out_buf.push_slice(in_port);
+                }
+                ProcessHandlerState::Measurement {
+                    sweep,
+                    out_buf,
+                    stop,
+                } => {
+                    let out_port = self.out_port.as_mut_slice(process_scope);
+                    for o in out_port.iter_mut() {
+                        if let Some(s) = sweep.next() {
+                            *o = s;
+                        } else {
+                            *o = 0.0;
+                            stop.try_send(());
+                        }
+                    }
 
                     let in_port = self.in_port.as_slice(process_scope);
                     out_buf.push_slice(in_port);
