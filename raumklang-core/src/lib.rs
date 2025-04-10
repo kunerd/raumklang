@@ -181,6 +181,7 @@ pub trait FiniteSignal: Send + Sync + ExactSizeIterator<Item = f32> {}
 
 impl FiniteSignal for LinearSineSweep {}
 
+#[derive(Debug, Clone)]
 pub struct WhiteNoise {
     amplitude: f32,
     rng: rngs::SmallRng,
@@ -221,6 +222,7 @@ impl Iterator for WhiteNoise {
 impl ExactSizeIterator for WhiteNoise {}
 impl FiniteSignal for std::iter::Take<WhiteNoise> {}
 
+#[derive(Debug, Clone)]
 pub struct PinkNoise {
     b0: f32,
     b1: f32,
