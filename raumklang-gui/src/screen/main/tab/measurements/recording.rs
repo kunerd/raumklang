@@ -70,7 +70,7 @@ impl Recording {
     pub fn new() -> Self {
         Self {
             state: State::NotConnected,
-            volume: 0.8,
+            volume: 0.5,
             selected_out_port: None,
             selected_in_port: None,
         }
@@ -91,6 +91,7 @@ impl Recording {
                 let duration = Duration::from_secs(3);
                 let (rms_receiver, volume_sender) = backend.run_test(duration);
 
+                let _ = volume_sender.try_send(self.volume);
                 *measurement = MeasurementState::Testing {
                     loudness: audio_backend::Loudness::default(),
                     volume: volume_sender,
@@ -585,7 +586,7 @@ mod audio_backend {
                     let mut worker_state = WorkerState::Idle;
 
                     while is_server_shutdown.load(std::sync::atomic::Ordering::Relaxed) != true {
-                        match events.recv_timeout(Duration::from_millis(50)) {
+                        match events.recv_timeout(Duration::from_millis(10)) {
                             Ok(event) => {
                                 let _ = sender.blocking_send(Event::Notification(event));
                             }
@@ -627,14 +628,14 @@ mod audio_backend {
                             Ok(Command::RunTest {
                                 duration,
                                 loudness,
-                                volume,
+                                mut volume,
                             }) => {
                                 let last_rms = Instant::now();
                                 let last_peak = Instant::now();
                                 // FIXME hardcoded sample rate dependency
                                 let meter = LoudnessMeter::new(13230); // 44100samples / 1000ms * 300ms
 
-                                let buf_size = 1024 * 2;
+                                let buf_size = client.as_client().buffer_size() as usize;
                                 let (signal_prod, signal_cons) = HeapRb::new(buf_size).split();
                                 let (recording_prod, recording_cons) =
                                     HeapRb::new(buf_size).split();
@@ -650,7 +651,7 @@ mod audio_backend {
                                     last_rms,
                                     last_peak,
                                     meter,
-                                    signal_iter: raumklang_core::PinkNoise::default()
+                                    signal_iter: raumklang_core::PinkNoise::with_amplitude(0.8)
                                         .take_duration(
                                             44_100,
                                             data::Samples::from_duration(
@@ -662,7 +663,7 @@ mod audio_backend {
                                     signal: signal_prod,
                                     recording: recording_cons,
                                     sender: loudness,
-                                    volume: 0.5,
+                                    volume: volume.try_recv().unwrap_or(0.5),
                                     volume_receiver: volume,
                                 };
                                 worker_state = WorkerState::LoudnessTest(test);
@@ -700,12 +701,6 @@ mod audio_backend {
                                         rms: dbfs(test.meter.rms()),
                                         peak: dbfs(test.meter.peak()),
                                     });
-                                    // print!(
-                                    //     "\x1b[2K\rRMS: {:>8.2} dBFS, Peak: {:>8.2} dbFS",
-                                    //     dbfs(loudness.rms()),
-                                    //     dbfs(loudness.peak())
-                                    // );
-                                    // io::stdout().flush().unwrap();
 
                                     test.last_rms = Instant::now();
                                 }
@@ -852,43 +847,6 @@ mod audio_backend {
                     out_buf.push_slice(in_port);
                 }
             }
-            // let mut signal_ended = false;
-
-            // if let (Some(out), Some(signal)) = (&mut self.out_port, &mut self.cur_signal) {
-            //     let out = out.as_mut_slice(process_scope);
-
-            //     for o in out.iter_mut() {
-            //         if let Some(sample) = signal.next() {
-            //             *o = sample;
-            //         } else {
-            //             *o = 0.0f32;
-            //             signal_ended = true;
-            //         }
-            //     }
-            // };
-
-            // if let Some((port, buf)) = &mut self.input {
-            //     let in_a_p = port.as_slice(process_scope);
-            //     buf.push_slice(in_a_p);
-            // }
-
-            // if signal_ended {
-            //     let _ = self.respond_to.as_ref().unwrap().try_send(true);
-            //     self.respond_to = None;
-            //     self.cur_signal = None;
-            // }
-
-            // if let Ok(msg) = self.msg_rx.try_recv() {
-            //     match msg {
-            //         Message::RegisterOutPort(p) => self.out_port = Some(p),
-            //         Message::RegisterInPort(port, prod) => self.input = Some((port, prod)),
-            //         Message::PlaySignal { signal, respond_to } => {
-            //             self.respond_to = Some(respond_to);
-            //             self.cur_signal = Some(signal.into_iter());
-            //         }
-            //     }
-            // }
-
             jack::Control::Continue
         }
     }
@@ -996,30 +954,6 @@ mod audio_backend {
                 dbg!(&event);
                 let _ = self.notification_sender.send(event);
             }
-            // let ports = [port_a, port_b];
-            // let (src, dest): (Vec<_>, Vec<_>) =
-            //     ports.iter().partition(|p| **p == self.out_port_name);
-
-            // if let (Some(_src), Some(dest)) = (src.first(), dest.first()) {
-            //     let notification = match are_connected {
-            //         true => Notification::OutPortConnected(dest.to_string()),
-            //         false => Notification::OutPortDisconnected(dest.to_string()),
-            //     };
-
-            //     let _ = self.notification_sender.send(notification);
-            // }
-
-            // let (src, dest): (Vec<_>, Vec<_>) =
-            //     ports.into_iter().partition(|p| p == &self.in_port_name);
-
-            // if let (Some(_src), Some(dest)) = (src.first(), dest.first()) {
-            //     let notification = match are_connected {
-            //         true => Notification::InPortConnected(dest.to_string()),
-            //         false => Notification::InPortDisconnected(dest.to_string()),
-            //     };
-
-            //     let _ = self.notification_sender.send(notification);
-            // }
         }
 
         fn graph_reorder(&mut self, _: &jack::Client) -> jack::Control {
