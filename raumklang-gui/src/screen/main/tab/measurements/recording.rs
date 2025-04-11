@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::widgets::colored_circle;
+use crate::{data, widgets::colored_circle};
 use audio_backend::AudioBackend;
 use iced::{
     alignment::Vertical,
@@ -11,6 +11,7 @@ use iced::{
     },
     Color, Element, Length, Subscription, Task,
 };
+use pliced::chart::{line_series, Chart};
 use raumklang_core::Measurement;
 use tokio::sync::{mpsc, oneshot::Receiver};
 use tokio_stream::wrappers::ReceiverStream;
@@ -47,6 +48,7 @@ enum MeasurementState {
         duration: Duration,
     },
     MeasurementRunning {
+        finished_len: usize,
         loudness: audio_backend::Loudness,
         data: Vec<f32>,
     },
@@ -271,6 +273,11 @@ impl Recording {
                         backend.run_measurement(duration, self.volume);
 
                     *measurement = MeasurementState::MeasurementRunning {
+                        finished_len: data::Samples::from_duration(
+                            duration,
+                            data::SampleRate::new(44_100),
+                        )
+                        .into(),
                         loudness: audio_backend::Loudness::default(),
                         data: vec![],
                     };
@@ -289,7 +296,7 @@ impl Recording {
             Message::RecordingChunk(chunk) => {
                 let State::Connected {
                     backend: _,
-                    measurement: MeasurementState::MeasurementRunning { loudness: _, data },
+                    measurement: MeasurementState::MeasurementRunning { data, .. },
                 } = &mut self.state
                 else {
                     return Action::None;
@@ -315,7 +322,7 @@ impl Recording {
                     let header = |subsection| {
                         column![
                             row![
-                                text!("Recording - {subsection}").size(24),
+                                text!("Recording - {subsection}").size(20),
                                 horizontal_space(),
                                 text!("Sample rate: {}", backend.sample_rate).size(14)
                             ]
@@ -453,39 +460,59 @@ impl Recording {
                         .style(container::bordered_box)
                         .padding(18)
                         .into(),
-                        MeasurementState::MeasurementRunning { loudness, data } => container(
+                        MeasurementState::MeasurementRunning {
+                            loudness,
+                            data,
+                            finished_len,
+                        } => container(
                             column![
                                 header("Measurement Running ..."),
                                 row![
                                     column![
-                                        text("Out port"),
-                                        container(text!(
-                                            "{}",
-                                            self.selected_in_port.as_ref().unwrap()
-                                        ))
-                                        .padding(3)
-                                        .style(container::rounded_box)
+                                        column![
+                                            text("Out port"),
+                                            container(text!(
+                                                "{}",
+                                                self.selected_out_port.as_ref().unwrap()
+                                            ))
+                                            .padding(4)
+                                            .style(container::rounded_box)
+                                        ]
+                                        .spacing(6),
+                                        column![
+                                            text("In port"),
+                                            container(text!(
+                                                "{}",
+                                                self.selected_in_port.as_ref().unwrap()
+                                            ))
+                                            .padding(4)
+                                            .style(container::rounded_box)
+                                        ]
+                                        .spacing(6),
+                                        column![
+                                            text!("Rms: {}", loudness.rms),
+                                            text!("Peak: {}", loudness.peak),
+                                            text!("Data len: {}", data.len())
+                                        ]
+                                        .spacing(6),
                                     ]
-                                    .spacing(6),
-                                    column![
-                                        text("In port"),
-                                        container(text!(
-                                            "{}",
-                                            self.selected_in_port.as_ref().unwrap()
-                                        ))
-                                        .padding(3)
-                                    ]
-                                    .spacing(6),
-                                    // column![
-                                    //     text("Duration"),
-                                    //     text_input("Duration", &format!("{}", duration.as_secs()))
-                                    // ]
-                                    // .spacing(6),
-                                    column![
-                                        text!("Rms: {}, Peak: {}", loudness.rms, loudness.peak),
-                                        text!("Data len: {}", data.len())
-                                    ]
-                                    .spacing(6),
+                                    .spacing(12)
+                                    .padding(6),
+                                    Chart::<_, (), _>::new()
+                                        // .x_range(
+                                        //     data.len() as f32 - *finished_len as f32
+                                        //         ..=data.len() as f32
+                                        // )
+                                        .x_range(0.0..=*finished_len as f32)
+                                        .y_range(-1.0..=1.0)
+                                        .push_series(
+                                            line_series(
+                                                data.iter()
+                                                    .enumerate()
+                                                    .map(|(i, s)| (i as f32, *s))
+                                            )
+                                            .color(iced::Color::from_rgb8(200, 200, 34))
+                                        )
                                 ]
                                 .spacing(12),
                                 row![
@@ -978,9 +1005,11 @@ mod audio_backend {
                                     measurement.last_peak = Instant::now();
                                 }
 
-                                measurement
-                                    .data_sender
-                                    .blocking_send(data.into_boxed_slice());
+                                if let Err(err) =
+                                    measurement.data_sender.try_send(data.into_boxed_slice())
+                                {
+                                    dbg!(err);
+                                }
 
                                 if measurement.last_rms.elapsed() > Duration::from_millis(150) {
                                     measurement.loudness_sender.try_send(Loudness {

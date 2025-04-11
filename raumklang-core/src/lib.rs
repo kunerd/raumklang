@@ -311,7 +311,7 @@ pub fn write_signal_to_file(
 
 #[inline]
 pub fn dbfs(v: f32) -> f32 {
-    20.0 * f32::log10(v)
+    20.0 * f32::log10(v.abs())
 }
 
 pub struct LoudnessMeter {
