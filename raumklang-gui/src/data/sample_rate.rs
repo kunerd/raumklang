@@ -37,6 +37,12 @@ impl From<SampleRate> for f32 {
     }
 }
 
+impl From<SampleRate> for u32 {
+    fn from(value: SampleRate) -> Self {
+        value.0
+    }
+}
+
 impl From<usize> for SampleRate {
     fn from(value: usize) -> Self {
         Self(value as u32)

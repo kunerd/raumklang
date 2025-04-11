@@ -9,7 +9,7 @@ use iced::{
         button, column, container, horizontal_rule, horizontal_space, pick_list, row, slider, text,
         text_input, Button,
     },
-    Color, Element, Length, Subscription, Task,
+    Alignment, Color, Element, Length, Subscription, Task,
 };
 use pliced::chart::{line_series, Chart};
 use tokio::sync::mpsc;
@@ -45,6 +45,8 @@ enum MeasurementState {
     },
     PreparingMeasurement {
         duration: Duration,
+        start_frequency: u16,
+        end_frequency: u16,
     },
     MeasurementRunning {
         finished_len: usize,
@@ -85,7 +87,7 @@ impl Recording {
         }
     }
 
-    pub fn update(&mut self, message: Message) -> Action {
+    pub fn update(&mut self, message: Message, sample_rate: data::SampleRate) -> Action {
         match message {
             Message::Back => Action::Back,
             Message::RunTest => {
@@ -251,8 +253,12 @@ impl Recording {
                 };
 
                 backend.stop_test();
+
+                let nquist = Into::<u32>::into(sample_rate) as u16 / 2 - 1;
                 *measurement = MeasurementState::PreparingMeasurement {
                     duration: Duration::from_secs(3),
+                    start_frequency: 20,
+                    end_frequency: nquist,
                 };
 
                 Action::None
@@ -267,8 +273,14 @@ impl Recording {
                 };
 
                 let state = std::mem::replace(measurement, MeasurementState::Init);
-                if let MeasurementState::PreparingMeasurement { duration } = state {
-                    let (loudness_receiver, data_receiver) = backend.run_measurement(duration);
+                if let MeasurementState::PreparingMeasurement {
+                    duration,
+                    start_frequency,
+                    end_frequency,
+                } = state
+                {
+                    let (loudness_receiver, data_receiver) =
+                        backend.run_measurement(start_frequency, end_frequency, duration);
 
                     *measurement = MeasurementState::MeasurementRunning {
                         finished_len: data::Samples::from_duration(
@@ -416,7 +428,11 @@ impl Recording {
                         .style(container::bordered_box)
                         .padding(18)
                         .into(),
-                        MeasurementState::PreparingMeasurement { duration } => container(
+                        MeasurementState::PreparingMeasurement {
+                            duration,
+                            start_frequency,
+                            end_frequency,
+                        } => container(
                             column![
                                 header("Prepare Measurement"),
                                 row![
@@ -439,13 +455,35 @@ impl Recording {
                                         .padding(3)
                                     ]
                                     .spacing(6),
-                                    column![
-                                        text("Duration"),
-                                        text_input("Duration", &format!("{}", duration.as_secs()))
-                                    ]
-                                    .spacing(6),
                                 ]
                                 .spacing(12),
+                                row![
+                                    column![
+                                        text("Frequency"),
+                                        row![
+                                            text("From"),
+                                            text_input("From", &format!("{}", start_frequency)),
+                                            text("To"),
+                                            text_input("To", &format!("{}", end_frequency))
+                                        ]
+                                        .spacing(8)
+                                        .align_y(Alignment::Center),
+                                    ]
+                                    .spacing(6),
+                                    row![
+                                        column![
+                                            text("Duration"),
+                                            text_input(
+                                                "Duration",
+                                                &format!("{}", duration.as_secs())
+                                            )
+                                        ]
+                                        .spacing(6),
+                                        horizontal_space()
+                                    ]
+                                ]
+                                .spacing(8)
+                                .align_y(Alignment::Center),
                                 row![
                                     button("Cancel").on_press(Message::Back),
                                     button("Start Measurement").on_press(Message::RunMeasurement),
@@ -497,11 +535,11 @@ impl Recording {
                                     .spacing(12)
                                     .padding(6),
                                     Chart::<_, (), _>::new()
-                                        // .x_range(
-                                        //     data.len() as f32 - *finished_len as f32
-                                        //         ..=data.len() as f32
-                                        // )
-                                        .x_range(0.0..=*finished_len as f32)
+                                        .x_range(
+                                            data.len() as f32 - *finished_len as f32
+                                                ..=data.len() as f32
+                                        )
+                                        // .x_range(0.0..=*finished_len as f32)
                                         .y_range(-1.0..=1.0)
                                         .push_series(
                                             line_series(
@@ -663,6 +701,8 @@ mod audio_backend {
 
         pub fn run_measurement(
             &self,
+            start_frequency: u16,
+            end_frequency: u16,
             duration: Duration,
         ) -> (mpsc::Receiver<Loudness>, mpsc::Receiver<Box<[f32]>>) {
             let (loudness_sender, loudness_receiver) = mpsc::channel(128);
@@ -670,8 +710,10 @@ mod audio_backend {
 
             let command = Command::RunMeasurement {
                 duration,
-                loudness_sender,
+                start_frequency,
+                end_frequency,
                 data_sender,
+                loudness_sender,
             };
 
             self.sender.try_send(command);
@@ -721,6 +763,8 @@ mod audio_backend {
             duration: Duration,
             loudness_sender: mpsc::Sender<Loudness>,
             data_sender: mpsc::Sender<Box<[f32]>>,
+            start_frequency: u16,
+            end_frequency: u16,
         },
     }
 
@@ -903,12 +947,15 @@ mod audio_backend {
                                 worker_state = WorkerState::LoudnessTest(test);
                             }
                             Ok(Command::RunMeasurement {
+                                start_frequency,
+                                end_frequency,
                                 duration,
                                 loudness_sender,
                                 data_sender,
                             }) => {
                                 let last_rms = Instant::now();
                                 let last_peak = Instant::now();
+
                                 // FIXME hardcoded sample rate dependency
                                 let meter = LoudnessMeter::new(13230); // 44100samples / 1000ms * 300ms
 
@@ -919,8 +966,6 @@ mod audio_backend {
                                 let (stop_sender, stop_receiver) = std::sync::mpsc::sync_channel(1);
 
                                 let sample_rate = client.as_client().sample_rate();
-                                let start_frequency = 20;
-                                let end_frequency = sample_rate as u16 / 2 - 1;
                                 let measurement = Measurement {
                                     last_rms,
                                     last_peak,

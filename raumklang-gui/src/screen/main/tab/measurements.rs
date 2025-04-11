@@ -90,7 +90,7 @@ impl Measurements {
         }
     }
 
-    pub fn update(&mut self, msg: Message) -> Action {
+    pub fn update(&mut self, msg: Message, sample_rate: data::SampleRate) -> Action {
         match msg {
             Message::AddLoopback => Action::Task(Task::perform(
                 pick_file_and_load_signal("Loopback"),
@@ -163,7 +163,7 @@ impl Measurements {
                     return Action::None;
                 };
 
-                let task = match recording.update(message) {
+                let task = match recording.update(message, sample_rate) {
                     recording::Action::Back => {
                         self.recording = None;
                         Task::none()
