@@ -12,8 +12,7 @@ use iced::{
     Color, Element, Length, Subscription, Task,
 };
 use pliced::chart::{line_series, Chart};
-use raumklang_core::Measurement;
-use tokio::sync::{mpsc, oneshot::Receiver};
+use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 pub struct Recording {
@@ -269,8 +268,7 @@ impl Recording {
 
                 let state = std::mem::replace(measurement, MeasurementState::Init);
                 if let MeasurementState::PreparingMeasurement { duration } = state {
-                    let (loudness_receiver, data_receiver) =
-                        backend.run_measurement(duration, self.volume);
+                    let (loudness_receiver, data_receiver) = backend.run_measurement(duration);
 
                     *measurement = MeasurementState::MeasurementRunning {
                         finished_len: data::Samples::from_duration(
@@ -666,14 +664,12 @@ mod audio_backend {
         pub fn run_measurement(
             &self,
             duration: Duration,
-            volume: f32,
         ) -> (mpsc::Receiver<Loudness>, mpsc::Receiver<Box<[f32]>>) {
             let (loudness_sender, loudness_receiver) = mpsc::channel(128);
             let (data_sender, data_receiver) = mpsc::channel(128);
 
             let command = Command::RunMeasurement {
                 duration,
-                volume,
                 loudness_sender,
                 data_sender,
             };
@@ -723,20 +719,19 @@ mod audio_backend {
         Stop,
         RunMeasurement {
             duration: Duration,
-            volume: f32,
             loudness_sender: mpsc::Sender<Loudness>,
             data_sender: mpsc::Sender<Box<[f32]>>,
         },
     }
 
-    enum State {
+    enum State<I> {
         NotConnected(u64),
         Connected {
-            client: jack::AsyncClient<Notifications, ProcessHandler>,
+            client: jack::AsyncClient<Notifications, ProcessHandler<I>>,
             commands: mpsc::Receiver<Command>,
             events: std::sync::mpsc::Receiver<Notification>,
             is_server_shutdown: Arc<AtomicBool>,
-            process: std::sync::mpsc::SyncSender<ProcessHandlerMessage>,
+            process: std::sync::mpsc::SyncSender<ProcessHandlerMessage<I>>,
         },
         Error(u64),
     }
@@ -804,12 +799,10 @@ mod audio_backend {
                         last_rms: Instant,
                         last_peak: Instant,
                         meter: LoudnessMeter,
-                        signal: HeapProd<f32>,
-                        signal_iter: std::iter::Take<raumklang_core::PinkNoise>,
                         recording: HeapCons<f32>,
-                        volume: f32,
                         volume_receiver: mpsc::Receiver<f32>,
                         sender: mpsc::Sender<Loudness>,
+                        stop: std::sync::mpsc::Receiver<()>,
                     }
 
                     struct Measurement {
@@ -867,7 +860,7 @@ mod audio_backend {
                             Ok(Command::RunTest {
                                 duration,
                                 loudness,
-                                mut volume,
+                                volume,
                             }) => {
                                 let last_rms = Instant::now();
                                 let last_peak = Instant::now();
@@ -875,33 +868,34 @@ mod audio_backend {
                                 let meter = LoudnessMeter::new(13230); // 44100samples / 1000ms * 300ms
 
                                 let buf_size = client.as_client().buffer_size() as usize;
-                                let (signal_prod, signal_cons) = HeapRb::new(buf_size).split();
                                 let (recording_prod, recording_cons) =
                                     HeapRb::new(buf_size).split();
 
+                                let (stop_sender, stop_receiver) = std::sync::mpsc::sync_channel(1);
                                 let test = LoudnessTest {
                                     last_rms,
                                     last_peak,
                                     meter,
-                                    signal_iter: raumklang_core::PinkNoise::with_amplitude(0.8)
-                                        .take_duration(
-                                            44_100,
-                                            data::Samples::from_duration(
-                                                duration,
-                                                data::SampleRate::new(44_100),
-                                            )
-                                            .into(),
-                                        ),
-                                    signal: signal_prod,
                                     recording: recording_cons,
                                     sender: loudness,
-                                    volume: volume.try_recv().unwrap_or(0.5),
                                     volume_receiver: volume,
+                                    stop: stop_receiver,
                                 };
 
+                                let signal = raumklang_core::PinkNoise::with_amplitude(0.8)
+                                    .take_duration(
+                                        44_100,
+                                        data::Samples::from_duration(
+                                            duration,
+                                            data::SampleRate::new(44_100),
+                                        )
+                                        .into(),
+                                    );
+
                                 let process_msg = ProcessHandlerMessage::LoudnessMeasurement {
-                                    in_buf: signal_cons,
+                                    signal,
                                     out_buf: recording_prod,
+                                    stop: stop_sender,
                                 };
 
                                 process.send(process_msg);
@@ -910,7 +904,6 @@ mod audio_backend {
                             }
                             Ok(Command::RunMeasurement {
                                 duration,
-                                volume,
                                 loudness_sender,
                                 data_sender,
                             }) => {
@@ -942,7 +935,7 @@ mod audio_backend {
                                     start_frequency,
                                     end_frequency,
                                     duration.as_secs() as usize,
-                                    raumklang_core::volume_to_amplitude(volume),
+                                    0.8,
                                     sample_rate,
                                 );
 
@@ -969,16 +962,11 @@ mod audio_backend {
                         match worker_state {
                             WorkerState::Idle => {}
                             WorkerState::LoudnessTest(ref mut test) => {
-                                if let Ok(vol) = test.volume_receiver.try_recv() {
-                                    test.volume = vol;
+                                if let Ok(volume) = test.volume_receiver.try_recv() {
+                                    process.send(ProcessHandlerMessage::SetAmplitude(
+                                        raumklang_core::volume_to_amplitude(volume),
+                                    ));
                                 }
-                                let iter = &mut test.signal_iter;
-                                test.signal.push_iter(
-                                    iter.map(|s| {
-                                        s * raumklang_core::volume_to_amplitude(test.volume)
-                                    }),
-                                );
-
                                 let iter = test.recording.pop_iter();
                                 if test.meter.update_from_iter(iter) {
                                     test.last_peak = Instant::now();
@@ -996,6 +984,14 @@ mod audio_backend {
                                 if test.last_peak.elapsed() > Duration::from_millis(500) {
                                     test.meter.reset_peak();
                                     test.last_peak = Instant::now();
+                                }
+
+                                match test.stop.try_recv() {
+                                    Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                                        process.send(ProcessHandlerMessage::Stop);
+                                        worker_state = WorkerState::Idle;
+                                    }
+                                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
                                 }
                             }
                             WorkerState::Measurement(ref mut measurement) => {
@@ -1062,16 +1058,19 @@ mod audio_backend {
         }
     }
 
-    fn start_jack_client(
+    fn start_jack_client<I>(
         notify_sender: std::sync::mpsc::SyncSender<Notification>,
         has_server_shutdown: Arc<AtomicBool>,
     ) -> Result<
         (
-            jack::AsyncClient<Notifications, ProcessHandler>,
-            std::sync::mpsc::SyncSender<ProcessHandlerMessage>,
+            jack::AsyncClient<Notifications, ProcessHandler<I>>,
+            std::sync::mpsc::SyncSender<ProcessHandlerMessage<I>>,
         ),
         Error,
-    > {
+    >
+    where
+        I: Iterator<Item = f32> + Send + 'static,
+    {
         let client_name = env!("CARGO_BIN_NAME");
         let (client, _status) =
             jack::Client::new(client_name, jack::ClientOptions::NO_START_SERVER)?;
@@ -1096,20 +1095,23 @@ mod audio_backend {
         Ok((client, process_sender))
     }
 
-    struct ProcessHandler {
+    struct ProcessHandler<I> {
         out_port: jack::Port<jack::AudioOut>,
         in_port: jack::Port<jack::AudioIn>,
+        amplitued: f32,
 
-        msg_receiver: std::sync::mpsc::Receiver<ProcessHandlerMessage>,
+        msg_receiver: std::sync::mpsc::Receiver<ProcessHandlerMessage<I>>,
 
-        state: ProcessHandlerState,
+        state: ProcessHandlerState<I>,
     }
 
-    enum ProcessHandlerMessage {
+    enum ProcessHandlerMessage<I> {
         Stop,
+        SetAmplitude(f32),
         LoudnessMeasurement {
-            in_buf: HeapCons<f32>,
+            signal: I,
             out_buf: HeapProd<f32>,
+            stop: std::sync::mpsc::SyncSender<()>,
         },
         Measurement {
             sweep: raumklang_core::LinearSineSweep,
@@ -1118,11 +1120,12 @@ mod audio_backend {
         },
     }
 
-    enum ProcessHandlerState {
+    enum ProcessHandlerState<I> {
         Idle,
         LoudnessMeasurement {
-            in_buf: HeapCons<f32>,
+            signal: I,
             out_buf: HeapProd<f32>,
+            stop: std::sync::mpsc::SyncSender<()>,
         },
         Measurement {
             sweep: raumklang_core::LinearSineSweep,
@@ -1131,27 +1134,31 @@ mod audio_backend {
         },
     }
 
-    impl ProcessHandler {
+    impl<I> ProcessHandler<I> {
         fn new(
             out_port: jack::Port<jack::AudioOut>,
             in_port: jack::Port<jack::AudioIn>,
-        ) -> (Self, std::sync::mpsc::SyncSender<ProcessHandlerMessage>) {
+        ) -> (Self, std::sync::mpsc::SyncSender<ProcessHandlerMessage<I>>) {
             let (msg_sender, msg_receiver) = std::sync::mpsc::sync_channel(64);
 
             (
                 Self {
                     out_port,
                     in_port,
-                    msg_receiver,
+                    amplitued: 0.5,
 
-                    state: ProcessHandlerState::Idle,
+                    msg_receiver,
+                    state: ProcessHandlerState::<I>::Idle,
                 },
                 msg_sender,
             )
         }
     }
 
-    impl jack::ProcessHandler for ProcessHandler {
+    impl<I> jack::ProcessHandler for ProcessHandler<I>
+    where
+        I: Iterator<Item = f32> + Send,
+    {
         fn process(
             &mut self,
             _: &jack::Client,
@@ -1160,8 +1167,17 @@ mod audio_backend {
             if let Ok(msg) = self.msg_receiver.try_recv() {
                 match msg {
                     ProcessHandlerMessage::Stop => self.state = ProcessHandlerState::Idle,
-                    ProcessHandlerMessage::LoudnessMeasurement { in_buf, out_buf } => {
-                        self.state = ProcessHandlerState::LoudnessMeasurement { in_buf, out_buf }
+                    ProcessHandlerMessage::SetAmplitude(amplitude) => self.amplitued = amplitude,
+                    ProcessHandlerMessage::LoudnessMeasurement {
+                        signal,
+                        out_buf,
+                        stop,
+                    } => {
+                        self.state = ProcessHandlerState::LoudnessMeasurement {
+                            signal,
+                            out_buf,
+                            stop,
+                        }
                     }
                     ProcessHandlerMessage::Measurement {
                         sweep,
@@ -1184,9 +1200,20 @@ mod audio_backend {
 
                     out_port.fill_with(|| 0.0);
                 }
-                ProcessHandlerState::LoudnessMeasurement { in_buf, out_buf } => {
+                ProcessHandlerState::LoudnessMeasurement {
+                    signal,
+                    out_buf,
+                    stop,
+                } => {
                     let out_port = self.out_port.as_mut_slice(process_scope);
-                    in_buf.pop_slice(out_port);
+                    for o in out_port.iter_mut() {
+                        if let Some(s) = signal.next() {
+                            *o = s * self.amplitued;
+                        } else {
+                            *o = 0.0;
+                            stop.try_send(());
+                        }
+                    }
 
                     let in_port = self.in_port.as_slice(process_scope);
                     out_buf.push_slice(in_port);
@@ -1199,7 +1226,7 @@ mod audio_backend {
                     let out_port = self.out_port.as_mut_slice(process_scope);
                     for o in out_port.iter_mut() {
                         if let Some(s) = sweep.next() {
-                            *o = s;
+                            *o = s * self.amplitued;
                         } else {
                             *o = 0.0;
                             stop.try_send(());
