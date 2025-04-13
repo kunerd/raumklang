@@ -7,7 +7,8 @@ edition = "2021"
 raumklang-core = { workspace = true }
 iced = { git = "https://github.com/iced-rs/iced.git", rev = "4b075b9731f4658a885357024cc77dee10e223c3", features = ["canvas","tokio", "advanced"] }
 iced_aw = { git = "https://github.com/kunerd/iced_aw.git", branch = "bump_up_iced", default-features = false, features = ["menu"] }
-pliced = { git = "https://github.com/kunerd/pliced.git", branch = "bump_up_iced" }
+# pliced = { git = "https://github.com/kunerd/pliced.git", branch = "bump_up_iced" }
+pliced = { path = "../../pliced" }
 tokio = { version = "1.35", features = [ "fs", "macros", "sync" ] }
 tokio-stream = "0.1"
 rfd = "0.13"
@@ -24,3 +25,6 @@ ringbuf = "0.4"
 rustfft = "6.0"
 interpolation = "0.3.0"
 directories = "5.0.1"
+
+tracing = "0.1.41"
+tracing-subscriber = {version = "0.3.19", features = ["std", "fmt", "json"]}

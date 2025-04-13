@@ -535,11 +535,7 @@ impl Recording {
                                     .spacing(12)
                                     .padding(6),
                                     Chart::<_, (), _>::new()
-                                        .x_range(
-                                            data.len() as f32 - *finished_len as f32
-                                                ..=data.len() as f32
-                                        )
-                                        // .x_range(0.0..=*finished_len as f32)
+                                        .x_range(0.0..=*finished_len as f32)
                                         .y_range(-1.0..=1.0)
                                         .push_series(
                                             line_series(
@@ -640,6 +636,7 @@ mod audio_backend {
     use tokio::sync::mpsc::error::TryRecvError;
 
     use crate::data::{self};
+    use crate::log;
 
     #[derive(Debug, Clone)]
     pub enum Event {
@@ -1049,7 +1046,7 @@ mod audio_backend {
                                 if let Err(err) =
                                     measurement.data_sender.try_send(data.into_boxed_slice())
                                 {
-                                    dbg!(err);
+                                    log::error!("failed to send measurement data to UI {err}");
                                 }
 
                                 if measurement.last_rms.elapsed() > Duration::from_millis(150) {

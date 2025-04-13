@@ -1,11 +1,7 @@
 mod data;
+mod log;
 mod screen;
 mod widgets;
-
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
 
 use screen::{
     landing,
@@ -17,9 +13,21 @@ use data::{project::file, RecentProjects};
 
 use iced::{futures::FutureExt, widget::text, Element, Font, Settings, Subscription, Task, Theme};
 
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
 const MAX_RECENT_PROJECTS_ENTRIES: usize = 10;
 
 fn main() -> iced::Result {
+    match log::init() {
+        Ok(_) => (),
+        Err(err) => {
+            eprintln!("Raumklang: failed to initialize logger: {err}")
+        }
+    }
+
     iced::application(Raumklang::title, Raumklang::update, Raumklang::view)
         .subscription(Raumklang::subscription)
         .theme(Raumklang::theme)

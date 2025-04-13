@@ -142,7 +142,9 @@ impl FrequencyResponses {
         };
 
         row![
-            container(sidebar).width(FillPortion(1)),
+            container(sidebar)
+                .width(FillPortion(1))
+                .style(container::bordered_box),
             container(content).center(Length::FillPortion(4))
         ]
         .into()
