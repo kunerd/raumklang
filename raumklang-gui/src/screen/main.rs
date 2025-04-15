@@ -1,15 +1,15 @@
 pub mod tab;
 
+use std::fmt::Display;
+
 pub use tab::Tab;
 use tab::{frequency_responses, impulse_responses, measurements};
 
 use crate::data::{self};
 
 use iced::{
-    widget::{
-        button, center, column, container, horizontal_space, opaque, row, stack, text, Button,
-    },
-    Color, Element, Subscription, Task,
+    widget::{button, center, column, container, horizontal_space, opaque, row, stack, text},
+    Alignment, Color, Element, Subscription, Task,
 };
 
 #[derive(Default)]
@@ -45,8 +45,7 @@ pub enum Message {
     PendingWindowModal(PendingWindowAction),
     FrequencyResponseComputed((usize, data::FrequencyResponse)),
 }
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TabId {
     Measurements,
     ImpulseResponses,
@@ -236,33 +235,7 @@ impl Main {
 
     pub fn view(&self) -> Element<Message> {
         let content = {
-            let tab_button = |text, active, msg| -> Button<'_, Message> {
-                let style = match active {
-                    true => button::primary,
-                    false => button::secondary,
-                };
-
-                button(text).style(style).on_press(msg)
-            };
-
-            let header = row![
-                tab_button(
-                    "Measurements",
-                    matches!(self.active_tab, Tab::Measurements(_)),
-                    Message::TabSelected(TabId::Measurements)
-                ),
-                tab_button(
-                    "Impulse Responses",
-                    matches!(self.active_tab, Tab::ImpulseResponses(_)),
-                    Message::TabSelected(TabId::ImpulseResponses)
-                ),
-                tab_button(
-                    "Frequency Responses",
-                    matches!(self.active_tab, Tab::FrequencyResponses(_)),
-                    Message::TabSelected(TabId::FrequencyResponses)
-                )
-            ]
-            .spacing(5);
+            let header = { TabId::from(&self.active_tab).view() };
 
             let content = match &self.active_tab {
                 Tab::Measurements(measurements) => {
@@ -337,6 +310,63 @@ impl Main {
             Tab::FrequencyResponses(tab) => tab.subscription().map(Message::FrequencyResponses),
         }
     }
+}
+
+impl TabId {
+    pub fn iter() -> impl Iterator<Item = Self> {
+        [
+            TabId::Measurements,
+            TabId::ImpulseResponses,
+            TabId::FrequencyResponses,
+        ]
+        .into_iter()
+    }
+
+    pub fn view<'a>(self) -> Element<'a, Message> {
+        let mut row = row![].spacing(5).align_y(Alignment::Center);
+
+        for tab in TabId::iter() {
+            let is_selected = self == tab;
+
+            row = row.push(tab_button(tab, is_selected));
+        }
+
+        row.into()
+    }
+}
+
+impl Display for TabId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let label = match self {
+            TabId::Measurements => "Measurements",
+            TabId::ImpulseResponses => "Impulse Responses",
+            TabId::FrequencyResponses => "Frequency Responses",
+        };
+
+        write!(f, "{}", label)
+    }
+}
+
+impl From<&Tab> for TabId {
+    fn from(tab: &Tab) -> Self {
+        match tab {
+            Tab::Measurements(_measurements) => TabId::Measurements,
+            Tab::ImpulseResponses(_impulse_reponses) => TabId::ImpulseResponses,
+            Tab::FrequencyResponses(_frequency_responses) => TabId::FrequencyResponses,
+        }
+    }
+}
+
+fn tab_button<'a>(tab: TabId, active: bool) -> Element<'a, Message> {
+    let style = match active {
+        true => button::primary,
+        false => button::secondary,
+    };
+
+    button(text(tab.to_string()))
+        .style(style)
+        .on_press(Message::TabSelected(tab))
+        .into()
 }
 
 fn modal<'a, Message>(
