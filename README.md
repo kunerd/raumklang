@@ -2,6 +2,8 @@
 An open source room impulse response measurement software using the sine sweep
 method.
 
+![Screenshot](/assets/screenshot.png?raw=true "Screenshot")
+
 ## The Goal
 The goal is to create a fully open source room impulse response measurement
 software with first class support of the Linux audio drivers (currently Jack
