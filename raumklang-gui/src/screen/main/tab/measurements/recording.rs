@@ -620,20 +620,19 @@ pub fn recording_button<'a, Message: 'a>(msg: Message) -> Button<'a, Message> {
 }
 
 mod audio_backend {
-
     use std::sync::atomic::AtomicBool;
     use std::sync::mpsc::RecvTimeoutError;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    use iced::futures::{SinkExt, Stream};
-    use iced::stream;
+    use iced::futures::Stream;
     use jack::PortFlags;
     use raumklang_core::{dbfs, LoudnessMeter};
     use ringbuf::traits::{Consumer, Producer, Split};
     use ringbuf::{HeapCons, HeapProd, HeapRb};
     use tokio::sync::mpsc;
     use tokio::sync::mpsc::error::TryRecvError;
+    use tokio_stream::wrappers::ReceiverStream;
 
     use crate::data::{self};
     use crate::log;
@@ -736,15 +735,11 @@ mod audio_backend {
     }
 
     pub fn run() -> impl Stream<Item = Event> {
-        stream::channel(100, async |mut output| {
-            let (sender, mut receiver) = mpsc::channel(100);
+        let (sender, receiver) = mpsc::channel(100);
 
-            std::thread::spawn(|| run_audio_backend(sender));
+        std::thread::spawn(|| run_audio_backend(sender));
 
-            while let Some(event) = receiver.recv().await {
-                let _ = output.send(event).await;
-            }
-        })
+        ReceiverStream::new(receiver)
     }
 
     enum Command {
