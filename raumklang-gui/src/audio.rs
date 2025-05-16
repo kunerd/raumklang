@@ -1,3 +1,7 @@
+mod loudness;
+
+pub use loudness::Loudness;
+
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Arc;
@@ -37,21 +41,6 @@ pub struct Backend {
     pub in_ports: Vec<String>,
     pub out_ports: Vec<String>,
     sender: mpsc::Sender<Command>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct Loudness {
-    pub rms: f32,
-    pub peak: f32,
-}
-
-impl Default for Loudness {
-    fn default() -> Self {
-        Self {
-            rms: f32::NEG_INFINITY,
-            peak: f32::NEG_INFINITY,
-        }
-    }
 }
 
 impl Backend {
@@ -202,18 +191,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
             } => {
                 enum WorkerState {
                     Idle,
-                    LoudnessTest(LoudnessTest),
                     Measurement(Measurement),
-                }
-
-                struct LoudnessTest {
-                    last_rms: Instant,
-                    last_peak: Instant,
-                    meter: LoudnessMeter,
-                    recording: HeapCons<f32>,
-                    volume_receiver: mpsc::Receiver<f32>,
-                    sender: mpsc::Sender<Loudness>,
-                    stop: std::sync::mpsc::Receiver<()>,
                 }
 
                 struct Measurement {
@@ -273,28 +251,21 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                             loudness,
                             volume,
                         }) => {
-                            let last_rms = Instant::now();
-                            let last_peak = Instant::now();
-                            // FIXME hardcoded sample rate dependency
-                            let meter = LoudnessMeter::new(13230); // 44100samples / 1000ms * 300ms
-
                             let buf_size = client.as_client().buffer_size() as usize;
                             let (recording_prod, recording_cons) = HeapRb::new(buf_size).split();
-
                             let (stop_sender, stop_receiver) = std::sync::mpsc::sync_channel(1);
-                            let test = LoudnessTest {
-                                last_rms,
-                                last_peak,
-                                meter,
-                                recording: recording_cons,
-                                sender: loudness,
-                                volume_receiver: volume,
-                                stop: stop_receiver,
-                            };
 
+                            let test = loudness::Test::new(
+                                loudness,
+                                volume,
+                                stop_receiver,
+                                recording_cons,
+                            );
+
+                            // FIXME remove hard-coded values
                             let signal = raumklang_core::PinkNoise::with_amplitude(0.8)
                                 .take_duration(
-                                    44_100,
+                                    44100,
                                     data::Samples::from_duration(
                                         duration,
                                         data::SampleRate::new(44_100),
@@ -308,9 +279,9 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                                 stop: stop_sender,
                             };
 
-                            process.send(process_msg);
+                            std::thread::spawn(move || test.run());
 
-                            worker_state = WorkerState::LoudnessTest(test);
+                            process.send(process_msg);
                         }
                         Ok(Command::RunMeasurement {
                             start_frequency,
@@ -371,39 +342,6 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
 
                     match worker_state {
                         WorkerState::Idle => {}
-                        WorkerState::LoudnessTest(ref mut test) => {
-                            if let Ok(volume) = test.volume_receiver.try_recv() {
-                                process.send(ProcessHandlerMessage::SetAmplitude(
-                                    raumklang_core::volume_to_amplitude(volume),
-                                ));
-                            }
-                            let iter = test.recording.pop_iter();
-                            if test.meter.update_from_iter(iter) {
-                                test.last_peak = Instant::now();
-                            }
-
-                            if test.last_rms.elapsed() > Duration::from_millis(150) {
-                                test.sender.try_send(Loudness {
-                                    rms: dbfs(test.meter.rms()),
-                                    peak: dbfs(test.meter.peak()),
-                                });
-
-                                test.last_rms = Instant::now();
-                            }
-
-                            if test.last_peak.elapsed() > Duration::from_millis(500) {
-                                test.meter.reset_peak();
-                                test.last_peak = Instant::now();
-                            }
-
-                            match test.stop.try_recv() {
-                                Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                                    process.send(ProcessHandlerMessage::Stop);
-                                    worker_state = WorkerState::Idle;
-                                }
-                                Err(std::sync::mpsc::TryRecvError::Empty) => {}
-                            }
-                        }
                         WorkerState::Measurement(ref mut measurement) => {
                             let iter = measurement.recording.pop_iter();
                             let data: Vec<f32> = iter.collect();
