@@ -1,3 +1,4 @@
+mod audio;
 mod data;
 mod log;
 mod screen;
