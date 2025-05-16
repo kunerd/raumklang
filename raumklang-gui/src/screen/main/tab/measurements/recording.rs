@@ -11,7 +11,6 @@ use iced::{
     Alignment, Color, Element, Length, Subscription, Task,
 };
 use pliced::chart::{line_series, Chart};
-use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 pub struct Recording {
@@ -40,7 +39,6 @@ enum MeasurementState {
     ReadyForTest,
     Testing {
         loudness: audio::Loudness,
-        volume: mpsc::Sender<f32>,
     },
     PreparingMeasurement {
         duration: Duration,
@@ -99,17 +97,16 @@ impl Recording {
                 };
 
                 let duration = Duration::from_secs(3);
-                let (rms_receiver, volume_sender) = backend.run_test(duration);
+                let rms_receiver = backend.run_test(duration);
 
-                let _ = volume_sender.try_send(self.volume);
                 *measurement = MeasurementState::Testing {
                     loudness: audio::Loudness::default(),
-                    volume: volume_sender,
                 };
 
-                Action::Task(
+                Action::Task(Task::batch([
+                    Task::future(backend.clone().set_volume(self.volume)).discard(),
                     Task::stream(ReceiverStream::new(rms_receiver)).map(Message::RmsChanged),
-                )
+                ]))
             }
             Message::AudioBackend(event) => match event {
                 audio::Event::Ready(backend) => {
@@ -184,23 +181,13 @@ impl Recording {
                 Action::None
             }
             Message::VolumeChanged(volume) => {
-                let State::Connected {
-                    measurement:
-                        MeasurementState::Testing {
-                            volume: volume_sender,
-                            ..
-                        },
-                    ..
-                } = &mut self.state
-                else {
+                let State::Connected { backend, .. } = &self.state else {
                     return Action::None;
                 };
 
-                if let Ok(_) = volume_sender.try_send(volume) {
-                    self.volume = volume;
-                }
+                self.volume = volume;
 
-                Action::None
+                Action::Task(Task::future(backend.clone().set_volume(volume)).discard())
             }
             Message::StopTesting => {
                 let State::Connected {

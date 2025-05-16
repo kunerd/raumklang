@@ -2,10 +2,8 @@ mod loudness;
 
 pub use loudness::Loudness;
 
-use std::sync::atomic::AtomicBool;
-use std::sync::mpsc::RecvTimeoutError;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use crate::data::{self};
+use crate::log;
 
 use iced::futures::Stream;
 use jack::PortFlags;
@@ -16,8 +14,10 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::data::{self};
-use crate::log;
+use std::sync::atomic::AtomicBool;
+use std::sync::mpsc::RecvTimeoutError;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -44,19 +44,17 @@ pub struct Backend {
 }
 
 impl Backend {
-    pub fn run_test(&self, duration: Duration) -> (mpsc::Receiver<Loudness>, mpsc::Sender<f32>) {
+    pub fn run_test(&self, duration: Duration) -> mpsc::Receiver<Loudness> {
         let (loudness_sender, loudness_receiver) = mpsc::channel(128);
-        let (volume_sender, volume_receiver) = mpsc::channel(128);
 
         let command = Command::RunTest {
             duration,
             loudness: loudness_sender,
-            volume: volume_receiver,
         };
 
         self.sender.try_send(command).unwrap();
 
-        (loudness_receiver, volume_sender)
+        loudness_receiver
     }
 
     pub fn run_measurement(
@@ -96,6 +94,12 @@ impl Backend {
     pub fn stop_test(&self) {
         let _ = self.sender.try_send(Command::Stop);
     }
+
+    pub async fn set_volume(self, volume: f32) {
+        let command = Command::SetVolume(volume);
+
+        let _ = self.sender.send(command).await;
+    }
 }
 
 pub fn run() -> impl Stream<Item = Event> {
@@ -110,7 +114,6 @@ enum Command {
     RunTest {
         duration: Duration,
         loudness: mpsc::Sender<Loudness>,
-        volume: mpsc::Receiver<f32>,
     },
     ConnectOutPort(String),
     ConnectInPort(String),
@@ -122,6 +125,7 @@ enum Command {
         start_frequency: u16,
         end_frequency: u16,
     },
+    SetVolume(f32),
 }
 
 enum State<I> {
@@ -246,21 +250,19 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                                 .connect_ports_by_name(&source, "gui:measurement_in")
                                 .unwrap();
                         }
-                        Ok(Command::RunTest {
-                            duration,
-                            loudness,
-                            volume,
-                        }) => {
+                        Ok(Command::SetVolume(volume)) => {
+                            let msg = ProcessHandlerMessage::SetAmplitude(
+                                raumklang_core::volume_to_amplitude(volume),
+                            );
+
+                            process.send(msg);
+                        }
+                        Ok(Command::RunTest { duration, loudness }) => {
                             let buf_size = client.as_client().buffer_size() as usize;
                             let (recording_prod, recording_cons) = HeapRb::new(buf_size).split();
                             let (stop_sender, stop_receiver) = std::sync::mpsc::sync_channel(1);
 
-                            let test = loudness::Test::new(
-                                loudness,
-                                volume,
-                                stop_receiver,
-                                recording_cons,
-                            );
+                            let test = loudness::Test::new(loudness, stop_receiver, recording_cons);
 
                             // FIXME remove hard-coded values
                             let signal = raumklang_core::PinkNoise::with_amplitude(0.8)
