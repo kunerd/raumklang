@@ -1,39 +1,28 @@
-use raumklang_core::{dbfs, loudness};
+use crate::log;
 
+use super::Loudness;
+
+use raumklang_core::loudness;
 use ringbuf::{traits::Consumer, HeapCons};
-use tokio::sync::mpsc::error::TrySendError;
 
 use std::time::{Duration, Instant};
 
-#[derive(Debug, Clone, Copy)]
-pub struct Loudness {
-    pub rms: f32,
-    pub peak: f32,
-}
-
-impl Default for Loudness {
-    fn default() -> Self {
-        Self {
-            rms: f32::NEG_INFINITY,
-            peak: f32::NEG_INFINITY,
-        }
-    }
-}
-
-pub struct Test {
+pub struct Measurement {
     last_rms: Instant,
     last_peak: Instant,
     meter: loudness::Meter,
-    recording: HeapCons<f32>,
-    sender: tokio::sync::mpsc::Sender<Loudness>,
+    recording_cons: HeapCons<f32>,
+    loudness_sender: tokio::sync::mpsc::Sender<Loudness>,
+    data_sender: tokio::sync::mpsc::Sender<Box<[f32]>>,
     stop_receiver: std::sync::mpsc::Receiver<()>,
 }
 
-impl Test {
+impl Measurement {
     pub fn new(
-        sender: tokio::sync::mpsc::Sender<Loudness>,
-        stop_receiver: std::sync::mpsc::Receiver<()>,
+        loudness_sender: tokio::sync::mpsc::Sender<Loudness>,
+        data_sender: tokio::sync::mpsc::Sender<Box<[f32]>>,
         recording_cons: HeapCons<f32>,
+        stop_receiver: std::sync::mpsc::Receiver<()>,
     ) -> Self {
         let last_rms = Instant::now();
         let last_peak = Instant::now();
@@ -45,33 +34,30 @@ impl Test {
             last_rms,
             last_peak,
             meter,
-            recording: recording_cons,
-            sender,
+            recording_cons,
+            data_sender,
+            loudness_sender,
             stop_receiver,
         }
     }
 
     pub fn run(mut self) {
         loop {
-            let iter = self.recording.pop_iter();
-            if self.meter.update_from_iter(iter) {
+            let iter = self.recording_cons.pop_iter();
+            let data: Vec<f32> = iter.collect();
+            if self.meter.update_from_iter(data.iter().copied()) {
                 self.last_peak = Instant::now();
             }
 
-            if self.last_rms.elapsed() > Duration::from_millis(150) {
-                let loudness = Loudness {
-                    rms: dbfs(self.meter.rms()),
-                    peak: dbfs(self.meter.peak()),
-                };
+            if let Err(err) = self.data_sender.try_send(data.into_boxed_slice()) {
+                log::error!("failed to send measurement data to UI {err}");
+            }
 
-                match self.sender.try_send(loudness) {
-                    Ok(_) => {}
-                    Err(TrySendError::Full(_)) => {}
-                    Err(TrySendError::Closed(_)) => {
-                        // no one is interested anymore, so we shutdown
-                        break;
-                    }
-                }
+            if self.last_rms.elapsed() > Duration::from_millis(150) {
+                self.loudness_sender.try_send(Loudness {
+                    rms: raumklang_core::dbfs(self.meter.rms()),
+                    peak: raumklang_core::dbfs(self.meter.peak()),
+                });
 
                 self.last_rms = Instant::now();
             }
@@ -83,6 +69,8 @@ impl Test {
 
             match self.stop_receiver.try_recv() {
                 Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    // process.send(ProcessHandlerMessage::Stop);
+                    // worker_state = WorkerState::Idle;
                     break;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}

@@ -1,15 +1,15 @@
 mod loudness;
+mod measurement;
 
 pub use loudness::Loudness;
+pub use measurement::Measurement;
 
 use crate::data::{self};
-use crate::log;
 
 use iced::futures::Stream;
 use jack::PortFlags;
-use raumklang_core::{dbfs, LoudnessMeter};
-use ringbuf::traits::{Consumer, Producer, Split};
-use ringbuf::{HeapCons, HeapProd, HeapRb};
+use ringbuf::traits::{Producer, Split};
+use ringbuf::{HeapProd, HeapRb};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio_stream::wrappers::ReceiverStream;
@@ -17,7 +17,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -193,23 +193,6 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                 process,
                 is_server_shutdown,
             } => {
-                enum WorkerState {
-                    Idle,
-                    Measurement(Measurement),
-                }
-
-                struct Measurement {
-                    last_rms: Instant,
-                    last_peak: Instant,
-                    meter: LoudnessMeter,
-                    recording: HeapCons<f32>,
-                    loudness_sender: mpsc::Sender<Loudness>,
-                    data_sender: mpsc::Sender<Box<[f32]>>,
-                    stop_receiver: std::sync::mpsc::Receiver<()>,
-                }
-
-                let mut worker_state = WorkerState::Idle;
-
                 while is_server_shutdown.load(std::sync::atomic::Ordering::Relaxed) != true {
                     match events.recv_timeout(Duration::from_millis(10)) {
                         Ok(event) => {
@@ -281,7 +264,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                                 stop: stop_sender,
                             };
 
-                            std::thread::spawn(move || test.run());
+                            std::thread::spawn(|| test.run());
 
                             process.send(process_msg);
                         }
@@ -292,27 +275,18 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                             loudness_sender,
                             data_sender,
                         }) => {
-                            let last_rms = Instant::now();
-                            let last_peak = Instant::now();
-
-                            // FIXME hardcoded sample rate dependency
-                            let meter = LoudnessMeter::new(13230); // 44100samples / 1000ms * 300ms
-
                             let buf_size = client.as_client().buffer_size() as usize;
                             let (recording_prod, recording_cons) = HeapRb::new(buf_size).split();
-
                             let (stop_sender, stop_receiver) = std::sync::mpsc::sync_channel(1);
 
                             let sample_rate = client.as_client().sample_rate();
-                            let measurement = Measurement {
-                                last_rms,
-                                last_peak,
-                                meter,
-                                recording: recording_cons,
+
+                            let measurement = Measurement::new(
                                 loudness_sender,
                                 data_sender,
+                                recording_cons,
                                 stop_receiver,
-                            };
+                            );
 
                             let sweep = raumklang_core::LinearSineSweep::new(
                                 start_frequency,
@@ -328,9 +302,9 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                                 stop: stop_sender,
                             };
 
-                            process.send(process_msg);
+                            std::thread::spawn(|| measurement.run());
 
-                            worker_state = WorkerState::Measurement(measurement);
+                            process.send(process_msg);
                         }
                         Ok(Command::Stop) => {
                             process.send(ProcessHandlerMessage::Stop);
@@ -340,45 +314,6 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                             return;
                         }
                         Err(TryRecvError::Empty) => {}
-                    }
-
-                    match worker_state {
-                        WorkerState::Idle => {}
-                        WorkerState::Measurement(ref mut measurement) => {
-                            let iter = measurement.recording.pop_iter();
-                            let data: Vec<f32> = iter.collect();
-                            if measurement.meter.update_from_iter(data.iter().copied()) {
-                                measurement.last_peak = Instant::now();
-                            }
-
-                            if let Err(err) =
-                                measurement.data_sender.try_send(data.into_boxed_slice())
-                            {
-                                log::error!("failed to send measurement data to UI {err}");
-                            }
-
-                            if measurement.last_rms.elapsed() > Duration::from_millis(150) {
-                                measurement.loudness_sender.try_send(Loudness {
-                                    rms: dbfs(measurement.meter.rms()),
-                                    peak: dbfs(measurement.meter.peak()),
-                                });
-
-                                measurement.last_rms = Instant::now();
-                            }
-
-                            if measurement.last_peak.elapsed() > Duration::from_millis(500) {
-                                measurement.meter.reset_peak();
-                                measurement.last_peak = Instant::now();
-                            }
-
-                            match measurement.stop_receiver.try_recv() {
-                                Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                                    process.send(ProcessHandlerMessage::Stop);
-                                    worker_state = WorkerState::Idle;
-                                }
-                                Err(std::sync::mpsc::TryRecvError::Empty) => {}
-                            }
-                        }
                     }
                 }
 

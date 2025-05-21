@@ -13,8 +13,8 @@ use plotters::{
     style::RGBColor,
 };
 use raumklang_core::{
-    dbfs, volume_to_amplitude, AudioEngine, FiniteSignal, ImpulseResponse, LinearSineSweep,
-    LoudnessMeter, PinkNoise, WhiteNoise,
+    dbfs, loudness, volume_to_amplitude, AudioEngine, FiniteSignal, ImpulseResponse,
+    LinearSineSweep, PinkNoise, WhiteNoise,
 };
 use rustfft::{num_complex::Complex, FftPlanner};
 
@@ -117,7 +117,7 @@ fn main() -> anyhow::Result<()> {
             };
 
             // FIXME hardcoded window size
-            let mut loudness = LoudnessMeter::new(13230); // 44100samples / 1000ms * 300ms
+            let mut loudness = loudness::Meter::new(13230); // 44100samples / 1000ms * 300ms
             let mut writer = hound::WavWriter::create(file_path, spec)?;
             loop {
                 let iter = buf.pop_iter();
@@ -437,7 +437,7 @@ pub fn meter_rms(source_port_name: &str) -> anyhow::Result<()> {
     let mut last_peak = Instant::now();
 
     // FIXME hardcoded window size
-    let mut loudness = LoudnessMeter::new(13230); // 44100samples / 1000ms * 300ms
+    let mut loudness = loudness::Meter::new(13230); // 44100samples / 1000ms * 300ms
 
     loop {
         let iter = cons.pop_iter();
