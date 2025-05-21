@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use crate::{audio, data, widgets::colored_circle};
 use iced::{
@@ -66,6 +66,7 @@ pub enum Message {
     RmsChanged(audio::Loudness),
     RunMeasurement,
     RecordingChunk(Box<[f32]>),
+    JackNotification(audio::Notification),
 }
 
 pub enum Action {
@@ -109,12 +110,20 @@ impl Recording {
                 ]))
             }
             Message::AudioBackend(event) => match event {
-                audio::Event::Ready(backend) => {
+                audio::Event::Ready(backend, receiver) => {
                     self.state = State::Connected {
                         backend,
                         measurement: MeasurementState::Init,
                     };
-                    Action::None
+
+                    if let Some(receiver) = Arc::into_inner(receiver) {
+                        Action::Task(
+                            Task::stream(ReceiverStream::new(receiver))
+                                .map(Message::JackNotification),
+                        )
+                    } else {
+                        Action::None
+                    }
                 }
                 audio::Event::Error(err) => {
                     println!("{err}");
@@ -135,28 +144,28 @@ impl Recording {
                     };
                     Action::None
                 }
-                audio::Event::Notification(notification) => {
-                    let State::Connected { .. } = self.state else {
-                        return Action::None;
-                    };
-
-                    dbg!(&notification);
-                    match notification {
-                        audio::Notification::OutPortConnected(port) => {
-                            self.selected_out_port = Some(port)
-                        }
-                        audio::Notification::OutPortDisconnected => self.selected_out_port = None,
-                        audio::Notification::InPortConnected(port) => {
-                            self.selected_in_port = Some(port)
-                        }
-                        audio::Notification::InPortDisconnected => self.selected_in_port = None,
-                    }
-
-                    self.check_port_state();
-
-                    Action::None
-                }
             },
+            Message::JackNotification(notification) => {
+                // let State::Connected { .. } = self.state else {
+                //     return Action::None;
+                // };
+
+                dbg!(&notification);
+                match notification {
+                    audio::Notification::OutPortConnected(port) => {
+                        self.selected_out_port = Some(port)
+                    }
+                    audio::Notification::OutPortDisconnected => self.selected_out_port = None,
+                    audio::Notification::InPortConnected(port) => {
+                        self.selected_in_port = Some(port)
+                    }
+                    audio::Notification::InPortDisconnected => self.selected_in_port = None,
+                }
+
+                self.check_port_state();
+
+                Action::None
+            }
             Message::OutPortSelected(dest_port) => {
                 let State::Connected { backend, .. } = &self.state else {
                     return Action::None;

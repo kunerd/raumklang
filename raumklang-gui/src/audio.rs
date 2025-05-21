@@ -5,6 +5,7 @@ pub use loudness::Loudness;
 pub use measurement::Measurement;
 
 use crate::data::{self};
+use crate::log;
 
 use iced::futures::Stream;
 use jack::PortFlags;
@@ -15,14 +16,12 @@ use tokio::sync::mpsc::error::TryRecvError;
 use tokio_stream::wrappers::ReceiverStream;
 
 use std::sync::atomic::AtomicBool;
-use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub enum Event {
-    Ready(Backend),
-    Notification(Notification),
+    Ready(Backend, Arc<mpsc::Receiver<Notification>>),
     Error(Error),
     RetryIn(Duration),
 }
@@ -33,6 +32,14 @@ pub enum Notification {
     OutPortDisconnected,
     InPortConnected(String),
     InPortDisconnected,
+}
+
+pub fn run() -> impl Stream<Item = Event> {
+    let (sender, receiver) = mpsc::channel(1024);
+
+    std::thread::spawn(|| run_audio_backend(sender));
+
+    ReceiverStream::new(receiver)
 }
 
 #[derive(Debug, Clone)]
@@ -102,14 +109,6 @@ impl Backend {
     }
 }
 
-pub fn run() -> impl Stream<Item = Event> {
-    let (sender, receiver) = mpsc::channel(100);
-
-    std::thread::spawn(|| run_audio_backend(sender));
-
-    ReceiverStream::new(receiver)
-}
-
 enum Command {
     RunTest {
         duration: Duration,
@@ -133,7 +132,6 @@ enum State<I> {
     Connected {
         client: jack::AsyncClient<Notifications, ProcessHandler<I>>,
         commands: mpsc::Receiver<Command>,
-        events: std::sync::mpsc::Receiver<Notification>,
         is_server_shutdown: Arc<AtomicBool>,
         process: std::sync::mpsc::SyncSender<ProcessHandlerMessage<I>>,
     },
@@ -147,9 +145,9 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
         match state {
             State::NotConnected(retry_count) => {
                 let is_server_shutdown = Arc::new(AtomicBool::new(false));
-                let (notify_sender, events_receiver) = std::sync::mpsc::sync_channel(64);
+                let (notification_sender, notification_receiver) = mpsc::channel(128);
 
-                match start_jack_client(notify_sender, is_server_shutdown.clone()) {
+                match start_jack_client(notification_sender, is_server_shutdown.clone()) {
                     Ok((client, process_sender)) => {
                         let sample_rate = client.as_client().sample_rate().into();
                         let out_ports = client.as_client().ports(
@@ -170,12 +168,12 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                             out_ports,
                             sender: command_sender,
                         };
-                        let _ = sender.blocking_send(Event::Ready(backend));
+                        let _ = sender
+                            .blocking_send(Event::Ready(backend, Arc::new(notification_receiver)));
 
                         state = State::Connected {
                             client,
                             commands: command_receiver,
-                            events: events_receiver,
                             process: process_sender,
                             is_server_shutdown,
                         };
@@ -189,26 +187,10 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
             State::Connected {
                 client,
                 mut commands,
-                events,
                 process,
                 is_server_shutdown,
             } => {
                 while is_server_shutdown.load(std::sync::atomic::Ordering::Relaxed) != true {
-                    match events.recv_timeout(Duration::from_millis(10)) {
-                        Ok(event) => {
-                            let _ = sender.blocking_send(Event::Notification(event));
-                        }
-                        Err(RecvTimeoutError::Disconnected) => {
-                            break;
-                        }
-                        Err(RecvTimeoutError::Timeout) => {
-                            if sender.is_closed() {
-                                // their is no receiver anymore
-                                return;
-                            }
-                        }
-                    }
-
                     match commands.try_recv() {
                         Ok(Command::ConnectOutPort(dest)) => {
                             if let Some(out_port) =
@@ -323,7 +305,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                         state = State::Error(0);
                     }
                     Err(err) => {
-                        dbg!(err);
+                        log::error!("{}", err);
                         state = State::Error(0);
                     }
                 }
@@ -344,7 +326,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
 }
 
 fn start_jack_client<I>(
-    notify_sender: std::sync::mpsc::SyncSender<Notification>,
+    notify_sender: mpsc::Sender<Notification>,
     has_server_shutdown: Arc<AtomicBool>,
 ) -> Result<
     (
@@ -524,7 +506,7 @@ where
 struct Notifications {
     in_port_name: String,
     out_port_name: String,
-    notification_sender: std::sync::mpsc::SyncSender<Notification>,
+    notification_sender: mpsc::Sender<Notification>,
     has_server_shutdown: Arc<AtomicBool>,
 }
 
@@ -532,7 +514,7 @@ impl Notifications {
     pub fn new(
         in_port_name: String,
         out_port_name: String,
-        notification_sender: std::sync::mpsc::SyncSender<Notification>,
+        notification_sender: mpsc::Sender<Notification>,
         has_server_shutdown: Arc<AtomicBool>,
     ) -> Self {
         Self {
@@ -602,7 +584,7 @@ impl jack::NotificationHandler for Notifications {
         });
 
         if let Some(event) = event {
-            let _ = self.notification_sender.send(event);
+            let _ = self.notification_sender.blocking_send(event);
         }
 
         let in_port = &self.in_port_name;
@@ -621,8 +603,7 @@ impl jack::NotificationHandler for Notifications {
         });
 
         if let Some(event) = event {
-            dbg!(&event);
-            let _ = self.notification_sender.send(event);
+            let _ = self.notification_sender.blocking_send(event);
         }
     }
 
