@@ -10,7 +10,7 @@ use iced::{
     },
     Alignment, Color, Element, Length, Subscription, Task,
 };
-use pliced::chart::{line_series, Chart};
+use prism::{line_series, Chart};
 use tokio_stream::wrappers::ReceiverStream;
 
 pub struct Recording {

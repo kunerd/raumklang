@@ -5,9 +5,6 @@ edition = "2021"
 
 [dependencies]
 raumklang-core = { workspace = true }
-# iced_aw = { git = "https://github.com/kunerd/iced_aw.git", branch = "bump_up_iced", default-features = false, features = ["menu"] }
-# pliced = { git = "https://github.com/kunerd/pliced.git", branch = "bump_up_iced" }
-# pliced = { path = "../../pliced" }
 prism = "0.2"
 tokio = { version = "1.35", features = [ "fs", "macros", "sync" ] }
 tokio-stream = "0.1"
@@ -18,8 +15,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
 rand = "0.8.4"
-# jack = "0.13.2"
-jack = { path = "../../extern/rust-jack" }
+jack = "0.13.2"
 ringbuf = "0.4"
 
 rustfft = "6.0"
@@ -30,9 +26,5 @@ tracing = "0.1.41"
 tracing-subscriber = {version = "0.3.19", features = ["std", "fmt", "json"]}
 
 [dependencies.iced]
-version = "0.13"
-features = ["canvas","tokio", "advanced"]
-
-[patch.crates-io]
-iced = { git = "https://github.com/iced-rs/iced.git", rev = "4b075b9731f4658a885357024cc77dee10e223c3" }
-prism = { git = "https://github.com/kunerd/prism.git", branch = "main" }
+version = "0.14.0-dev"
+features = ["canvas", "tokio", "advanced", "sipper"]

@@ -1,6 +1,6 @@
 use raumklang_core::dbfs;
 
-use pliced::chart::{line_series, Chart, Labels};
+use prism::{line_series, Chart, Labels};
 
 use iced::{
     keyboard,

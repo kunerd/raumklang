@@ -9,7 +9,7 @@ use crate::{
     delete_icon,
 };
 
-use pliced::chart::{line_series, Chart, Labels};
+use prism::chart::{line_series, Chart, Labels};
 use raumklang_core::WavLoadError;
 
 use iced::{
@@ -275,7 +275,7 @@ impl Measurements {
                             line_series(signal.copied().enumerate().map(|(i, s)| (i as f32, s)))
                                 .color(iced::Color::from_rgb8(2, 125, 66)),
                         )
-                        .on_scroll(|state: &pliced::chart::State<()>| {
+                        .on_scroll(|state| {
                             let pos = state.get_coords();
                             let delta = state.scroll_delta();
                             let x_range = state.x_range();

@@ -29,7 +29,8 @@ fn main() -> iced::Result {
         }
     }
 
-    iced::application(Raumklang::title, Raumklang::update, Raumklang::view)
+    iced::application(Raumklang::new, Raumklang::update, Raumklang::view)
+        .title(Raumklang::title)
         .subscription(Raumklang::subscription)
         .theme(Raumklang::theme)
         .settings(Settings {
@@ -40,7 +41,7 @@ fn main() -> iced::Result {
         })
         .default_font(Font::with_name("Noto Sans"))
         .antialiasing(true)
-        .run_with(Raumklang::new)
+        .run()
 }
 
 #[derive(Debug, Clone)]
