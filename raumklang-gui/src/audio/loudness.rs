@@ -1,9 +1,17 @@
 use raumklang_core::{dbfs, loudness};
 
-use ringbuf::{traits::Consumer, HeapCons};
+use ringbuf::{
+    traits::{Consumer, Producer},
+    HeapCons, HeapProd,
+};
 use tokio::sync::mpsc::error::TrySendError;
 
-use std::time::{Duration, Instant};
+use std::{
+    sync::{atomic::AtomicBool, Arc},
+    time::{Duration, Instant},
+};
+
+use crate::data;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Loudness {
@@ -21,18 +29,22 @@ impl Default for Loudness {
 }
 
 pub struct Test {
+    duration: Duration,
     last_rms: Instant,
     last_peak: Instant,
     meter: loudness::Meter,
+    signal_prod: HeapProd<f32>,
     recording: HeapCons<f32>,
     sender: tokio::sync::mpsc::Sender<Loudness>,
-    stop_receiver: std::sync::mpsc::Receiver<()>,
+    stop: Arc<AtomicBool>,
 }
 
 impl Test {
     pub fn new(
+        duration: Duration,
         sender: tokio::sync::mpsc::Sender<Loudness>,
-        stop_receiver: std::sync::mpsc::Receiver<()>,
+        stop: Arc<AtomicBool>,
+        signal_prod: HeapProd<f32>,
         recording_cons: HeapCons<f32>,
     ) -> Self {
         let last_rms = Instant::now();
@@ -42,17 +54,27 @@ impl Test {
         let meter = loudness::Meter::new(13230); // 44100samples / 1000ms * 300ms
 
         Self {
+            duration,
             last_rms,
             last_peak,
             meter,
+            signal_prod,
             recording: recording_cons,
             sender,
-            stop_receiver,
+            stop,
         }
     }
 
     pub fn run(mut self) {
+        // FIXME remove hard-coded values
+        let mut signal = raumklang_core::PinkNoise::with_amplitude(0.8).take_duration(
+            44100,
+            data::Samples::from_duration(self.duration, data::SampleRate::new(44_100)).into(),
+        );
+
         loop {
+            self.signal_prod.push_iter(&mut signal);
+
             let iter = self.recording.pop_iter();
             if self.meter.update_from_iter(iter) {
                 self.last_peak = Instant::now();
@@ -81,11 +103,8 @@ impl Test {
                 self.last_peak = Instant::now();
             }
 
-            match self.stop_receiver.try_recv() {
-                Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    break;
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            if self.stop.load(std::sync::atomic::Ordering::Acquire) == true {
+                break;
             }
 
             std::thread::sleep(Duration::from_millis(10));

@@ -2,27 +2,40 @@ use crate::log;
 
 use super::Loudness;
 
-use raumklang_core::loudness;
-use ringbuf::{traits::Consumer, HeapCons};
+use raumklang_core::{loudness, LinearSineSweep};
+use ringbuf::{
+    traits::{Consumer, Producer},
+    HeapCons, HeapProd,
+};
 
-use std::time::{Duration, Instant};
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant},
+};
 
 pub struct Measurement {
     last_rms: Instant,
     last_peak: Instant,
-    meter: loudness::Meter,
+    sweep: LinearSineSweep,
+    signal_prod: HeapProd<f32>,
     recording_cons: HeapCons<f32>,
+    meter: loudness::Meter,
     loudness_sender: tokio::sync::mpsc::Sender<Loudness>,
     data_sender: tokio::sync::mpsc::Sender<Box<[f32]>>,
-    stop_receiver: std::sync::mpsc::Receiver<()>,
+    stop: Arc<AtomicBool>,
 }
 
 impl Measurement {
     pub fn new(
+        sweep: LinearSineSweep,
         loudness_sender: tokio::sync::mpsc::Sender<Loudness>,
         data_sender: tokio::sync::mpsc::Sender<Box<[f32]>>,
+        signal_prod: HeapProd<f32>,
         recording_cons: HeapCons<f32>,
-        stop_receiver: std::sync::mpsc::Receiver<()>,
+        stop: Arc<AtomicBool>,
     ) -> Self {
         let last_rms = Instant::now();
         let last_peak = Instant::now();
@@ -34,15 +47,19 @@ impl Measurement {
             last_rms,
             last_peak,
             meter,
+            sweep,
+            signal_prod,
             recording_cons,
             data_sender,
             loudness_sender,
-            stop_receiver,
+            stop,
         }
     }
 
     pub fn run(mut self) {
         loop {
+            self.signal_prod.push_iter(&mut self.sweep);
+
             let iter = self.recording_cons.pop_iter();
             let data: Vec<f32> = iter.collect();
             if self.meter.update_from_iter(data.iter().copied()) {
@@ -67,13 +84,8 @@ impl Measurement {
                 self.last_peak = Instant::now();
             }
 
-            match self.stop_receiver.try_recv() {
-                Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    // process.send(ProcessHandlerMessage::Stop);
-                    // worker_state = WorkerState::Idle;
-                    break;
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            if self.stop.load(Ordering::Acquire) == true {
+                break;
             }
 
             std::thread::sleep(Duration::from_millis(10));
