@@ -4,8 +4,8 @@ use super::Loudness;
 
 use raumklang_core::{loudness, LinearSineSweep};
 use ringbuf::{
-    traits::{Consumer, Producer},
-    HeapCons, HeapProd,
+    traits::{Consumer as _, Producer as _, Split as _},
+    HeapCons, HeapProd, HeapRb,
 };
 
 use std::{
@@ -15,6 +15,64 @@ use std::{
     },
     time::{Duration, Instant},
 };
+
+pub fn create<'a, Signal>(buf_size: usize, signal: Signal) -> (Producer, Consumer<Signal>) {
+    let (signal_prod, signal_cons) = HeapRb::new(buf_size).split();
+    let (recording_prod, recording_cons) = HeapRb::new(buf_size).split();
+    let stop = Arc::new(AtomicBool::new(false));
+
+    let producer = Producer {
+        in_buf: signal_cons,
+        out_buf: recording_prod,
+        stop: stop.clone(),
+    };
+
+    let consumer = Consumer {
+        signal,
+        signal_prod,
+        recording_cons,
+        stop,
+    };
+
+    (producer, consumer)
+}
+
+pub struct Producer {
+    pub in_buf: HeapCons<f32>,
+    pub out_buf: HeapProd<f32>,
+    pub stop: Arc<AtomicBool>,
+}
+
+pub struct Consumer<Signal> {
+    signal: Signal,
+    signal_prod: HeapProd<f32>,
+    recording_cons: HeapCons<f32>,
+    stop: Arc<AtomicBool>,
+}
+
+impl<Signal> Consumer<Signal>
+where
+    Signal: IntoIterator<Item = f32>,
+{
+    pub fn run<F>(mut self, mut process: F)
+    where
+        F: FnMut(Vec<f32>),
+    {
+        let mut signal = self.signal.into_iter();
+
+        loop {
+            self.signal_prod.push_iter(&mut signal);
+
+            let data = self.recording_cons.pop_iter().collect();
+
+            (process)(data);
+
+            if self.stop.load(std::sync::atomic::Ordering::Acquire) == true {
+                break;
+            }
+        }
+    }
+}
 
 pub struct Measurement {
     last_rms: Instant,

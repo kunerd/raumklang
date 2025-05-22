@@ -3,6 +3,7 @@ mod measurement;
 
 pub use loudness::Loudness;
 pub use measurement::Measurement;
+use raumklang_core::dbfs;
 
 use crate::data::{self};
 use crate::log;
@@ -12,12 +13,12 @@ use jack::PortFlags;
 use ringbuf::traits::{Consumer, Producer, Split};
 use ringbuf::{HeapCons, HeapProd, HeapRb};
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::error::TryRecvError;
+use tokio::sync::mpsc::error::{TryRecvError, TrySendError};
 use tokio_stream::wrappers::ReceiverStream;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -222,27 +223,63 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
 
                             process.send(msg);
                         }
-                        Ok(Command::RunTest { duration, loudness }) => {
+                        Ok(Command::RunTest {
+                            duration,
+                            loudness: sender,
+                        }) => {
                             let buf_size = client.as_client().buffer_size() as usize;
-                            let (signal_prod, signal_cons) = HeapRb::new(buf_size).split();
-                            let (recording_prod, recording_cons) = HeapRb::new(buf_size).split();
-                            let stop = Arc::new(AtomicBool::new(false));
 
-                            let test = loudness::Test::new(
-                                duration,
-                                loudness,
-                                stop.clone(),
-                                signal_prod,
-                                recording_cons,
-                            );
+                            let sample_rate = client.as_client().sample_rate();
+                            let signal = raumklang_core::PinkNoise::with_amplitude(0.8)
+                                .take_duration(
+                                    sample_rate,
+                                    data::Samples::from_duration(
+                                        duration,
+                                        data::SampleRate::new(sample_rate as u32),
+                                    )
+                                    .into(),
+                                );
 
-                            let process_msg = ProcessHandlerMessage::Measurement {
-                                in_buf: signal_cons,
-                                out_buf: recording_prod,
-                                stop,
-                            };
+                            let mut last_peak = Instant::now();
+                            let mut last_rms = Instant::now();
+                            let mut meter = raumklang_core::loudness::Meter::new(13230); // 44100samples / 1000ms * 300ms
 
-                            std::thread::spawn(|| test.run());
+                            let (producer, consumer) = measurement::create(buf_size, signal);
+
+                            let process_msg = ProcessHandlerMessage::Measurement(producer);
+
+                            std::thread::spawn(move || {
+                                consumer.run(&mut |data: Vec<f32>| {
+                                    if meter.update_from_iter(data.iter().copied()) {
+                                        last_peak = Instant::now();
+                                    }
+
+                                    if last_rms.elapsed() > Duration::from_millis(150) {
+                                        let loudness = Loudness {
+                                            rms: dbfs(meter.rms()),
+                                            peak: dbfs(meter.peak()),
+                                        };
+
+                                        match sender.try_send(loudness) {
+                                            Ok(_) => {}
+                                            Err(TrySendError::Full(_)) => {}
+                                            Err(TrySendError::Closed(_)) => {
+                                                // no one is interested anymore, so we shutdown
+                                                return;
+                                            }
+                                        }
+
+                                        last_rms = Instant::now();
+                                    }
+
+                                    if last_peak.elapsed() > Duration::from_millis(500) {
+                                        meter.reset_peak();
+                                        last_peak = Instant::now();
+                                    }
+
+                                    std::thread::sleep(Duration::from_millis(10));
+                                })
+                            });
 
                             process.send(process_msg);
                         }
@@ -254,9 +291,6 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                             data_sender,
                         }) => {
                             let buf_size = client.as_client().buffer_size() as usize;
-                            let (signal_prod, signal_cons) = HeapRb::new(buf_size).split();
-                            let (recording_prod, recording_cons) = HeapRb::new(buf_size).split();
-                            let stop = Arc::new(AtomicBool::new(false));
 
                             let sample_rate = client.as_client().sample_rate();
                             let sweep = raumklang_core::LinearSineSweep::new(
@@ -267,22 +301,42 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                                 sample_rate,
                             );
 
-                            let measurement = Measurement::new(
-                                sweep,
-                                loudness_sender,
-                                data_sender,
-                                signal_prod,
-                                recording_cons,
-                                stop.clone(),
-                            );
+                            let mut last_peak = Instant::now();
+                            let mut last_rms = Instant::now();
+                            let mut meter = raumklang_core::loudness::Meter::new(13230); // 44100samples / 1000ms * 300ms
 
-                            let process_msg = ProcessHandlerMessage::Measurement {
-                                in_buf: signal_cons,
-                                out_buf: recording_prod,
-                                stop,
-                            };
+                            let (producer, consumer) = measurement::create(buf_size, sweep);
 
-                            std::thread::spawn(|| measurement.run());
+                            let process_msg = ProcessHandlerMessage::Measurement(producer);
+
+                            std::thread::spawn(move || {
+                                consumer.run(&mut |data: Vec<f32>| {
+                                    if meter.update_from_iter(data.iter().copied()) {
+                                        last_peak = Instant::now();
+                                    }
+
+                                    if let Err(err) = data_sender.try_send(data.into_boxed_slice())
+                                    {
+                                        log::error!("failed to send measurement data to UI {err}");
+                                    }
+
+                                    if last_rms.elapsed() > Duration::from_millis(150) {
+                                        loudness_sender.try_send(Loudness {
+                                            rms: raumklang_core::dbfs(meter.rms()),
+                                            peak: raumklang_core::dbfs(meter.peak()),
+                                        });
+
+                                        last_rms = Instant::now();
+                                    }
+
+                                    if last_peak.elapsed() > Duration::from_millis(500) {
+                                        meter.reset_peak();
+                                        last_peak = Instant::now();
+                                    }
+
+                                    std::thread::sleep(Duration::from_millis(10));
+                                })
+                            });
 
                             process.send(process_msg);
                         }
@@ -369,20 +423,12 @@ struct ProcessHandler {
 enum ProcessHandlerMessage {
     Stop,
     SetAmplitude(f32),
-    Measurement {
-        in_buf: HeapCons<f32>,
-        out_buf: HeapProd<f32>,
-        stop: Arc<AtomicBool>,
-    },
+    Measurement(measurement::Producer),
 }
 
 enum ProcessHandlerState {
     Idle,
-    Measurement {
-        in_buf: HeapCons<f32>,
-        out_buf: HeapProd<f32>,
-        stop: Arc<AtomicBool>,
-    },
+    Measurement(measurement::Producer),
 }
 
 impl ProcessHandler {
@@ -412,16 +458,8 @@ impl jack::ProcessHandler for ProcessHandler {
             match msg {
                 ProcessHandlerMessage::Stop => self.state = ProcessHandlerState::Idle,
                 ProcessHandlerMessage::SetAmplitude(amplitude) => self.amplitued = amplitude,
-                ProcessHandlerMessage::Measurement {
-                    in_buf,
-                    out_buf,
-                    stop,
-                } => {
-                    self.state = ProcessHandlerState::Measurement {
-                        in_buf,
-                        out_buf,
-                        stop,
-                    }
+                ProcessHandlerMessage::Measurement(producer) => {
+                    self.state = ProcessHandlerState::Measurement(producer)
                 }
             }
         }
@@ -432,24 +470,22 @@ impl jack::ProcessHandler for ProcessHandler {
 
                 out_port.fill_with(|| 0.0);
             }
-            ProcessHandlerState::Measurement {
-                in_buf,
-                out_buf,
-                stop,
-            } => {
+            ProcessHandlerState::Measurement(producer) => {
                 let out_port = self.out_port.as_mut_slice(process_scope);
-                let mut signal = in_buf.pop_iter();
+                let mut signal = producer.in_buf.pop_iter();
                 for o in out_port.iter_mut() {
                     if let Some(s) = signal.next() {
                         *o = s * self.amplitued;
                     } else {
                         *o = 0.0;
-                        stop.store(true, std::sync::atomic::Ordering::Release);
+                        producer
+                            .stop
+                            .store(true, std::sync::atomic::Ordering::Release);
                     }
                 }
 
                 let in_port = self.in_port.as_slice(process_scope);
-                out_buf.push_slice(in_port);
+                producer.out_buf.push_slice(in_port);
             }
         }
         jack::Control::Continue
