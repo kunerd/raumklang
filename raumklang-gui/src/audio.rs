@@ -2,6 +2,7 @@ mod loudness;
 mod measurement;
 
 pub use loudness::Loudness;
+use loudness::Test;
 pub use measurement::Measurement;
 use raumklang_core::dbfs;
 
@@ -51,6 +52,10 @@ pub struct Backend {
     sender: mpsc::Sender<Command>,
 }
 
+pub trait Process {
+    fn process(&mut self, data: &[f32]);
+}
+
 impl Backend {
     pub fn run_test(&self, duration: Duration) -> mpsc::Receiver<Loudness> {
         let (loudness_sender, loudness_receiver) = mpsc::channel(128);
@@ -72,7 +77,7 @@ impl Backend {
         duration: Duration,
     ) -> (mpsc::Receiver<Loudness>, mpsc::Receiver<Box<[f32]>>) {
         let (loudness_sender, loudness_receiver) = mpsc::channel(128);
-        let (data_sender, data_receiver) = mpsc::channel(128);
+        let (data_sender, data_receiver) = mpsc::channel(1024);
 
         let command = Command::RunMeasurement {
             duration,
@@ -240,48 +245,15 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                                     .into(),
                                 );
 
-                            let mut last_peak = Instant::now();
-                            let mut last_rms = Instant::now();
-                            let mut meter = raumklang_core::loudness::Meter::new(13230); // 44100samples / 1000ms * 300ms
-
                             let (producer, consumer) = measurement::create(buf_size, signal);
 
                             let process_msg = ProcessHandlerMessage::Measurement(producer);
-
-                            std::thread::spawn(move || {
-                                consumer.run(&mut |data: Vec<f32>| {
-                                    if meter.update_from_iter(data.iter().copied()) {
-                                        last_peak = Instant::now();
-                                    }
-
-                                    if last_rms.elapsed() > Duration::from_millis(150) {
-                                        let loudness = Loudness {
-                                            rms: dbfs(meter.rms()),
-                                            peak: dbfs(meter.peak()),
-                                        };
-
-                                        match sender.try_send(loudness) {
-                                            Ok(_) => {}
-                                            Err(TrySendError::Full(_)) => {}
-                                            Err(TrySendError::Closed(_)) => {
-                                                // no one is interested anymore, so we shutdown
-                                                return;
-                                            }
-                                        }
-
-                                        last_rms = Instant::now();
-                                    }
-
-                                    if last_peak.elapsed() > Duration::from_millis(500) {
-                                        meter.reset_peak();
-                                        last_peak = Instant::now();
-                                    }
-
-                                    std::thread::sleep(Duration::from_millis(10));
-                                })
-                            });
-
                             process.send(process_msg);
+
+                            let test_process = Test::new(sender);
+                            std::thread::spawn(move || {
+                                consumer.run(test_process);
+                            });
                         }
                         Ok(Command::RunMeasurement {
                             start_frequency,
@@ -301,44 +273,16 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                                 sample_rate,
                             );
 
-                            let mut last_peak = Instant::now();
-                            let mut last_rms = Instant::now();
-                            let mut meter = raumklang_core::loudness::Meter::new(13230); // 44100samples / 1000ms * 300ms
-
                             let (producer, consumer) = measurement::create(buf_size, sweep);
 
                             let process_msg = ProcessHandlerMessage::Measurement(producer);
-
-                            std::thread::spawn(move || {
-                                consumer.run(&mut |data: Vec<f32>| {
-                                    if meter.update_from_iter(data.iter().copied()) {
-                                        last_peak = Instant::now();
-                                    }
-
-                                    if let Err(err) = data_sender.try_send(data.into_boxed_slice())
-                                    {
-                                        log::error!("failed to send measurement data to UI {err}");
-                                    }
-
-                                    if last_rms.elapsed() > Duration::from_millis(150) {
-                                        loudness_sender.try_send(Loudness {
-                                            rms: raumklang_core::dbfs(meter.rms()),
-                                            peak: raumklang_core::dbfs(meter.peak()),
-                                        });
-
-                                        last_rms = Instant::now();
-                                    }
-
-                                    if last_peak.elapsed() > Duration::from_millis(500) {
-                                        meter.reset_peak();
-                                        last_peak = Instant::now();
-                                    }
-
-                                    std::thread::sleep(Duration::from_millis(10));
-                                })
-                            });
-
                             process.send(process_msg);
+
+                            let loudness = loudness::Test::new(loudness_sender);
+                            let measurement = Measurement::new(loudness, data_sender);
+                            std::thread::spawn(move || {
+                                consumer.run(measurement);
+                            });
                         }
                         Ok(Command::Stop) => {
                             process.send(ProcessHandlerMessage::Stop);
