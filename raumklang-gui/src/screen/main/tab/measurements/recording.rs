@@ -3,12 +3,19 @@ use std::{sync::Arc, time::Duration};
 use crate::{audio, data, widgets::colored_circle};
 use iced::{
     alignment::Vertical,
+    // futures::task,
+    task,
     time,
     widget::{
         button, column, container, horizontal_rule, horizontal_space, pick_list, row, slider, text,
         text_input, Button,
     },
-    Alignment, Color, Element, Length, Subscription, Task,
+    Alignment,
+    Color,
+    Element,
+    Length,
+    Subscription,
+    Task,
 };
 use prism::{line_series, Chart};
 use tokio_stream::wrappers::ReceiverStream;
@@ -39,6 +46,7 @@ enum MeasurementState {
     ReadyForTest,
     Testing {
         loudness: audio::Loudness,
+        _stream_handle: task::Handle,
     },
     PreparingMeasurement {
         duration: Duration,
@@ -100,13 +108,20 @@ impl Recording {
                 let duration = Duration::from_secs(3);
                 let rms_receiver = backend.run_test(duration);
 
+                let (recv, handle) = Task::stream(ReceiverStream::new(rms_receiver))
+                    .map(Message::RmsChanged)
+                    .abortable();
+
+                let handle = handle.abort_on_drop();
+
                 *measurement = MeasurementState::Testing {
                     loudness: audio::Loudness::default(),
+                    _stream_handle: handle,
                 };
 
                 Action::Task(Task::batch([
                     Task::future(backend.clone().set_volume(self.volume)).discard(),
-                    Task::stream(ReceiverStream::new(rms_receiver)).map(Message::RmsChanged),
+                    recv,
                 ]))
             }
             Message::AudioBackend(event) => match event {
@@ -146,11 +161,6 @@ impl Recording {
                 }
             },
             Message::JackNotification(notification) => {
-                // let State::Connected { .. } = self.state else {
-                //     return Action::None;
-                // };
-
-                dbg!(&notification);
                 match notification {
                     audio::Notification::OutPortConnected(port) => {
                         self.selected_out_port = Some(port)
@@ -207,7 +217,7 @@ impl Recording {
                     return Action::None;
                 };
 
-                backend.stop_test();
+                // backend.stop_test();
 
                 *measurement = match measurement {
                     MeasurementState::Init => MeasurementState::Init,
@@ -243,7 +253,7 @@ impl Recording {
                     return Action::None;
                 };
 
-                backend.stop_test();
+                // backend.stop_test();
 
                 let nquist = Into::<u32>::into(sample_rate) as u16 / 2 - 1;
                 *measurement = MeasurementState::PreparingMeasurement {

@@ -4,22 +4,21 @@ mod measurement;
 pub use loudness::Loudness;
 use loudness::Test;
 pub use measurement::Measurement;
-use raumklang_core::dbfs;
 
 use crate::data::{self};
 use crate::log;
 
 use iced::futures::Stream;
 use jack::PortFlags;
-use ringbuf::traits::{Consumer, Producer, Split};
-use ringbuf::{HeapCons, HeapProd, HeapRb};
+use ringbuf::traits::{Consumer, Producer};
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::error::{TryRecvError, TrySendError};
+use tokio::sync::mpsc::error::TryRecvError;
 use tokio_stream::wrappers::ReceiverStream;
 
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::thread;
+use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -53,8 +52,10 @@ pub struct Backend {
 }
 
 pub trait Process {
-    fn process(&mut self, data: &[f32]);
+    fn process(&mut self, data: &[f32]) -> Result<(), Stop>;
 }
+
+pub struct Stop;
 
 impl Backend {
     pub fn run_test(&self, duration: Duration) -> mpsc::Receiver<Loudness> {
@@ -197,6 +198,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                 is_server_shutdown,
             } => {
                 while is_server_shutdown.load(std::sync::atomic::Ordering::Relaxed) != true {
+                    // FIXME: wrong channel type
                     match commands.try_recv() {
                         Ok(Command::ConnectOutPort(dest)) => {
                             if let Some(out_port) =
@@ -232,8 +234,6 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                             duration,
                             loudness: sender,
                         }) => {
-                            let buf_size = client.as_client().buffer_size() as usize;
-
                             let sample_rate = client.as_client().sample_rate();
                             let signal = raumklang_core::PinkNoise::with_amplitude(0.8)
                                 .take_duration(
@@ -245,14 +245,15 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                                     .into(),
                                 );
 
-                            let (producer, consumer) = measurement::create(buf_size, signal);
+                            let buf_size = client.as_client().buffer_size() as usize;
+                            let (producer, consumer) = measurement::create(buf_size);
 
                             let process_msg = ProcessHandlerMessage::Measurement(producer);
                             process.send(process_msg);
 
                             let test_process = Test::new(sender);
                             std::thread::spawn(move || {
-                                consumer.run(test_process);
+                                consumer.run(signal, test_process);
                             });
                         }
                         Ok(Command::RunMeasurement {
@@ -262,8 +263,6 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                             loudness_sender,
                             data_sender,
                         }) => {
-                            let buf_size = client.as_client().buffer_size() as usize;
-
                             let sample_rate = client.as_client().sample_rate();
                             let sweep = raumklang_core::LinearSineSweep::new(
                                 start_frequency,
@@ -273,7 +272,8 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                                 sample_rate,
                             );
 
-                            let (producer, consumer) = measurement::create(buf_size, sweep);
+                            let buf_size = client.as_client().buffer_size() as usize;
+                            let (producer, consumer) = measurement::create(buf_size);
 
                             let process_msg = ProcessHandlerMessage::Measurement(producer);
                             process.send(process_msg);
@@ -281,7 +281,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                             let loudness = loudness::Test::new(loudness_sender);
                             let measurement = Measurement::new(loudness, data_sender);
                             std::thread::spawn(move || {
-                                consumer.run(measurement);
+                                consumer.run(sweep, measurement);
                             });
                         }
                         Ok(Command::Stop) => {
@@ -293,6 +293,8 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                         }
                         Err(TryRecvError::Empty) => {}
                     }
+
+                    thread::sleep(Duration::from_millis(100));
                 }
 
                 match client.deactivate() {
@@ -370,7 +372,9 @@ enum ProcessHandlerMessage {
     Measurement(measurement::Producer),
 }
 
+#[derive(Default)]
 enum ProcessHandlerState {
+    #[default]
     Idle,
     Measurement(measurement::Producer),
 }
@@ -408,30 +412,55 @@ impl jack::ProcessHandler for ProcessHandler {
             }
         }
 
-        match &mut self.state {
+        let state = std::mem::take(&mut self.state);
+        self.state = match state {
             ProcessHandlerState::Idle => {
                 let out_port = self.out_port.as_mut_slice(process_scope);
 
                 out_port.fill_with(|| 0.0);
+
+                ProcessHandlerState::Idle
             }
-            ProcessHandlerState::Measurement(producer) => {
-                let out_port = self.out_port.as_mut_slice(process_scope);
-                let mut signal = producer.in_buf.pop_iter();
-                for o in out_port.iter_mut() {
-                    if let Some(s) = signal.next() {
-                        *o = s * self.amplitued;
-                    } else {
-                        *o = 0.0;
-                        producer
-                            .stop
-                            .store(true, std::sync::atomic::Ordering::Release);
+            ProcessHandlerState::Measurement(mut producer) => {
+                {
+                    if producer
+                        .state
+                        .consumer_dropped
+                        .load(atomic::Ordering::Acquire)
+                    {
+                        // FIXME: hacky as fuck
+                        dbg!("consumer dropped, go to idle");
+                        self.state = ProcessHandlerState::Idle;
+                        return jack::Control::Continue;
                     }
+
+                    let out_port = self.out_port.as_mut_slice(process_scope);
+                    let mut signal = producer.in_buf.pop_iter();
+                    for o in out_port.iter_mut() {
+                        if let Some(s) = signal.next() {
+                            *o = s * self.amplitued;
+                        } else {
+                            *o = 0.0;
+                            if producer
+                                .state
+                                .signal_exhausted
+                                .load(atomic::Ordering::Acquire)
+                            {
+                                // FIXME: hacky as fuck
+                                self.state = ProcessHandlerState::Idle;
+                                return jack::Control::Continue;
+                            }
+                        }
+                    }
+
+                    let in_port = self.in_port.as_slice(process_scope);
+                    producer.out_buf.push_slice(in_port);
                 }
 
-                let in_port = self.in_port.as_slice(process_scope);
-                producer.out_buf.push_slice(in_port);
+                ProcessHandlerState::Measurement(producer)
             }
-        }
+        };
+
         jack::Control::Continue
     }
 }
