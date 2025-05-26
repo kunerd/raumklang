@@ -4,6 +4,8 @@ mod measurement;
 pub use loudness::Loudness;
 use loudness::Test;
 pub use measurement::Measurement;
+use ringbuf::consumer::PopIter;
+use ringbuf::HeapCons;
 
 use crate::data::{self};
 use crate::log;
@@ -413,51 +415,54 @@ impl jack::ProcessHandler for ProcessHandler {
         }
 
         let state = std::mem::take(&mut self.state);
+        let out_port = self.out_port.as_mut_slice(process_scope);
         self.state = match state {
             ProcessHandlerState::Idle => {
-                let out_port = self.out_port.as_mut_slice(process_scope);
-
-                out_port.fill_with(|| 0.0);
+                out_port.fill(0.0);
 
                 ProcessHandlerState::Idle
             }
             ProcessHandlerState::Measurement(mut producer) => {
-                {
-                    if producer
-                        .state
-                        .consumer_dropped
-                        .load(atomic::Ordering::Acquire)
-                    {
-                        // FIXME: hacky as fuck
-                        dbg!("consumer dropped, go to idle");
-                        self.state = ProcessHandlerState::Idle;
-                        return jack::Control::Continue;
-                    }
+                let in_port = self.in_port.as_slice(process_scope);
+                producer.recording_prod.push_slice(in_port);
 
-                    let out_port = self.out_port.as_mut_slice(process_scope);
-                    let mut signal = producer.in_buf.pop_iter();
+                let mut write_signal = |signal: &mut PopIter<'_, HeapCons<f32>>| {
+                    let mut buf_empty = false;
                     for o in out_port.iter_mut() {
                         if let Some(s) = signal.next() {
                             *o = s * self.amplitued;
                         } else {
                             *o = 0.0;
-                            if producer
-                                .state
-                                .signal_exhausted
-                                .load(atomic::Ordering::Acquire)
-                            {
-                                // FIXME: hacky as fuck
-                                self.state = ProcessHandlerState::Idle;
-                                return jack::Control::Continue;
-                            }
+                            buf_empty = true;
                         }
                     }
 
-                    let in_port = self.in_port.as_slice(process_scope);
-                    producer.out_buf.push_slice(in_port);
-                }
+                    buf_empty
+                };
 
-                ProcessHandlerState::Measurement(producer)
+                let mut pop_state = producer.pop_iter();
+                match pop_state {
+                    measurement::PopState::Some(ref mut signal) => {
+                        write_signal(signal);
+
+                        drop(pop_state);
+                        ProcessHandlerState::Measurement(producer)
+                    }
+                    measurement::PopState::Exhausted(ref mut signal) => {
+                        let buf_empty = write_signal(signal);
+
+                        drop(pop_state);
+                        if buf_empty {
+                            ProcessHandlerState::Idle
+                        } else {
+                            ProcessHandlerState::Measurement(producer)
+                        }
+                    }
+                    measurement::PopState::ConsumerDropped => {
+                        out_port.fill(0.0);
+                        ProcessHandlerState::Idle
+                    }
+                }
             }
         };
 

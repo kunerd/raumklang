@@ -3,6 +3,7 @@ use crate::log;
 use super::{loudness, Process, Stop};
 
 use ringbuf::{
+    consumer::PopIter,
     traits::{Consumer as _, Producer as _, Split as _},
     HeapCons, HeapProd, HeapRb,
 };
@@ -27,8 +28,8 @@ pub fn create(buf_size: usize) -> (Producer, Consumer) {
     let state = Arc::new(state);
 
     let producer = Producer {
-        in_buf: signal_cons,
-        out_buf: recording_prod,
+        signal_cons,
+        recording_prod,
         state: Arc::clone(&state),
     };
 
@@ -42,39 +43,47 @@ pub fn create(buf_size: usize) -> (Producer, Consumer) {
 }
 
 pub struct Producer {
-    pub in_buf: HeapCons<f32>,
-    pub out_buf: HeapProd<f32>,
-    // pub stop: Arc<AtomicBool>,
-    pub state: Arc<State>,
+    signal_cons: HeapCons<f32>,
+    pub recording_prod: HeapProd<f32>,
+    state: Arc<State>,
 }
 
 pub struct Consumer {
     signal_prod: HeapProd<f32>,
     recording_cons: HeapCons<f32>,
-    // stop: Arc<AtomicBool>,
     state: Arc<State>,
 }
 
 pub struct State {
-    pub signal_exhausted: AtomicBool,
+    signal_exhausted: AtomicBool,
     // signal_buf_underruns: AtomicUsize,
     // recording_buf_underruns: AtomicUsize,
     producer_dropped: AtomicBool,
-    pub consumer_dropped: AtomicBool,
+    consumer_dropped: AtomicBool,
+}
+
+pub enum PopState<'a> {
+    Some(PopIter<'a, HeapCons<f32>>),
+    Exhausted(PopIter<'a, HeapCons<f32>>),
+    ConsumerDropped,
+}
+
+impl Producer {
+    pub fn pop_iter(&mut self) -> PopState {
+        if self.state.consumer_dropped.load(atomic::Ordering::Acquire) {
+            PopState::ConsumerDropped
+        } else if self.state.signal_exhausted.load(atomic::Ordering::Acquire) {
+            PopState::Exhausted(self.signal_cons.pop_iter())
+        } else {
+            PopState::Some(self.signal_cons.pop_iter())
+        }
+    }
 }
 
 impl Drop for Producer {
     fn drop(&mut self) {
         self.state
             .producer_dropped
-            .store(true, atomic::Ordering::Release);
-    }
-}
-
-impl Drop for Consumer {
-    fn drop(&mut self) {
-        self.state
-            .consumer_dropped
             .store(true, atomic::Ordering::Release);
     }
 }
@@ -114,6 +123,14 @@ impl Consumer {
             // FIXME: calculate sleep duration from buf size and sample_rate
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+}
+
+impl Drop for Consumer {
+    fn drop(&mut self) {
+        self.state
+            .consumer_dropped
+            .store(true, atomic::Ordering::Release);
     }
 }
 
