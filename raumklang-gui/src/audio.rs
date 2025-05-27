@@ -5,6 +5,8 @@ mod process;
 pub use loudness::Loudness;
 pub use measurement::Measurement;
 pub use process::Process;
+use ringbuf::traits::{Consumer, Producer, Split};
+use ringbuf::{HeapCons, HeapProd, HeapRb};
 
 use crate::data::{self};
 use crate::log;
@@ -132,7 +134,7 @@ enum State {
         client: jack::AsyncClient<Notifications, ProcessHandler>,
         is_server_shutdown: Arc<AtomicBool>,
         command_rx: mpsc::Receiver<Command>,
-        process: std::sync::mpsc::SyncSender<ProcessHandlerMessage>,
+        process_tx: HeapProd<ProcessHandlerMessage>,
         volume: Arc<AtomicF32>,
     },
     Error(u64),
@@ -180,7 +182,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                         state = State::Connected {
                             client,
                             command_rx: command_receiver,
-                            process: process_sender,
+                            process_tx: process_sender,
                             is_server_shutdown,
                             volume,
                         };
@@ -193,14 +195,14 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
             }
             State::Connected {
                 client,
-                command_rx: mut commands,
-                process,
+                mut command_rx,
+                mut process_tx,
                 is_server_shutdown,
                 volume,
             } => {
                 while is_server_shutdown.load(std::sync::atomic::Ordering::Relaxed) != true {
                     // FIXME: wrong channel type
-                    match commands.try_recv() {
+                    match command_rx.try_recv() {
                         Ok(Command::ConnectOutPort(dest)) => {
                             if let Some(out_port) =
                                 client.as_client().port_by_name("gui:measurement_out")
@@ -246,7 +248,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                             let (producer, consumer) = measurement::create(buf_size);
 
                             let process_msg = ProcessHandlerMessage::Measurement(producer);
-                            process.send(process_msg);
+                            process_tx.try_push(process_msg);
 
                             let test_process = Test::new(sender);
                             std::thread::spawn(move || {
@@ -273,7 +275,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                             let (producer, consumer) = measurement::create(buf_size);
 
                             let process_msg = ProcessHandlerMessage::Measurement(producer);
-                            process.send(process_msg);
+                            process_tx.try_push(process_msg);
 
                             let loudness = loudness::Test::new(loudness_sender);
                             let measurement = Measurement::new(loudness, data_sender);
@@ -324,7 +326,7 @@ fn start_jack_client(
 ) -> Result<
     (
         jack::AsyncClient<Notifications, ProcessHandler>,
-        std::sync::mpsc::SyncSender<ProcessHandlerMessage>,
+        HeapProd<ProcessHandlerMessage>,
     ),
     Error,
 > {
@@ -356,7 +358,8 @@ struct ProcessHandler {
     in_port: jack::Port<jack::AudioIn>,
     volume: Arc<AtomicF32>,
 
-    msg_receiver: std::sync::mpsc::Receiver<ProcessHandlerMessage>,
+    // msg_receiver: std::sync::mpsc::Receiver<ProcessHandlerMessage>,
+    msg_receiver: HeapCons<ProcessHandlerMessage>,
 
     state: ProcessHandlerState,
 }
@@ -377,8 +380,8 @@ impl ProcessHandler {
         out_port: jack::Port<jack::AudioOut>,
         in_port: jack::Port<jack::AudioIn>,
         volume: Arc<AtomicF32>,
-    ) -> (Self, std::sync::mpsc::SyncSender<ProcessHandlerMessage>) {
-        let (msg_sender, msg_receiver) = std::sync::mpsc::sync_channel(64);
+    ) -> (Self, HeapProd<ProcessHandlerMessage>) {
+        let (msg_sender, msg_receiver) = HeapRb::new(32).split();
 
         (
             Self {
@@ -396,7 +399,7 @@ impl ProcessHandler {
 
 impl jack::ProcessHandler for ProcessHandler {
     fn process(&mut self, _: &jack::Client, process_scope: &jack::ProcessScope) -> jack::Control {
-        if let Ok(msg) = self.msg_receiver.try_recv() {
+        if let Some(msg) = self.msg_receiver.try_pop() {
             match msg {
                 ProcessHandlerMessage::Measurement(producer) => {
                     self.state = ProcessHandlerState::Measurement(producer)
