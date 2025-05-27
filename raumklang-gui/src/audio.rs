@@ -19,7 +19,6 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio_stream::wrappers::ReceiverStream;
 
-use std::os::fd::AsFd;
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
 use std::thread;
@@ -45,6 +44,7 @@ pub struct Backend {
     pub sample_rate: data::SampleRate,
     pub in_ports: Vec<String>,
     pub out_ports: Vec<String>,
+    volume: Arc<AtomicF32>,
     sender: mpsc::Sender<Command>,
 }
 
@@ -105,9 +105,7 @@ impl Backend {
     }
 
     pub async fn set_volume(self, volume: f32) {
-        let command = Command::SetVolume(volume);
-
-        let _ = self.sender.send(command).await;
+        self.volume.store(volume, atomic::Ordering::Release)
     }
 }
 
@@ -125,7 +123,6 @@ enum Command {
         start_frequency: u16,
         end_frequency: u16,
     },
-    SetVolume(f32),
 }
 
 enum State {
@@ -135,7 +132,6 @@ enum State {
         is_server_shutdown: Arc<AtomicBool>,
         command_rx: mpsc::Receiver<Command>,
         process_tx: HeapProd<ProcessHandlerMessage>,
-        volume: Arc<AtomicF32>,
     },
     Error(u64),
 }
@@ -174,6 +170,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                             sample_rate,
                             in_ports,
                             out_ports,
+                            volume,
                             sender: command_sender,
                         };
                         let _ = sender
@@ -184,7 +181,6 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                             command_rx: command_receiver,
                             process_tx: process_sender,
                             is_server_shutdown,
-                            volume,
                         };
                     }
                     Err(err) => {
@@ -198,7 +194,6 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                 mut command_rx,
                 mut process_tx,
                 is_server_shutdown,
-                volume,
             } => {
                 while is_server_shutdown.load(std::sync::atomic::Ordering::Relaxed) != true {
                     // FIXME: wrong channel type
@@ -225,9 +220,6 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                                 .as_client()
                                 .connect_ports_by_name(&source, "gui:measurement_in")
                                 .unwrap();
-                        }
-                        Ok(Command::SetVolume(new_volume)) => {
-                            volume.store(new_volume, atomic::Ordering::Release);
                         }
                         Ok(Command::RunTest {
                             duration,
