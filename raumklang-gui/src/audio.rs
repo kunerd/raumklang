@@ -51,10 +51,14 @@ pub struct Backend {
 }
 
 pub trait Process {
-    fn process(&mut self, data: &[f32]) -> Result<(), Stop>;
+    #[must_use]
+    fn process(&mut self, data: &[f32]) -> Control;
 }
 
-pub struct Stop;
+pub enum Control {
+    Continue,
+    Stop,
+}
 
 impl Backend {
     pub fn run_test(&self, duration: Duration) -> mpsc::Receiver<Loudness> {

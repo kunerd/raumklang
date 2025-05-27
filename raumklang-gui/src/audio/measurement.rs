@@ -1,6 +1,6 @@
 use crate::log;
 
-use super::{loudness, Process, Stop};
+use super::{loudness, Control, Process};
 
 use ringbuf::{
     traits::{Consumer as _, Producer as _, Split as _},
@@ -155,8 +155,7 @@ impl Consumer {
                 break;
             }
 
-            if processor.process(&data).is_err() {
-                dbg!("processor errored, drop consumer");
+            if let Control::Stop = processor.process(&data) {
                 break;
             }
 
@@ -192,13 +191,15 @@ impl Measurement {
 }
 
 impl Process for Measurement {
-    fn process(&mut self, data: &[f32]) -> Result<(), Stop> {
-        self.loudness.process(data)?;
+    fn process(&mut self, data: &[f32]) -> Control {
+        if let Control::Stop = self.loudness.process(data) {
+            return Control::Stop;
+        }
 
         if let Err(err) = self.data_sender.try_send(data.to_vec().into_boxed_slice()) {
             log::error!("failed to send measurement data to UI {err}");
         }
 
-        Ok(())
+        Control::Continue
     }
 }

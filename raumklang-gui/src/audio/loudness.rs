@@ -4,7 +4,7 @@ use tokio::sync::mpsc::error::TrySendError;
 
 use std::time::{Duration, Instant};
 
-use super::{Process, Stop};
+use super::{Control, Process};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Loudness {
@@ -46,7 +46,7 @@ impl Test {
 }
 
 impl Process for Test {
-    fn process(&mut self, data: &[f32]) -> Result<(), Stop> {
+    fn process(&mut self, data: &[f32]) -> Control {
         self.meter.update_from_iter(data.iter().copied());
 
         if self.last_rms.elapsed() > Duration::from_millis(150) {
@@ -59,7 +59,7 @@ impl Process for Test {
                 Ok(_) => {}
                 Err(TrySendError::Full(_)) => {}
                 Err(TrySendError::Closed(_)) => {
-                    return Err(Stop);
+                    return Control::Stop;
                 }
             }
 
@@ -71,6 +71,6 @@ impl Process for Test {
             self.last_peak = Instant::now();
         }
 
-        Ok(())
+        Control::Continue
     }
 }
