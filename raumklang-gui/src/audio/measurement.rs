@@ -1,6 +1,6 @@
 use crate::log;
 
-use super::{loudness, Control, Process};
+use super::{loudness, process::Control, Process};
 
 use ringbuf::{
     traits::{Consumer as _, Producer as _, Split as _},

@@ -1,8 +1,10 @@
 mod loudness;
 mod measurement;
+mod process;
 
 pub use loudness::Loudness;
 pub use measurement::Measurement;
+pub use process::Process;
 
 use crate::data::{self};
 use crate::log;
@@ -48,16 +50,6 @@ pub struct Backend {
     pub in_ports: Vec<String>,
     pub out_ports: Vec<String>,
     sender: mpsc::Sender<Command>,
-}
-
-pub trait Process {
-    #[must_use]
-    fn process(&mut self, data: &[f32]) -> Control;
-}
-
-pub enum Control {
-    Continue,
-    Stop,
 }
 
 impl Backend {
