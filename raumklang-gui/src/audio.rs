@@ -10,13 +10,15 @@ use crate::data::{self};
 use crate::log;
 use loudness::Test;
 
+use atomic_float::AtomicF32;
 use iced::futures::Stream;
 use jack::PortFlags;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio_stream::wrappers::ReceiverStream;
 
-use std::sync::atomic::AtomicBool;
+use std::os::fd::AsFd;
+use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -36,20 +38,20 @@ pub enum Notification {
     InPortDisconnected,
 }
 
-pub fn run() -> impl Stream<Item = Event> {
-    let (sender, receiver) = mpsc::channel(1024);
-
-    std::thread::spawn(|| run_audio_backend(sender));
-
-    ReceiverStream::new(receiver)
-}
-
 #[derive(Debug, Clone)]
 pub struct Backend {
     pub sample_rate: data::SampleRate,
     pub in_ports: Vec<String>,
     pub out_ports: Vec<String>,
     sender: mpsc::Sender<Command>,
+}
+
+pub fn run() -> impl Stream<Item = Event> {
+    let (sender, receiver) = mpsc::channel(1024);
+
+    std::thread::spawn(|| run_audio_backend(sender));
+
+    ReceiverStream::new(receiver)
 }
 
 impl Backend {
@@ -128,9 +130,10 @@ enum State {
     NotConnected(u64),
     Connected {
         client: jack::AsyncClient<Notifications, ProcessHandler>,
-        commands: mpsc::Receiver<Command>,
         is_server_shutdown: Arc<AtomicBool>,
+        command_rx: mpsc::Receiver<Command>,
         process: std::sync::mpsc::SyncSender<ProcessHandlerMessage>,
+        volume: Arc<AtomicF32>,
     },
     Error(u64),
 }
@@ -141,10 +144,16 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
     loop {
         match state {
             State::NotConnected(retry_count) => {
-                let is_server_shutdown = Arc::new(AtomicBool::new(false));
                 let (notification_sender, notification_receiver) = mpsc::channel(128);
+                let is_server_shutdown = Arc::new(AtomicBool::new(false));
+                // TODO: make configurable
+                let volume = Arc::new(AtomicF32::new(0.5));
 
-                match start_jack_client(notification_sender, is_server_shutdown.clone()) {
+                match start_jack_client(
+                    notification_sender,
+                    Arc::clone(&volume),
+                    Arc::clone(&is_server_shutdown),
+                ) {
                     Ok((client, process_sender)) => {
                         let sample_rate = client.as_client().sample_rate().into();
                         let out_ports = client.as_client().ports(
@@ -170,9 +179,10 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
 
                         state = State::Connected {
                             client,
-                            commands: command_receiver,
+                            command_rx: command_receiver,
                             process: process_sender,
                             is_server_shutdown,
+                            volume,
                         };
                     }
                     Err(err) => {
@@ -183,9 +193,10 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
             }
             State::Connected {
                 client,
-                mut commands,
+                command_rx: mut commands,
                 process,
                 is_server_shutdown,
+                volume,
             } => {
                 while is_server_shutdown.load(std::sync::atomic::Ordering::Relaxed) != true {
                     // FIXME: wrong channel type
@@ -213,12 +224,8 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                                 .connect_ports_by_name(&source, "gui:measurement_in")
                                 .unwrap();
                         }
-                        Ok(Command::SetVolume(volume)) => {
-                            let msg = ProcessHandlerMessage::SetAmplitude(
-                                raumklang_core::volume_to_amplitude(volume),
-                            );
-
-                            process.send(msg);
+                        Ok(Command::SetVolume(new_volume)) => {
+                            volume.store(new_volume, atomic::Ordering::Release);
                         }
                         Ok(Command::RunTest {
                             duration,
@@ -281,7 +288,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                         Err(TryRecvError::Empty) => {}
                     }
 
-                    thread::sleep(Duration::from_millis(100));
+                    thread::sleep(Duration::from_millis(50));
                 }
 
                 match client.deactivate() {
@@ -312,6 +319,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
 
 fn start_jack_client(
     notify_sender: mpsc::Sender<Notification>,
+    volume: Arc<AtomicF32>,
     has_server_shutdown: Arc<AtomicBool>,
 ) -> Result<
     (
@@ -337,7 +345,7 @@ fn start_jack_client(
         has_server_shutdown,
     );
 
-    let (process_handler, process_sender) = ProcessHandler::new(out_port, in_port);
+    let (process_handler, process_sender) = ProcessHandler::new(out_port, in_port, volume);
     let client = client.activate_async(notification_handler, process_handler)?;
 
     Ok((client, process_sender))
@@ -346,7 +354,7 @@ fn start_jack_client(
 struct ProcessHandler {
     out_port: jack::Port<jack::AudioOut>,
     in_port: jack::Port<jack::AudioIn>,
-    amplitued: f32,
+    volume: Arc<AtomicF32>,
 
     msg_receiver: std::sync::mpsc::Receiver<ProcessHandlerMessage>,
 
@@ -354,7 +362,6 @@ struct ProcessHandler {
 }
 
 enum ProcessHandlerMessage {
-    SetAmplitude(f32),
     Measurement(measurement::Producer),
 }
 
@@ -369,6 +376,7 @@ impl ProcessHandler {
     fn new(
         out_port: jack::Port<jack::AudioOut>,
         in_port: jack::Port<jack::AudioIn>,
+        volume: Arc<AtomicF32>,
     ) -> (Self, std::sync::mpsc::SyncSender<ProcessHandlerMessage>) {
         let (msg_sender, msg_receiver) = std::sync::mpsc::sync_channel(64);
 
@@ -376,7 +384,7 @@ impl ProcessHandler {
             Self {
                 out_port,
                 in_port,
-                amplitued: 0.5,
+                volume,
 
                 msg_receiver,
                 state: ProcessHandlerState::Idle,
@@ -390,7 +398,6 @@ impl jack::ProcessHandler for ProcessHandler {
     fn process(&mut self, _: &jack::Client, process_scope: &jack::ProcessScope) -> jack::Control {
         if let Ok(msg) = self.msg_receiver.try_recv() {
             match msg {
-                ProcessHandlerMessage::SetAmplitude(amplitude) => self.amplitued = amplitude,
                 ProcessHandlerMessage::Measurement(producer) => {
                     self.state = ProcessHandlerState::Measurement(producer)
                 }
@@ -410,7 +417,10 @@ impl jack::ProcessHandler for ProcessHandler {
                 // if the consumer has been dropped, it will be handled below
                 let _ = producer.record_chunk(chunk);
 
-                match producer.play_signal_chunk(out_port, self.amplitued) {
+                let volume = self.volume.load(atomic::Ordering::Acquire);
+                let amplitude = raumklang_core::volume_to_amplitude(volume);
+
+                match producer.play_signal_chunk(out_port, amplitude) {
                     Some(measurement::SignalState::NotExhausted) => {
                         ProcessHandlerState::Measurement(producer)
                     }

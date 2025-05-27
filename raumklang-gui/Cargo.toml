@@ -24,6 +24,7 @@ directories = "5.0.1"
 
 tracing = "0.1.41"
 tracing-subscriber = {version = "0.3.19", features = ["std", "fmt", "json"]}
+atomic_float = "1.1.0"
 
 [dependencies.iced]
 version = "0.14.0-dev"
