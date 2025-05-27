@@ -2,22 +2,19 @@ mod loudness;
 mod measurement;
 
 pub use loudness::Loudness;
-use loudness::Test;
 pub use measurement::Measurement;
-use ringbuf::consumer::PopIter;
-use ringbuf::HeapCons;
 
 use crate::data::{self};
 use crate::log;
+use loudness::Test;
 
 use iced::futures::Stream;
 use jack::PortFlags;
-use ringbuf::traits::{Consumer, Producer};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio_stream::wrappers::ReceiverStream;
 
-use std::sync::atomic::{self, AtomicBool};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -107,10 +104,6 @@ impl Backend {
         let _ = self.sender.send(command).await;
     }
 
-    pub fn stop_test(&self) {
-        let _ = self.sender.try_send(Command::Stop);
-    }
-
     pub async fn set_volume(self, volume: f32) {
         let command = Command::SetVolume(volume);
 
@@ -125,7 +118,6 @@ enum Command {
     },
     ConnectOutPort(String),
     ConnectInPort(String),
-    Stop,
     RunMeasurement {
         duration: Duration,
         loudness_sender: mpsc::Sender<Loudness>,
@@ -286,9 +278,6 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                                 consumer.run(sweep, measurement);
                             });
                         }
-                        Ok(Command::Stop) => {
-                            process.send(ProcessHandlerMessage::Stop);
-                        }
                         Err(TryRecvError::Disconnected) => {
                             // their is no receiver anymore
                             return;
@@ -369,7 +358,6 @@ struct ProcessHandler {
 }
 
 enum ProcessHandlerMessage {
-    Stop,
     SetAmplitude(f32),
     Measurement(measurement::Producer),
 }
@@ -406,7 +394,6 @@ impl jack::ProcessHandler for ProcessHandler {
     fn process(&mut self, _: &jack::Client, process_scope: &jack::ProcessScope) -> jack::Control {
         if let Ok(msg) = self.msg_receiver.try_recv() {
             match msg {
-                ProcessHandlerMessage::Stop => self.state = ProcessHandlerState::Idle,
                 ProcessHandlerMessage::SetAmplitude(amplitude) => self.amplitued = amplitude,
                 ProcessHandlerMessage::Measurement(producer) => {
                     self.state = ProcessHandlerState::Measurement(producer)
@@ -423,45 +410,19 @@ impl jack::ProcessHandler for ProcessHandler {
                 ProcessHandlerState::Idle
             }
             ProcessHandlerState::Measurement(mut producer) => {
-                let in_port = self.in_port.as_slice(process_scope);
-                producer.recording_prod.push_slice(in_port);
+                let chunk = self.in_port.as_slice(process_scope);
+                // if the consumer has been dropped, it will be handled below
+                let _ = producer.record_chunk(chunk);
 
-                let mut write_signal = |signal: &mut PopIter<'_, HeapCons<f32>>| {
-                    let mut buf_empty = false;
-                    for o in out_port.iter_mut() {
-                        if let Some(s) = signal.next() {
-                            *o = s * self.amplitued;
-                        } else {
-                            *o = 0.0;
-                            buf_empty = true;
-                        }
-                    }
-
-                    buf_empty
-                };
-
-                let mut pop_state = producer.pop_iter();
-                match pop_state {
-                    measurement::PopState::Some(ref mut signal) => {
-                        write_signal(signal);
-
-                        drop(pop_state);
+                match producer.play_signal_chunk(out_port, self.amplitued) {
+                    Some(measurement::SignalState::NotExhausted) => {
                         ProcessHandlerState::Measurement(producer)
                     }
-                    measurement::PopState::Exhausted(ref mut signal) => {
-                        let buf_empty = write_signal(signal);
-
-                        drop(pop_state);
-                        if buf_empty {
-                            ProcessHandlerState::Idle
-                        } else {
-                            ProcessHandlerState::Measurement(producer)
-                        }
+                    Some(measurement::SignalState::Exhausted) => {
+                        ProcessHandlerState::Measurement(producer)
                     }
-                    measurement::PopState::ConsumerDropped => {
-                        out_port.fill(0.0);
-                        ProcessHandlerState::Idle
-                    }
+                    Some(measurement::SignalState::FullyConsumed) => ProcessHandlerState::Idle,
+                    None => ProcessHandlerState::Idle,
                 }
             }
         };

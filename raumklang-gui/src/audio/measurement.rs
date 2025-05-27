@@ -3,7 +3,6 @@ use crate::log;
 use super::{loudness, Process, Stop};
 
 use ringbuf::{
-    consumer::PopIter,
     traits::{Consumer as _, Producer as _, Split as _},
     HeapCons, HeapProd, HeapRb,
 };
@@ -56,28 +55,69 @@ pub struct Consumer {
 
 pub struct State {
     signal_exhausted: AtomicBool,
-    // signal_buf_underruns: AtomicUsize,
-    // recording_buf_underruns: AtomicUsize,
     producer_dropped: AtomicBool,
     consumer_dropped: AtomicBool,
 }
 
-pub enum PopState<'a> {
-    Some(PopIter<'a, HeapCons<f32>>),
-    Exhausted(PopIter<'a, HeapCons<f32>>),
+impl Producer {
+    #[must_use]
+    pub fn play_signal_chunk<'a>(
+        &'a mut self,
+        out_port: &mut [f32],
+        amplitude: f32,
+    ) -> Option<SignalState> {
+        let mut write_signal = || {
+            let mut signal = self.signal_cons.pop_iter();
+            let mut buf_empty = false;
+            for o in out_port.iter_mut() {
+                if let Some(s) = signal.next() {
+                    *o = s * amplitude;
+                } else {
+                    *o = 0.0;
+                    buf_empty = true;
+                }
+            }
+
+            buf_empty
+        };
+
+        if self.state.consumer_dropped.load(atomic::Ordering::Acquire) {
+            out_port.fill(0.0);
+            None
+        } else if self.state.signal_exhausted.load(atomic::Ordering::Acquire) {
+            let buf_empty = write_signal();
+
+            if buf_empty {
+                Some(SignalState::FullyConsumed)
+            } else {
+                Some(SignalState::Exhausted)
+            }
+        } else {
+            write_signal();
+            Some(SignalState::NotExhausted)
+        }
+    }
+
+    #[must_use]
+    pub fn record_chunk(&mut self, chunk: &[f32]) -> Result<(), Error> {
+        if self.state.consumer_dropped.load(atomic::Ordering::Acquire) {
+            return Err(Error::ConsumerDropped);
+        }
+
+        self.recording_prod.push_slice(chunk);
+
+        Ok(())
+    }
+}
+
+pub enum Error {
     ConsumerDropped,
 }
 
-impl Producer {
-    pub fn pop_iter(&mut self) -> PopState {
-        if self.state.consumer_dropped.load(atomic::Ordering::Acquire) {
-            PopState::ConsumerDropped
-        } else if self.state.signal_exhausted.load(atomic::Ordering::Acquire) {
-            PopState::Exhausted(self.signal_cons.pop_iter())
-        } else {
-            PopState::Some(self.signal_cons.pop_iter())
-        }
-    }
+pub enum SignalState {
+    NotExhausted,
+    Exhausted,
+    FullyConsumed,
 }
 
 impl Drop for Producer {
