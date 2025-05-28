@@ -152,10 +152,12 @@ impl Consumer {
                 == true
                 && data.is_empty()
             {
+                log::debug!("All real-time audio data consumed.");
                 break;
             }
 
             if let Control::Stop = processor.process(&data) {
+                log::debug!("Process requested to stop.");
                 break;
             }
 

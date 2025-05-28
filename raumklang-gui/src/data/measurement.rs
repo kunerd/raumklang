@@ -45,6 +45,7 @@ impl State {
             None
         }
     }
+
     pub fn details(&self) -> &Details {
         match self {
             State::NotLoaded(details) => details,
@@ -66,6 +67,14 @@ impl State {
 }
 
 impl Measurement {
+    pub fn new(details: Details, signal: raumklang_core::Measurement) -> Self {
+        Self {
+            details,
+            signal,
+            analysis: Analysis::None,
+        }
+    }
+
     pub fn reset_analysis(&mut self) {
         self.analysis = Analysis::None
     }

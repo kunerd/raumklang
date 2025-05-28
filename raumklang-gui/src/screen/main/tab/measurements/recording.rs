@@ -3,19 +3,12 @@ use std::{sync::Arc, time::Duration};
 use crate::{audio, data, widgets::colored_circle};
 use iced::{
     alignment::Vertical,
-    // futures::task,
-    task,
-    time,
+    task, time,
     widget::{
         button, column, container, horizontal_rule, horizontal_space, pick_list, row, slider, text,
         text_input, Button,
     },
-    Alignment,
-    Color,
-    Element,
-    Length,
-    Subscription,
-    Task,
+    Alignment, Color, Element, Length, Subscription, Task,
 };
 use prism::{line_series, Chart};
 use tokio_stream::wrappers::ReceiverStream;
@@ -75,11 +68,13 @@ pub enum Message {
     RunMeasurement,
     RecordingChunk(Box<[f32]>),
     JackNotification(audio::Notification),
+    RecordingFinished,
 }
 
 pub enum Action {
     None,
     Back,
+    Finished(raumklang_core::Measurement),
     Task(Task<Message>),
 }
 
@@ -209,15 +204,9 @@ impl Recording {
                 Action::Task(Task::future(backend.clone().set_volume(volume)).discard())
             }
             Message::StopTesting => {
-                let State::Connected {
-                    backend,
-                    measurement,
-                } = &mut self.state
-                else {
+                let State::Connected { measurement, .. } = &mut self.state else {
                     return Action::None;
                 };
-
-                // backend.stop_test();
 
                 *measurement = match measurement {
                     MeasurementState::Init => MeasurementState::Init,
@@ -246,14 +235,12 @@ impl Recording {
             }
             Message::TestOk => {
                 let State::Connected {
-                    backend,
                     measurement: measurement @ MeasurementState::Testing { .. },
+                    ..
                 } = &mut self.state
                 else {
                     return Action::None;
                 };
-
-                // backend.stop_test();
 
                 let nquist = Into::<u32>::into(sample_rate) as u16 / 2 - 1;
                 *measurement = MeasurementState::PreparingMeasurement {
@@ -280,7 +267,7 @@ impl Recording {
                     end_frequency,
                 } = state
                 {
-                    let (loudness_receiver, data_receiver) =
+                    let (loudness_receiver, mut data_receiver) =
                         backend.run_measurement(start_frequency, end_frequency, duration);
 
                     *measurement = MeasurementState::MeasurementRunning {
@@ -293,11 +280,19 @@ impl Recording {
                         data: vec![],
                     };
 
+                    let measurement_sipper = iced::task::sipper(async move |mut progress| {
+                        while let Some(data) = data_receiver.recv().await {
+                            progress.send(data).await;
+                        }
+                    });
+
                     Action::Task(Task::batch(vec![
                         Task::stream(ReceiverStream::new(loudness_receiver))
                             .map(Message::RmsChanged),
-                        Task::stream(ReceiverStream::new(data_receiver))
-                            .map(Message::RecordingChunk),
+                        Task::sip(measurement_sipper, Message::RecordingChunk, |_| {
+                            Message::RecordingFinished
+                        }), // Task::stream(ReceiverStream::new(data_receiver))
+                            //     .map(Message::RecordingChunk),
                     ]))
                 } else {
                     *measurement = state;
@@ -316,6 +311,22 @@ impl Recording {
                 data.extend_from_slice(&chunk);
 
                 Action::None
+            }
+            Message::RecordingFinished => {
+                let State::Connected {
+                    backend,
+                    measurement: MeasurementState::MeasurementRunning { data, .. },
+                } = &mut self.state
+                else {
+                    return Action::None;
+                };
+
+                let data = std::mem::replace(data, Vec::new());
+
+                Action::Finished(raumklang_core::Measurement::new(
+                    backend.sample_rate.into(),
+                    data,
+                ))
             }
         }
     }

@@ -76,7 +76,7 @@ impl Backend {
         end_frequency: u16,
         duration: Duration,
     ) -> (mpsc::Receiver<Loudness>, mpsc::Receiver<Box<[f32]>>) {
-        let (loudness_sender, loudness_receiver) = mpsc::channel(128);
+        let (loudness_sender, loudness_receiver) = mpsc::channel(1024);
         let (data_sender, data_receiver) = mpsc::channel(1024);
 
         let command = Command::RunMeasurement {
@@ -350,7 +350,6 @@ struct ProcessHandler {
     in_port: jack::Port<jack::AudioIn>,
     volume: Arc<AtomicF32>,
 
-    // msg_receiver: std::sync::mpsc::Receiver<ProcessHandlerMessage>,
     msg_receiver: HeapCons<ProcessHandlerMessage>,
 
     state: ProcessHandlerState,

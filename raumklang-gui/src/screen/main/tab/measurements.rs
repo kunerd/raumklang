@@ -163,17 +163,26 @@ impl Measurements {
                     return Action::None;
                 };
 
-                let task = match recording.update(message, sample_rate) {
+                match recording.update(message, sample_rate) {
                     recording::Action::Back => {
                         self.recording = None;
-                        Task::none()
+                        Action::None
                     }
-                    recording::Action::None => Task::none(),
-                    recording::Action::Task(task) => task,
-                }
-                .map(Message::Recording);
+                    recording::Action::None => Action::None,
+                    recording::Action::Task(task) => Action::Task(task.map(Message::Recording)),
+                    recording::Action::Finished(measurement) => {
+                        self.recording = None;
 
-                Action::Task(task)
+                        let details = measurement::Details {
+                            // FIXME auto generate
+                            name: "Measurement".to_string(),
+                            path: PathBuf::default(),
+                        };
+                        let measurement = data::Measurement::new(details, measurement);
+
+                        Action::MeasurementAdded(measurement::State::Loaded(measurement))
+                    }
+                }
             }
         }
     }
