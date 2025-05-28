@@ -13,4 +13,3 @@ raumklang-core = { path = "./raumklang-core" }
 [patch.crates-io]
 iced = { git = "https://github.com/iced-rs/iced.git", branch = "master" }
 prism = { path = "../prism" }
-jack = { path = "../extern/rust-jack" }
