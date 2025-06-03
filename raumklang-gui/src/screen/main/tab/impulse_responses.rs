@@ -125,7 +125,7 @@ impl ImpulseReponses {
 
     pub fn view<'a>(
         &'a self,
-        measurements: &'a [data::measurement::State],
+        measurements: &'a [data::measurement::State<data::Measurement>],
     ) -> Element<'a, Message> {
         let sidebar = {
             let header = {

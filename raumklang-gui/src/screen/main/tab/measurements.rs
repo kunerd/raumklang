@@ -18,6 +18,7 @@ use iced::{
     mouse::ScrollDelta,
     widget::{
         self, button, column, container, horizontal_rule, horizontal_space, row, scrollable, text,
+        Button, Row,
     },
     Alignment, Element, Length, Point, Subscription, Task,
 };
@@ -28,7 +29,6 @@ use std::{ops::RangeInclusive, path::PathBuf, sync::Arc};
 
 pub struct Measurements {
     recording: Option<Recording>,
-
     selected: Option<Selected>,
 
     shift_key_pressed: bool,
@@ -40,10 +40,10 @@ pub struct Measurements {
 pub enum Message {
     AddLoopback,
     RemoveLoopback,
-    LoopbackSignalLoaded(Result<Arc<data::measurement::Loopback>, Error>),
+    LoopbackSignalLoaded(Result<Arc<data::measurement::State<data::measurement::Loopback>>, Error>),
     AddMeasurement,
     RemoveMeasurement(usize),
-    MeasurementSignalLoaded(Result<Arc<data::measurement::State>, Error>),
+    MeasurementSignalLoaded(Result<Arc<data::measurement::State<data::Measurement>>, Error>),
     Select(Selected),
     RecordingSelected,
     ChartScroll(
@@ -63,9 +63,9 @@ pub enum Selected {
 }
 
 pub enum Action {
-    LoopbackAdded(data::measurement::Loopback),
+    LoopbackAdded(data::measurement::State<data::measurement::Loopback>),
     RemoveLoopback,
-    MeasurementAdded(data::measurement::State),
+    MeasurementAdded(data::measurement::State<data::Measurement>),
     RemoveMeasurement(usize),
     Task(Task<Message>),
     None,
@@ -190,35 +190,22 @@ impl Measurements {
     pub fn view<'a>(&'a self, project: &'a data::Project) -> Element<'a, Message> {
         let sidebar =
             {
-                let loopback = {
-                    let (msg, content) = match project.loopback() {
-                        Some(signal) => (
-                            None,
-                            loopback_list_entry(self.selected.as_ref(), signal).into(),
-                        ),
-                        None => (Some(Message::AddLoopback), horizontal_space().into()),
-                    };
+                let loopback =
+                    Category::new("Loopback")
+                        .push_button(button("+").on_press_maybe(
+                            project.loopback().as_ref().map(|_| Message::AddLoopback),
+                        ))
+                        .push_entry_maybe(project.loopback().as_ref().map(|loopback| {
+                            loopback_list_entry(self.selected.as_ref(), &loopback)
+                        }));
 
-                    signal_list_category("Loopback", msg, content)
-                };
-
-                let measurements =
-                    {
-                        let content =
-                            if project.measurements().is_empty() {
-                                horizontal_space().into()
-                            } else {
-                                column(project.measurements().iter().enumerate().map(
-                                    |(id, signal)| {
-                                        measurement_list_entry(id, signal, self.selected.as_ref())
-                                    },
-                                ))
-                                .spacing(3)
-                                .into()
-                            };
-
-                        signal_list_category("Measurements", Some(Message::AddMeasurement), content)
-                    };
+                let measurements = Category::new("Measurements")
+                    .push_button(button("+").on_press(Message::AddMeasurement))
+                    .extend_entries(project.measurements().iter().enumerate().map(
+                        |(id, measurement)| {
+                            measurement_list_entry(id, measurement, self.selected.as_ref())
+                        },
+                    ));
 
                 container(scrollable(
                     column![loopback, measurements].spacing(20).padding(10),
@@ -226,7 +213,7 @@ impl Measurements {
                 .style(container::rounded_box)
             };
 
-        let content = 'content: {
+        let content: Element<_> = 'content: {
             if let Some(recording) = &self.recording {
                 break 'content recording.view().map(Message::Recording);
             }
@@ -261,8 +248,8 @@ impl Measurements {
                     .as_ref()
                     .and_then(|selection| match selection {
                         Selected::Loopback => project.loopback().and_then(|s| {
-                            if let loopback::State::Loaded(data) = &s.state {
-                                Some(data.iter())
+                            if let data::measurement::State::Loaded(data) = &s {
+                                Some(data.as_ref().iter())
                             } else {
                                 None
                             }
@@ -415,31 +402,14 @@ impl Measurements {
     }
 }
 
-fn signal_list_category<'a>(
-    name: &'a str,
-    add_msg: Option<Message>,
-    content: Element<'a, Message>,
-) -> Element<'a, Message> {
-    let add_button = add_msg.map(|msg| button("+").on_press(msg).style(button::secondary));
-
-    let header = row![widget::text(name), horizontal_space()]
-        .push_maybe(add_button)
-        .padding(5)
-        .align_y(Alignment::Center);
-
-    column!(header, horizontal_rule(1), content)
-        .width(Length::Fill)
-        .spacing(5)
-        .into()
-}
-
 fn loopback_list_entry<'a>(
     selected: Option<&Selected>,
-    signal: &'a data::measurement::Loopback,
+    signal: &'a data::measurement::State<data::measurement::Loopback>,
 ) -> Element<'a, Message> {
-    let (data_info, select_msg) = match &signal.state {
-        loopback::State::NotLoaded => (None, None),
-        loopback::State::Loaded(data) => {
+    let (data_info, select_msg) = match &signal {
+        data::measurement::State::NotLoaded(_) => (None, None),
+        data::measurement::State::Loaded(data) => {
+            let data = data.as_ref();
             let samples = data.duration();
             let sample_rate = data.sample_rate() as f32;
             let info = column![
@@ -483,14 +453,15 @@ fn loopback_list_entry<'a>(
 
 fn measurement_list_entry<'a>(
     index: usize,
-    signal: &'a data::measurement::State,
+    signal: &'a data::measurement::State<data::Measurement>,
     selected: Option<&Selected>,
 ) -> Element<'a, Message> {
     let (data_info, select_msg) = match &signal {
         measurement::State::NotLoaded(_) => (None, None),
         measurement::State::Loaded(measurement) => {
-            let samples = measurement.signal().duration();
-            let sample_rate = measurement.signal().sample_rate() as f32;
+            let measurement = measurement.as_ref();
+            let samples = measurement.duration();
+            let sample_rate = measurement.sample_rate() as f32;
             let info = column![
                 text(format!("Samples: {}", samples)).size(12),
                 text(format!("Duration: {} s", samples as f32 / sample_rate)).size(12),
@@ -551,4 +522,67 @@ async fn pick_file(file_type: impl AsRef<str>) -> Result<FileHandle, Error> {
         .pick_file()
         .await
         .ok_or(Error::DialogClosed)
+}
+
+pub struct Category<'a, Message> {
+    title: &'a str,
+    entries: Vec<Element<'a, Message>>,
+    buttons: Vec<Button<'a, Message>>,
+}
+
+impl<'a, Message> Category<'a, Message>
+where
+    Message: 'a + Clone,
+{
+    pub fn new(title: &'a str) -> Self {
+        Self {
+            title,
+            entries: vec![],
+            buttons: vec![],
+        }
+    }
+
+    pub fn push_button(mut self, button: Button<'a, Message>) -> Self {
+        self.buttons.push(button);
+        self
+    }
+
+    pub fn push_entry(mut self, entry: impl Into<Element<'a, Message>>) -> Self {
+        self.entries.push(entry.into());
+        self
+    }
+
+    pub fn push_entry_maybe(self, entry: Option<impl Into<Element<'a, Message>>>) -> Self {
+        if let Some(entry) = entry {
+            self.push_entry(entry)
+        } else {
+            self
+        }
+    }
+
+    pub fn extend_entries(self, entries: impl IntoIterator<Item = Element<'a, Message>>) -> Self {
+        entries.into_iter().fold(self, Self::push_entry)
+    }
+
+    pub fn view(self) -> Element<'a, Message> {
+        let header = row![widget::text(self.title), horizontal_space()]
+            .extend(self.buttons.into_iter().map(Into::into))
+            .padding(5)
+            .align_y(Alignment::Center);
+
+        column!(header, horizontal_rule(1))
+            .extend(self.entries.into_iter())
+            .width(Length::Fill)
+            .spacing(5)
+            .into()
+    }
+}
+
+impl<'a, Message> From<Category<'a, Message>> for Element<'a, Message>
+where
+    Message: 'a + Clone,
+{
+    fn from(category: Category<'a, Message>) -> Self {
+        category.view()
+    }
 }

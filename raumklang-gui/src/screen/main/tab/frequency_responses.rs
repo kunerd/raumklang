@@ -147,6 +147,7 @@ impl FrequencyResponses {
                 .style(container::bordered_box),
             container(content).center(Length::FillPortion(4))
         ]
+        .spacing(10)
         .into()
     }
 

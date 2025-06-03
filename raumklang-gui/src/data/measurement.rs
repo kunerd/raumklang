@@ -12,9 +12,9 @@ use std::{
 };
 
 #[derive(Debug)]
-pub enum State {
+pub enum State<Inner> {
     NotLoaded(Details),
-    Loaded(Measurement),
+    Loaded(Inner),
 }
 
 #[derive(Debug)]
@@ -37,7 +37,7 @@ pub struct Details {
     pub path: PathBuf,
 }
 
-impl State {
+impl State<Measurement> {
     pub fn signal(&self) -> Option<slice::Iter<f32>> {
         if let State::Loaded(measurement) = self {
             Some(measurement.signal.iter())
@@ -77,10 +77,6 @@ impl Measurement {
 
     pub fn reset_analysis(&mut self) {
         self.analysis = Analysis::None
-    }
-
-    pub fn signal(&self) -> &raumklang_core::Measurement {
-        &self.signal
     }
 
     pub fn impulse_response_computation(
@@ -154,6 +150,12 @@ impl Measurement {
     }
 }
 
+impl AsRef<raumklang_core::Measurement> for Measurement {
+    fn as_ref(&self) -> &raumklang_core::Measurement {
+        &self.signal
+    }
+}
+
 pub trait FromFile {
     fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError>
     where
@@ -171,7 +173,7 @@ where
         .map_err(|_err| WavLoadError::Other)?
 }
 
-impl FromFile for State {
+impl FromFile for State<Measurement> {
     fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError> {
         let path = path.as_ref();
         let name = path
@@ -185,11 +187,7 @@ impl FromFile for State {
         };
 
         let state = match raumklang_core::Measurement::from_file(path) {
-            Ok(data) => State::Loaded(Measurement {
-                details,
-                signal: data,
-                analysis: Analysis::None,
-            }),
+            Ok(data) => State::Loaded(Measurement::new(details, data)),
             Err(_) => State::NotLoaded(details),
         };
 

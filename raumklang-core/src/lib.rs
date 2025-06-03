@@ -8,7 +8,6 @@ pub use impulse_response::*;
 pub use window::*;
 
 use rand::{distributions, distributions::Distribution, rngs, SeedableRng};
-use ringbuf::Rb;
 use thiserror::Error;
 
 use std::{
@@ -64,6 +63,12 @@ impl Loopback {
         let measurement = Measurement::from_file(path)?;
 
         Ok(Self(measurement))
+    }
+}
+
+impl AsRef<Measurement> for Loopback {
+    fn as_ref(&self) -> &Measurement {
+        &self.0
     }
 }
 
