@@ -4,7 +4,7 @@ pub use recording::{recording_button, Recording};
 use crate::{
     data::{
         self,
-        measurement::{self, loopback, FromFile},
+        measurement::{self, FromFile},
     },
     delete_icon,
 };
@@ -18,7 +18,7 @@ use iced::{
     mouse::ScrollDelta,
     widget::{
         self, button, column, container, horizontal_rule, horizontal_space, row, scrollable, text,
-        Button, Row,
+        Button,
     },
     Alignment, Element, Length, Point, Subscription, Task,
 };
@@ -45,7 +45,7 @@ pub enum Message {
     RemoveMeasurement(usize),
     MeasurementSignalLoaded(Result<Arc<data::measurement::State<data::Measurement>>, Error>),
     Select(Selected),
-    RecordingSelected,
+    StartRecording(recording::Kind),
     ChartScroll(
         Option<Point>,
         Option<ScrollDelta>,
@@ -154,8 +154,8 @@ impl Measurements {
                 self.shift_key_pressed = false;
                 Action::None
             }
-            Message::RecordingSelected => {
-                self.recording = Some(Recording::new());
+            Message::StartRecording(kind) => {
+                self.recording = Some(Recording::new(kind));
                 Action::None
             }
             Message::Recording(message) => {
@@ -170,17 +170,31 @@ impl Measurements {
                     }
                     recording::Action::None => Action::None,
                     recording::Action::Task(task) => Action::Task(task.map(Message::Recording)),
-                    recording::Action::Finished(measurement) => {
+                    recording::Action::Finished(result) => {
                         self.recording = None;
 
-                        let details = measurement::Details {
-                            // FIXME auto generate
-                            name: "Measurement".to_string(),
-                            path: PathBuf::default(),
-                        };
-                        let measurement = data::Measurement::new(details, measurement);
-
-                        Action::MeasurementAdded(measurement::State::Loaded(measurement))
+                        match result {
+                            recording::Result::Loopback(loopback) => {
+                                let details = measurement::Details {
+                                    // FIXME auto generate
+                                    name: "Loopback".to_string(),
+                                    path: PathBuf::default(),
+                                };
+                                Action::LoopbackAdded(data::measurement::State::Loaded(
+                                    data::measurement::Loopback::new(loopback, details),
+                                ))
+                            }
+                            recording::Result::Measurement(measurement) => {
+                                let details = measurement::Details {
+                                    // FIXME auto generate
+                                    name: "Measurement".to_string(),
+                                    path: PathBuf::default(),
+                                };
+                                Action::MeasurementAdded(data::measurement::State::Loaded(
+                                    data::Measurement::new(measurement, details),
+                                ))
+                            }
+                        }
                     }
                 }
             }
@@ -188,30 +202,41 @@ impl Measurements {
     }
 
     pub fn view<'a>(&'a self, project: &'a data::Project) -> Element<'a, Message> {
-        let sidebar =
-            {
-                let loopback =
-                    Category::new("Loopback")
-                        .push_button(button("+").on_press_maybe(
-                            project.loopback().as_ref().map(|_| Message::AddLoopback),
-                        ))
-                        .push_entry_maybe(project.loopback().as_ref().map(|loopback| {
-                            loopback_list_entry(self.selected.as_ref(), &loopback)
-                        }));
+        let sidebar = {
+            let loopback = Category::new("Loopback")
+                .push_button(
+                    button("+")
+                        .on_press_maybe(project.loopback().as_ref().map(|_| Message::AddLoopback))
+                        .style(button::secondary),
+                )
+                .push_button(
+                    recording_button(Message::StartRecording(recording::Kind::Loopback))
+                        .style(button::secondary),
+                )
+                .push_entry_maybe(
+                    project
+                        .loopback()
+                        .as_ref()
+                        .map(|loopback| loopback_list_entry(self.selected.as_ref(), &loopback)),
+                );
 
-                let measurements = Category::new("Measurements")
-                    .push_button(button("+").on_press(Message::AddMeasurement))
-                    .extend_entries(project.measurements().iter().enumerate().map(
-                        |(id, measurement)| {
-                            measurement_list_entry(id, measurement, self.selected.as_ref())
-                        },
-                    ));
+            let measurements = Category::new("Measurements")
+                .push_button(
+                    button("+")
+                        .style(button::secondary)
+                        .on_press(Message::AddMeasurement),
+                )
+                .extend_entries(project.measurements().iter().enumerate().map(
+                    |(id, measurement)| {
+                        measurement_list_entry(id, measurement, self.selected.as_ref())
+                    },
+                ));
 
-                container(scrollable(
-                    column![loopback, measurements].spacing(20).padding(10),
-                ))
-                .style(container::rounded_box)
-            };
+            container(scrollable(
+                column![loopback, measurements].spacing(20).padding(10),
+            ))
+            .style(container::rounded_box)
+        };
 
         let content: Element<_> = 'content: {
             if let Some(recording) = &self.recording {
@@ -225,7 +250,7 @@ impl Measurements {
                         base_text,
                         row![
                             text("You can load signals from file by pressing [+] or"),
-                            recording_button(Message::RecordingSelected)
+                            recording_button(Message::StartRecording(recording::Kind::Measurement))
                         ]
                         .spacing(8)
                         .align_y(Vertical::Center)
@@ -567,6 +592,7 @@ where
     pub fn view(self) -> Element<'a, Message> {
         let header = row![widget::text(self.title), horizontal_space()]
             .extend(self.buttons.into_iter().map(Into::into))
+            .spacing(5)
             .padding(5)
             .align_y(Alignment::Center);
 

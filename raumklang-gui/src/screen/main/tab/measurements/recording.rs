@@ -14,10 +14,17 @@ use prism::{line_series, Chart};
 use tokio_stream::wrappers::ReceiverStream;
 
 pub struct Recording {
+    kind: Kind,
     state: State,
     volume: f32,
     selected_out_port: Option<String>,
     selected_in_port: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum Kind {
+    Loopback,
+    Measurement,
 }
 
 enum State {
@@ -74,13 +81,19 @@ pub enum Message {
 pub enum Action {
     None,
     Back,
-    Finished(raumklang_core::Measurement),
+    Finished(Result),
     Task(Task<Message>),
 }
 
+pub enum Result {
+    Loopback(raumklang_core::Loopback),
+    Measurement(raumklang_core::Measurement),
+}
+
 impl Recording {
-    pub fn new() -> Self {
+    pub fn new(kind: Kind) -> Self {
         Self {
+            kind,
             state: State::NotConnected,
             volume: 0.5,
             selected_out_port: None,
@@ -321,12 +334,19 @@ impl Recording {
                     return Action::None;
                 };
 
+                let sample_rate = backend.sample_rate.into();
                 let data = std::mem::replace(data, Vec::new());
 
-                Action::Finished(raumklang_core::Measurement::new(
-                    backend.sample_rate.into(),
-                    data,
-                ))
+                let result = match self.kind {
+                    Kind::Loopback => {
+                        Result::Loopback(raumklang_core::Loopback::new(sample_rate, data))
+                    }
+                    Kind::Measurement => {
+                        Result::Measurement(raumklang_core::Measurement::new(sample_rate, data))
+                    }
+                };
+
+                Action::Finished(result)
             }
         }
     }
@@ -624,6 +644,12 @@ impl Recording {
             MeasurementState::PreparingMeasurement { .. } => {}
             MeasurementState::MeasurementRunning { .. } => {}
         }
+    }
+}
+
+impl Default for Recording {
+    fn default() -> Self {
+        Self::new(Kind::Measurement)
     }
 }
 

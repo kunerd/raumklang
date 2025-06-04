@@ -67,7 +67,7 @@ impl State<Measurement> {
 }
 
 impl Measurement {
-    pub fn new(details: Details, signal: raumklang_core::Measurement) -> Self {
+    pub fn new(signal: raumklang_core::Measurement, details: Details) -> Self {
         Self {
             details,
             signal,
@@ -187,7 +187,7 @@ impl FromFile for State<Measurement> {
         };
 
         let state = match raumklang_core::Measurement::from_file(path) {
-            Ok(data) => State::Loaded(Measurement::new(details, data)),
+            Ok(data) => State::Loaded(Measurement::new(data, details)),
             Err(_) => State::NotLoaded(details),
         };
 

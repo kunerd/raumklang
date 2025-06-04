@@ -11,6 +11,12 @@ pub struct Loopback {
     details: Details,
 }
 
+impl Loopback {
+    pub fn new(inner: raumklang_core::Loopback, details: Details) -> Self {
+        Self { inner, details }
+    }
+}
+
 impl AsRef<raumklang_core::Loopback> for Loopback {
     fn as_ref(&self) -> &raumklang_core::Loopback {
         &self.inner
