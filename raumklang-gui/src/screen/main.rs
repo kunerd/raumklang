@@ -27,10 +27,13 @@ enum Modal {
     PendingWindow {
         goto_tab: TabId,
     },
+    ReplaceLoopback {
+        loopback: data::measurement::State<data::measurement::Loopback>,
+    },
 }
 
 #[derive(Debug, Clone)]
-pub enum PendingWindowAction {
+pub enum ModalAction {
     Discard,
     Apply,
 }
@@ -42,7 +45,7 @@ pub enum Message {
     ImpulseResponses(impulse_responses::Message),
     FrequencyResponses(frequency_responses::Message),
     ImpulseResponseComputed(Result<(usize, data::ImpulseResponse), data::Error>),
-    PendingWindowModal(PendingWindowAction),
+    Modal(ModalAction),
     FrequencyResponseComputed((usize, data::FrequencyResponse)),
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,7 +84,11 @@ impl Main {
 
                 match action {
                     measurements::Action::LoopbackAdded(loopback) => {
-                        self.project.set_loopback(Some(loopback));
+                        if self.project.loopback().is_some() {
+                            self.modal = Modal::ReplaceLoopback { loopback };
+                        } else {
+                            self.project.set_loopback(Some(loopback));
+                        }
 
                         Task::none()
                     }
@@ -154,24 +161,28 @@ impl Main {
                 dbg!(err);
                 Task::none()
             }
-            Message::PendingWindowModal(action) => {
-                let Modal::PendingWindow { goto_tab } =
-                    std::mem::replace(&mut self.modal, Modal::None)
-                else {
-                    return Task::none();
-                };
+            Message::Modal(action) => match std::mem::take(&mut self.modal) {
+                Modal::None => Task::none(),
+                Modal::PendingWindow { goto_tab } => {
+                    let Some(pending_window) = self.pending_window.take() else {
+                        return Task::none();
+                    };
 
-                let Some(pending_window) = self.pending_window.take() else {
-                    return Task::none();
-                };
+                    match action {
+                        ModalAction::Discard => {}
+                        ModalAction::Apply => self.project.set_window(pending_window),
+                    }
 
-                match action {
-                    PendingWindowAction::Discard => {}
-                    PendingWindowAction::Apply => self.project.set_window(pending_window),
+                    self.goto_tab(goto_tab)
                 }
-
-                self.goto_tab(goto_tab)
-            }
+                Modal::ReplaceLoopback { loopback } => {
+                    match action {
+                        ModalAction::Discard => {}
+                        ModalAction::Apply => self.project.set_loopback(Some(loopback)),
+                    }
+                    Task::none()
+                }
+            },
             Message::FrequencyResponses(message) => {
                 let Tab::FrequencyResponses(tab) = &mut self.active_tab else {
                     return Task::none();
@@ -267,9 +278,11 @@ impl Main {
                 .style(container::bordered_box)
         };
 
-        if let Modal::PendingWindow { .. } = self.modal {
-            let pending_window = {
-                container(
+        match self.modal {
+            Modal::None => content.into(),
+            Modal::PendingWindow { .. } => {
+                let pending_window = {
+                    container(
                     column![
                         text("Window pending!").size(18),
                         column![
@@ -280,10 +293,10 @@ impl Main {
                             horizontal_space(),
                             button("Discard")
                                 .style(button::danger)
-                                .on_press(Message::PendingWindowModal(PendingWindowAction::Discard)),
+                                .on_press(Message::Modal(ModalAction::Discard)),
                             button("Apply")
                                 .style(button::success)
-                                .on_press(Message::PendingWindowModal(PendingWindowAction::Apply))
+                                .on_press(Message::Modal(ModalAction::Apply))
                         ]
                         .spacing(5)
                     ]
@@ -291,11 +304,39 @@ impl Main {
                     .padding(20)
                     .width(400)
                     .style(container::bordered_box)
-            };
+                };
 
-            modal(content, pending_window).into()
-        } else {
-            content.into()
+                modal(content, pending_window).into()
+            }
+            Modal::ReplaceLoopback { .. } => {
+                let pending_window = {
+                    container(
+                        column![
+                            text("Override current Loopback signal!").size(18),
+                            column![text(
+                                "Do you want to override the current Loopback signal?."
+                            ),]
+                            .spacing(5),
+                            row![
+                                horizontal_space(),
+                                button("Discard")
+                                    .style(button::danger)
+                                    .on_press(Message::Modal(ModalAction::Discard)),
+                                button("Apply")
+                                    .style(button::success)
+                                    .on_press(Message::Modal(ModalAction::Apply))
+                            ]
+                            .spacing(5)
+                        ]
+                        .spacing(10),
+                    )
+                    .padding(20)
+                    .width(400)
+                    .style(container::bordered_box)
+                };
+
+                modal(content, pending_window).into()
+            }
         }
     }
 
