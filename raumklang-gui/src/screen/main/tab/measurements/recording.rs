@@ -304,8 +304,7 @@ impl Recording {
                             .map(Message::RmsChanged),
                         Task::sip(measurement_sipper, Message::RecordingChunk, |_| {
                             Message::RecordingFinished
-                        }), // Task::stream(ReceiverStream::new(data_receiver))
-                            //     .map(Message::RecordingChunk),
+                        }),
                     ]))
                 } else {
                     *measurement = state;
@@ -361,180 +360,123 @@ impl Recording {
                     backend,
                     measurement,
                 } => {
-                    let header = |subsection| {
-                        column![
-                            row![
-                                text!("Recording - {subsection}").size(20),
-                                horizontal_space(),
-                                text!("Sample rate: {}", backend.sample_rate).size(14)
-                            ]
-                            .align_y(Vertical::Bottom),
-                            horizontal_rule(1),
-                        ]
-                        .spacing(4)
+                    let setup_page = |sample_rate, start_test_msg| -> Element<'_, Message> {
+                        Page::new("Setup")
+                            .content(
+                                row![
+                                    column![
+                                        text("Out port"),
+                                        pick_list(
+                                            backend.out_ports.as_slice(),
+                                            self.selected_out_port.as_ref(),
+                                            Message::OutPortSelected
+                                        )
+                                    ]
+                                    .spacing(6),
+                                    column![
+                                        text("In port"),
+                                        pick_list(
+                                            backend.in_ports.as_slice(),
+                                            self.selected_in_port.as_ref(),
+                                            Message::InPortSelected
+                                        )
+                                    ]
+                                    .spacing(6),
+                                ]
+                                .spacing(12),
+                            )
+                            .push_button(button("Cancel").on_press(Message::Back))
+                            .push_button(button("Start test").on_press_maybe(start_test_msg))
+                            .view(sample_rate)
                     };
 
+                    let sample_rate = &backend.sample_rate;
                     match measurement {
-                        MeasurementState::Init => container(
-                            column![
-                                header("Setup"),
-                                row![
-                                    column![
-                                        text("Out port"),
-                                        pick_list(
-                                            backend.out_ports.as_slice(),
-                                            self.selected_out_port.as_ref(),
-                                            Message::OutPortSelected
-                                        )
-                                    ]
-                                    .spacing(6),
-                                    column![
-                                        text("In port"),
-                                        pick_list(
-                                            backend.in_ports.as_slice(),
-                                            self.selected_in_port.as_ref(),
-                                            Message::InPortSelected
-                                        )
-                                    ]
-                                    .spacing(6),
-                                ]
-                                .spacing(12),
-                                row![
-                                    button("Cancel").on_press(Message::Back),
-                                    button("Start test"),
-                                    horizontal_space(),
-                                ]
-                                .spacing(12)
-                            ]
-                            .spacing(18),
-                        )
-                        .style(container::bordered_box)
-                        .padding(18)
-                        .into(),
-                        MeasurementState::ReadyForTest => container(
-                            column![
-                                header("Ready for Test"),
-                                row![
-                                    column![
-                                        text("Out port"),
-                                        pick_list(
-                                            backend.out_ports.as_slice(),
-                                            self.selected_out_port.as_ref(),
-                                            Message::OutPortSelected
-                                        )
-                                    ]
-                                    .spacing(6),
-                                    column![
-                                        text("In port"),
-                                        pick_list(
-                                            backend.in_ports.as_slice(),
-                                            self.selected_in_port.as_ref(),
-                                            Message::InPortSelected
-                                        )
-                                    ]
-                                    .spacing(6),
-                                ]
-                                .spacing(12),
-                                row![
-                                    button("Cancel").on_press(Message::Back),
-                                    button("Start test").on_press(Message::RunTest),
-                                    horizontal_space(),
-                                ]
-                                .spacing(12)
-                            ]
-                            .spacing(18),
-                        )
-                        .style(container::bordered_box)
-                        .padding(18)
-                        .into(),
-                        MeasurementState::Testing { loudness, .. } => container(column![
-                            header("Loudness Test..."),
-                            text!("RMS: {}, Peak: {}", loudness.rms, loudness.peak),
-                            slider(0.0..=1.0, self.volume, Message::VolumeChanged).step(0.01),
-                            row![
-                                button("Stop").on_press(Message::StopTesting),
-                                // TODO: enable button when loudness levels are ok
-                                button("Ok").on_press(Message::TestOk)
-                            ]
-                        ])
-                        .style(container::bordered_box)
-                        .padding(18)
-                        .into(),
+                        MeasurementState::Init => setup_page(sample_rate, None),
+                        MeasurementState::ReadyForTest => {
+                            setup_page(sample_rate, Some(Message::RunTest))
+                        }
+                        MeasurementState::Testing { loudness, .. } => {
+                            Page::new("Loudness Test ...")
+                                .content(column![
+                                    text!("RMS: {}, Peak: {}", loudness.rms, loudness.peak),
+                                    slider(0.0..=1.0, self.volume, Message::VolumeChanged)
+                                        .step(0.01),
+                                ])
+                                .push_button(button("Stop").on_press(Message::StopTesting))
+                                .push_button(button("Ok").on_press(Message::TestOk))
+                                .view(sample_rate)
+                        }
                         MeasurementState::PreparingMeasurement {
                             duration,
                             start_frequency,
                             end_frequency,
-                        } => container(
-                            column![
-                                header("Prepare Measurement"),
-                                row![
-                                    column![
-                                        text("Out port"),
-                                        container(text!(
-                                            "{}",
-                                            self.selected_in_port.as_ref().unwrap()
-                                        ))
-                                        .padding(3)
-                                        .style(container::rounded_box)
-                                    ]
-                                    .spacing(6),
-                                    column![
-                                        text("In port"),
-                                        container(text!(
-                                            "{}",
-                                            self.selected_in_port.as_ref().unwrap()
-                                        ))
-                                        .padding(3)
-                                    ]
-                                    .spacing(6),
-                                ]
-                                .spacing(12),
-                                row![
-                                    column![
-                                        text("Frequency"),
-                                        row![
-                                            text("From"),
-                                            text_input("From", &format!("{}", start_frequency)),
-                                            text("To"),
-                                            text_input("To", &format!("{}", end_frequency))
-                                        ]
-                                        .spacing(8)
-                                        .align_y(Alignment::Center),
-                                    ]
-                                    .spacing(6),
+                        } => Page::new("Setup Measurement")
+                            .content(
+                                column![
                                     row![
                                         column![
-                                            text("Duration"),
-                                            text_input(
-                                                "Duration",
-                                                &format!("{}", duration.as_secs())
-                                            )
+                                            text("Out port"),
+                                            container(text!(
+                                                "{}",
+                                                self.selected_out_port.as_ref().unwrap()
+                                            ))
+                                            .padding(3)
+                                            .style(container::rounded_box)
                                         ]
                                         .spacing(6),
-                                        horizontal_space()
+                                        column![
+                                            text("In port"),
+                                            container(text!(
+                                                "{}",
+                                                self.selected_in_port.as_ref().unwrap()
+                                            ))
+                                            .padding(3)
+                                        ]
+                                        .spacing(6),
                                     ]
+                                    .spacing(12),
+                                    row![
+                                        column![
+                                            text("Frequency"),
+                                            row![
+                                                text("From"),
+                                                text_input("From", &format!("{}", start_frequency)),
+                                                text("To"),
+                                                text_input("To", &format!("{}", end_frequency))
+                                            ]
+                                            .spacing(8)
+                                            .align_y(Alignment::Center),
+                                        ]
+                                        .spacing(6),
+                                        row![
+                                            column![
+                                                text("Duration"),
+                                                text_input(
+                                                    "Duration",
+                                                    &format!("{}", duration.as_secs())
+                                                )
+                                            ]
+                                            .spacing(6),
+                                            horizontal_space()
+                                        ]
+                                    ]
+                                    .spacing(8)
+                                    .align_y(Alignment::Center),
                                 ]
-                                .spacing(8)
-                                .align_y(Alignment::Center),
-                                row![
-                                    button("Cancel").on_press(Message::Back),
-                                    button("Start Measurement").on_press(Message::RunMeasurement),
-                                    horizontal_space(),
-                                ]
-                                .spacing(12)
-                            ]
-                            .spacing(18),
-                        )
-                        .style(container::bordered_box)
-                        .padding(18)
-                        .into(),
+                                .spacing(12),
+                            )
+                            .push_button(button("Cancel").on_press(Message::Back))
+                            .push_button(
+                                button("Start Measurement").on_press(Message::RunMeasurement),
+                            )
+                            .view(sample_rate),
                         MeasurementState::MeasurementRunning {
                             loudness,
                             data,
                             finished_len,
-                        } => container(
-                            column![
-                                header("Measurement Running ..."),
+                        } => Page::new("Measurement Running ...")
+                            .content(
                                 row![
                                     column![
                                         column![
@@ -568,7 +510,7 @@ impl Recording {
                                     .padding(6),
                                     Chart::<_, (), _>::new()
                                         .x_range(0.0..=*finished_len as f32)
-                                        .y_range(-1.0..=1.0)
+                                        .y_range(-0.5..=0.5)
                                         .push_series(
                                             line_series(
                                                 data.iter()
@@ -579,17 +521,9 @@ impl Recording {
                                         )
                                 ]
                                 .spacing(12),
-                                row![
-                                    button("Stop").on_press(Message::StopTesting),
-                                    horizontal_space(),
-                                ]
-                                .spacing(12)
-                            ]
-                            .spacing(18),
-                        )
-                        .style(container::bordered_box)
-                        .padding(18)
-                        .into(),
+                            )
+                            .push_button(button("Stop").on_press(Message::StopTesting))
+                            .view(sample_rate),
                     }
                 }
                 State::Retrying { err, remaining, .. } => container(
@@ -655,4 +589,58 @@ impl Default for Recording {
 
 pub fn recording_button<'a, Message: 'a>(msg: Message) -> Button<'a, Message> {
     button(colored_circle(8.0, Color::from_rgb8(200, 56, 42))).on_press(msg)
+}
+
+struct Page<'a, Message> {
+    title: &'a str,
+    content: Option<Element<'a, Message>>,
+    buttons: Vec<Element<'a, Message>>,
+}
+
+impl<'a, Message> Page<'a, Message>
+where
+    Message: 'a,
+{
+    fn new(title: &'a str) -> Self {
+        Self {
+            title,
+            content: None,
+            buttons: Vec::new(),
+        }
+    }
+
+    fn content(mut self, content: impl Into<Element<'a, Message>>) -> Self {
+        self.content = Some(content.into());
+        self
+    }
+
+    fn push_button(mut self, button: impl Into<Element<'a, Message>>) -> Self {
+        self.buttons.push(button.into());
+        self
+    }
+
+    fn view(self, sample_rate: &'a data::SampleRate) -> Element<'a, Message> {
+        let header = |subsection| {
+            column![
+                row![
+                    text!("Recording - {subsection}").size(20),
+                    horizontal_space(),
+                    text!("Sample rate: {}", sample_rate).size(14)
+                ]
+                .align_y(Vertical::Bottom),
+                horizontal_rule(1),
+            ]
+            .spacing(4)
+        };
+
+        container(
+            column![header(&self.title)]
+                .push_maybe(self.content)
+                .push(container(row(self.buttons).spacing(12)).align_right(Length::Fill))
+                .spacing(18),
+        )
+        .style(container::bordered_box)
+        .padding(18)
+        .into()
+    }
 }
