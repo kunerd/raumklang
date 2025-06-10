@@ -396,6 +396,18 @@ impl Recording {
                             .view(sample_rate)
                     };
 
+                    fn loudness_text<'a>(label: &'a str, value: f32) -> Element<'a, Message> {
+                        column![
+                            text(label).size(12).align_y(Vertical::Bottom),
+                            horizontal_rule(1),
+                            text!("{:.1}", value).size(24),
+                        ]
+                        .spacing(3)
+                        .width(Length::Shrink)
+                        .align_x(Horizontal::Center)
+                        .into()
+                    }
+
                     let sample_rate = &backend.sample_rate;
                     match measurement {
                         MeasurementState::Init => setup_page(sample_rate, None),
@@ -403,20 +415,6 @@ impl Recording {
                             setup_page(sample_rate, Some(Message::RunTest))
                         }
                         MeasurementState::Testing { loudness, .. } => {
-                            fn loudness_text<'a>(
-                                label: &'a str,
-                                value: f32,
-                            ) -> Element<'a, Message> {
-                                column![
-                                    text(label).size(12).align_y(Vertical::Bottom),
-                                    horizontal_rule(1),
-                                    text!("{:.1}", value).size(24),
-                                ]
-                                .spacing(3)
-                                .width(Length::Shrink)
-                                .align_x(Horizontal::Center)
-                                .into()
-                            }
                             Page::new("Loudness Test ...")
                                 .content(
                                     row![
@@ -528,49 +526,52 @@ impl Recording {
                         } => Page::new("Measurement Running ...")
                             .content(
                                 row![
+                                    container(
+                                        canvas(RmsPeakMeter::new(
+                                            loudness.rms,
+                                            loudness.peak,
+                                            &self.cache
+                                        ))
+                                        .width(60)
+                                        .height(200)
+                                    )
+                                    .padding(10),
                                     column![
-                                        column![
-                                            text("Out port"),
-                                            container(text!(
-                                                "{}",
-                                                self.selected_out_port.as_ref().unwrap()
-                                            ))
-                                            .padding(4)
-                                            .style(container::rounded_box)
-                                        ]
-                                        .spacing(6),
-                                        column![
-                                            text("In port"),
-                                            container(text!(
-                                                "{}",
-                                                self.selected_in_port.as_ref().unwrap()
-                                            ))
-                                            .padding(4)
-                                            .style(container::rounded_box)
-                                        ]
-                                        .spacing(6),
-                                        column![
-                                            text!("Rms: {}", loudness.rms),
-                                            text!("Peak: {}", loudness.peak),
-                                            text!("Data len: {}", data.len())
-                                        ]
-                                        .spacing(6),
+                                        container(
+                                            row![
+                                                loudness_text("RMS", loudness.rms),
+                                                vertical_rule(3).style(|theme| {
+                                                    let mut style = rule::default(theme);
+                                                    style.width = 3;
+                                                    style
+                                                }),
+                                                loudness_text("Peak", loudness.peak),
+                                            ]
+                                            .align_y(Vertical::Bottom)
+                                            .height(Length::Shrink)
+                                            .spacing(10)
+                                        )
+                                        .center_x(Length::Fill),
+                                        Chart::<_, (), _>::new()
+                                            .x_range(0.0..=*finished_len as f32)
+                                            .y_range(-0.5..=0.5)
+                                            .push_series(
+                                                line_series(
+                                                    data.iter()
+                                                        .enumerate()
+                                                        .map(|(i, s)| (i as f32, *s))
+                                                )
+                                                .color(
+                                                    iced::Color::from_rgb8(50, 175, 50)
+                                                        .scale_alpha(0.6)
+                                                )
+                                            )
                                     ]
                                     .spacing(12)
-                                    .padding(6),
-                                    Chart::<_, (), _>::new()
-                                        .x_range(0.0..=*finished_len as f32)
-                                        .y_range(-0.5..=0.5)
-                                        .push_series(
-                                            line_series(
-                                                data.iter()
-                                                    .enumerate()
-                                                    .map(|(i, s)| (i as f32, *s))
-                                            )
-                                            .color(iced::Color::from_rgb8(200, 200, 34))
-                                        )
+                                    .padding(10)
                                 ]
-                                .spacing(12),
+                                .spacing(12)
+                                .align_y(Vertical::Center),
                             )
                             .push_button(button("Stop").on_press(Message::StopTesting))
                             .view(sample_rate),
