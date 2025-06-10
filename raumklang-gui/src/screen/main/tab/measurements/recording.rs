@@ -1,12 +1,15 @@
 use std::{sync::Arc, time::Duration};
 
-use crate::{audio, data, widgets::colored_circle};
+use crate::{
+    audio, data,
+    widgets::{colored_circle, RmsPeakMeter},
+};
 use iced::{
-    alignment::Vertical,
+    alignment::{Horizontal, Vertical},
     task, time,
     widget::{
-        button, column, container, horizontal_rule, horizontal_space, pick_list, row, slider, text,
-        text_input, Button,
+        button, canvas, column, container, horizontal_rule, horizontal_space, pick_list, row, rule,
+        slider, text, text_input, vertical_rule, Button,
     },
     Alignment, Color, Element, Length, Subscription, Task,
 };
@@ -19,6 +22,7 @@ pub struct Recording {
     volume: f32,
     selected_out_port: Option<String>,
     selected_in_port: Option<String>,
+    cache: canvas::Cache,
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +102,7 @@ impl Recording {
             volume: 0.5,
             selected_out_port: None,
             selected_in_port: None,
+            cache: canvas::Cache::new(),
         }
     }
 
@@ -243,6 +248,7 @@ impl Recording {
                 };
 
                 *loudness = new_loudness;
+                self.cache.clear();
 
                 Action::None
             }
@@ -397,12 +403,56 @@ impl Recording {
                             setup_page(sample_rate, Some(Message::RunTest))
                         }
                         MeasurementState::Testing { loudness, .. } => {
+                            fn loudness_text<'a>(
+                                label: &'a str,
+                                value: f32,
+                            ) -> Element<'a, Message> {
+                                column![
+                                    text(label).size(12).align_y(Vertical::Bottom),
+                                    horizontal_rule(1),
+                                    text!("{:.1}", value).size(24),
+                                ]
+                                .spacing(3)
+                                .width(Length::Shrink)
+                                .align_x(Horizontal::Center)
+                                .into()
+                            }
                             Page::new("Loudness Test ...")
-                                .content(column![
-                                    text!("RMS: {}, Peak: {}", loudness.rms, loudness.peak),
-                                    slider(0.0..=1.0, self.volume, Message::VolumeChanged)
-                                        .step(0.01),
-                                ])
+                                .content(
+                                    row![
+                                        container(
+                                            canvas(RmsPeakMeter::new(
+                                                loudness.rms,
+                                                loudness.peak,
+                                                &self.cache
+                                            ))
+                                            .width(60)
+                                            .height(200)
+                                        )
+                                        .padding(10),
+                                        column![
+                                            container(
+                                                row![
+                                                    loudness_text("RMS", loudness.rms),
+                                                    vertical_rule(3).style(|theme| {
+                                                        let mut style = rule::default(theme);
+                                                        style.width = 3;
+                                                        style
+                                                    }),
+                                                    loudness_text("Peak", loudness.peak),
+                                                ]
+                                                .align_y(Vertical::Bottom)
+                                                .height(Length::Shrink)
+                                                .spacing(10)
+                                            )
+                                            .center_x(Length::Fill),
+                                            slider(0.0..=1.0, self.volume, Message::VolumeChanged)
+                                                .step(0.01),
+                                        ]
+                                        .spacing(10)
+                                    ]
+                                    .align_y(Vertical::Center),
+                                )
                                 .push_button(button("Stop").on_press(Message::StopTesting))
                                 .push_button(button("Ok").on_press(Message::TestOk))
                                 .view(sample_rate)
