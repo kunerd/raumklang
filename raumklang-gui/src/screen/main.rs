@@ -80,7 +80,7 @@ impl Main {
                     return Task::none();
                 };
 
-                let action = measurements.update(message, self.project.sample_rate());
+                let action = measurements.update(message);
 
                 match action {
                     measurements::Action::LoopbackAdded(loopback) => {

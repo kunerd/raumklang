@@ -5,12 +5,13 @@ mod process;
 pub use loudness::Loudness;
 pub use measurement::Measurement;
 pub use process::Process;
-use ringbuf::traits::{Consumer, Producer, Split};
-use ringbuf::{HeapCons, HeapProd, HeapRb};
 
-use crate::data::{self};
+use crate::data;
 use crate::log;
 use loudness::Test;
+
+use ringbuf::traits::{Consumer, Producer, Split};
+use ringbuf::{HeapCons, HeapProd, HeapRb};
 
 use atomic_float::AtomicF32;
 use iced::futures::Stream;
@@ -72,17 +73,15 @@ impl Backend {
 
     pub fn run_measurement(
         &self,
-        start_frequency: u16,
-        end_frequency: u16,
-        duration: Duration,
+        config: data::measurement::Config,
     ) -> (mpsc::Receiver<Loudness>, mpsc::Receiver<Box<[f32]>>) {
         let (loudness_sender, loudness_receiver) = mpsc::channel(1024);
         let (data_sender, data_receiver) = mpsc::channel(1024);
 
         let command = Command::RunMeasurement {
-            duration,
-            start_frequency,
-            end_frequency,
+            duration: config.duration,
+            start_frequency: config.start_frequency,
+            end_frequency: config.end_frequency,
             data_sender,
             loudness_sender,
         };

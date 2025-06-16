@@ -1,9 +1,9 @@
-use std::{sync::Arc, time::Duration};
-
 use crate::{
-    audio, data,
+    audio,
+    data::{self, measurement},
     widgets::{colored_circle, RmsPeakMeter},
 };
+
 use iced::{
     alignment::{Horizontal, Vertical},
     task, time,
@@ -16,13 +16,61 @@ use iced::{
 use prism::{line_series, Chart};
 use tokio_stream::wrappers::ReceiverStream;
 
+use std::{sync::Arc, time::Duration};
+
 pub struct Recording {
     kind: Kind,
     state: State,
     volume: f32,
     selected_out_port: Option<String>,
     selected_in_port: Option<String>,
+    measurement_config: measurement::Config,
     cache: canvas::Cache,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConfigFields {
+    duration: String,
+    start_frequency: String,
+    end_frequency: String,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigValidationError {
+    #[error("duration")]
+    Duration,
+    #[error("start frequency")]
+    StartFrequency,
+    #[error("end frequency")]
+    EndFrequency,
+}
+
+impl TryFrom<&ConfigFields> for measurement::Config {
+    type Error = ConfigValidationError;
+
+    fn try_from(fields: &ConfigFields) -> std::result::Result<Self, Self::Error> {
+        let duration = fields
+            .duration
+            .parse()
+            .map(Duration::from_secs_f32)
+            .map_err(|_| ConfigValidationError::Duration)?;
+
+        let start_frequency = fields
+            .start_frequency
+            .parse()
+            .map_err(|_| ConfigValidationError::StartFrequency)?;
+
+        let end_frequency = fields
+            .end_frequency
+            .parse()
+            .map_err(|_| ConfigValidationError::EndFrequency)?;
+
+        Ok(Self {
+            duration,
+            start_frequency,
+            end_frequency,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -52,11 +100,7 @@ enum MeasurementState {
         loudness: audio::Loudness,
         _stream_handle: task::Handle,
     },
-    PreparingMeasurement {
-        duration: Duration,
-        start_frequency: u16,
-        end_frequency: u16,
-    },
+    PreparingMeasurement(ConfigFields),
     MeasurementRunning {
         finished_len: usize,
         loudness: audio::Loudness,
@@ -80,6 +124,7 @@ pub enum Message {
     RecordingChunk(Box<[f32]>),
     JackNotification(audio::Notification),
     RecordingFinished,
+    ConfigFieldChanged(Field),
 }
 
 pub enum Action {
@@ -94,6 +139,13 @@ pub enum Result {
     Measurement(raumklang_core::Measurement),
 }
 
+#[derive(Debug, Clone)]
+pub enum Field {
+    StartFrequency(String),
+    EndFrequency(String),
+    Duration(String),
+}
+
 impl Recording {
     pub fn new(kind: Kind) -> Self {
         Self {
@@ -102,11 +154,12 @@ impl Recording {
             volume: 0.5,
             selected_out_port: None,
             selected_in_port: None,
+            measurement_config: measurement::Config::default(),
             cache: canvas::Cache::new(),
         }
     }
 
-    pub fn update(&mut self, message: Message, sample_rate: data::SampleRate) -> Action {
+    pub fn update(&mut self, message: Message) -> Action {
         match message {
             Message::Back => Action::Back,
             Message::RunTest => {
@@ -261,12 +314,9 @@ impl Recording {
                     return Action::None;
                 };
 
-                let nquist = Into::<u32>::into(sample_rate) as u16 / 2 - 1;
-                *measurement = MeasurementState::PreparingMeasurement {
-                    duration: Duration::from_secs(3),
-                    start_frequency: 20,
-                    end_frequency: nquist,
-                };
+                *measurement = MeasurementState::PreparingMeasurement(ConfigFields::from(
+                    &self.measurement_config,
+                ));
 
                 Action::None
             }
@@ -280,24 +330,24 @@ impl Recording {
                 };
 
                 let state = std::mem::replace(measurement, MeasurementState::Init);
-                if let MeasurementState::PreparingMeasurement {
-                    duration,
-                    start_frequency,
-                    end_frequency,
-                } = state
-                {
-                    let (loudness_receiver, mut data_receiver) =
-                        backend.run_measurement(start_frequency, end_frequency, duration);
+                if let MeasurementState::PreparingMeasurement(ref fields) = state {
+                    let Ok(config) = measurement::Config::try_from(fields) else {
+                        // TODO validation error
+                        *measurement = state;
+                        return Action::None;
+                    };
 
                     *measurement = MeasurementState::MeasurementRunning {
                         finished_len: data::Samples::from_duration(
-                            duration,
-                            data::SampleRate::new(44_100),
+                            config.duration,
+                            backend.sample_rate,
                         )
                         .into(),
                         loudness: audio::Loudness::default(),
                         data: vec![],
                     };
+
+                    let (loudness_receiver, mut data_receiver) = backend.run_measurement(config);
 
                     let measurement_sipper = iced::task::sipper(async move |mut progress| {
                         while let Some(data) = data_receiver.recv().await {
@@ -352,6 +402,23 @@ impl Recording {
                 };
 
                 Action::Finished(result)
+            }
+            Message::ConfigFieldChanged(field) => {
+                let State::Connected {
+                    measurement: MeasurementState::PreparingMeasurement(fields),
+                    ..
+                } = &mut self.state
+                else {
+                    return Action::None;
+                };
+
+                match field {
+                    Field::StartFrequency(start) => fields.start_frequency = start,
+                    Field::EndFrequency(end) => fields.end_frequency = end,
+                    Field::Duration(duration) => fields.duration = duration,
+                }
+
+                Action::None
             }
         }
     }
@@ -455,70 +522,86 @@ impl Recording {
                                 .push_button(button("Ok").on_press(Message::TestOk))
                                 .view(sample_rate)
                         }
-                        MeasurementState::PreparingMeasurement {
-                            duration,
-                            start_frequency,
-                            end_frequency,
-                        } => Page::new("Setup Measurement")
-                            .content(
-                                column![
-                                    row![
-                                        column![
-                                            text("Out port"),
-                                            container(text!(
-                                                "{}",
-                                                self.selected_out_port.as_ref().unwrap()
-                                            ))
-                                            .padding(3)
-                                            .style(container::rounded_box)
-                                        ]
-                                        .spacing(6),
-                                        column![
-                                            text("In port"),
-                                            container(text!(
-                                                "{}",
-                                                self.selected_in_port.as_ref().unwrap()
-                                            ))
-                                            .padding(3)
-                                        ]
-                                        .spacing(6),
-                                    ]
-                                    .spacing(12),
-                                    row![
-                                        column![
-                                            text("Frequency"),
-                                            row![
-                                                text("From"),
-                                                text_input("From", &format!("{}", start_frequency)),
-                                                text("To"),
-                                                text_input("To", &format!("{}", end_frequency))
-                                            ]
-                                            .spacing(8)
-                                            .align_y(Alignment::Center),
-                                        ]
-                                        .spacing(6),
+                        MeasurementState::PreparingMeasurement(fields) => {
+                            Page::new("Setup Measurement")
+                                .content(
+                                    column![
                                         row![
                                             column![
-                                                text("Duration"),
-                                                text_input(
-                                                    "Duration",
-                                                    &format!("{}", duration.as_secs())
-                                                )
+                                                text("Out port"),
+                                                container(text!(
+                                                    "{}",
+                                                    self.selected_out_port.as_ref().unwrap()
+                                                ))
+                                                .padding(3)
+                                                .style(container::rounded_box)
                                             ]
                                             .spacing(6),
-                                            horizontal_space()
+                                            column![
+                                                text("In port"),
+                                                container(text!(
+                                                    "{}",
+                                                    self.selected_in_port.as_ref().unwrap()
+                                                ))
+                                                .padding(3)
+                                            ]
+                                            .spacing(6),
                                         ]
+                                        .spacing(12),
+                                        row![
+                                            container(
+                                                column![
+                                                    text("Frequency"),
+                                                    horizontal_rule(1),
+                                                    row![
+                                                        text("From"),
+                                                        text_input("From", &fields.start_frequency)
+                                                            .on_input(|s| {
+                                                                Message::ConfigFieldChanged(
+                                                                    Field::StartFrequency(s),
+                                                                )
+                                                            }),
+                                                        text("To"),
+                                                        text_input("To", &fields.end_frequency)
+                                                            .on_input(|s| {
+                                                                Message::ConfigFieldChanged(
+                                                                    Field::EndFrequency(s),
+                                                                )
+                                                            }),
+                                                    ]
+                                                    .spacing(8)
+                                                    .align_y(Alignment::Center),
+                                                ]
+                                                .spacing(6)
+                                            )
+                                            .style(container::rounded_box)
+                                            .padding(8),
+                                            container(row![
+                                                column![
+                                                    text("Duration"),
+                                                    horizontal_rule(1),
+                                                    text_input("Duration", &fields.duration)
+                                                        .on_input(|s| Message::ConfigFieldChanged(
+                                                            Field::Duration(s)
+                                                        )),
+                                                ]
+                                                .spacing(8),
+                                                horizontal_space()
+                                            ])
+                                            .style(container::rounded_box)
+                                            .padding(8)
+                                        ]
+                                        .spacing(8)
+                                        .align_y(Alignment::Center),
                                     ]
-                                    .spacing(8)
-                                    .align_y(Alignment::Center),
-                                ]
-                                .spacing(12),
-                            )
-                            .push_button(button("Cancel").on_press(Message::Back))
-                            .push_button(
-                                button("Start Measurement").on_press(Message::RunMeasurement),
-                            )
-                            .view(sample_rate),
+                                    .spacing(12),
+                                )
+                                .push_button(button("Cancel").on_press(Message::Back))
+                                .push_button(
+                                    button("Start Measurement").on_press(Message::RunMeasurement),
+                                )
+                                .view(sample_rate)
+                        }
                         MeasurementState::MeasurementRunning {
                             loudness,
                             data,
@@ -693,5 +776,15 @@ where
         .style(container::bordered_box)
         .padding(18)
         .into()
+    }
+}
+
+impl From<&measurement::Config> for ConfigFields {
+    fn from(config: &measurement::Config) -> Self {
+        Self {
+            duration: format!("{}", config.duration.as_secs()),
+            start_frequency: format!("{}", config.start_frequency),
+            end_frequency: format!("{}", config.end_frequency),
+        }
     }
 }

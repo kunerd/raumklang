@@ -1,5 +1,7 @@
+mod config;
 pub mod loopback;
 
+pub use config::Config;
 pub use loopback::Loopback;
 
 use super::{frequency_response, impulse_response, FrequencyResponse, ImpulseResponse};
