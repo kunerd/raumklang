@@ -1,4 +1,4 @@
-mod config;
+pub mod config;
 pub mod loopback;
 
 pub use config::Config;

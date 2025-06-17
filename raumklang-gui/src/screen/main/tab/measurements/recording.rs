@@ -1,6 +1,9 @@
 use crate::{
     audio,
-    data::{self, measurement},
+    data::{
+        self,
+        measurement::{self, config},
+    },
     widgets::{colored_circle, RmsPeakMeter},
 };
 
@@ -24,7 +27,6 @@ pub struct Recording {
     volume: f32,
     selected_out_port: Option<String>,
     selected_in_port: Option<String>,
-    measurement_config: measurement::Config,
     cache: canvas::Cache,
 }
 
@@ -33,44 +35,6 @@ pub struct ConfigFields {
     duration: String,
     start_frequency: String,
     end_frequency: String,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ConfigValidationError {
-    #[error("duration")]
-    Duration,
-    #[error("start frequency")]
-    StartFrequency,
-    #[error("end frequency")]
-    EndFrequency,
-}
-
-impl TryFrom<&ConfigFields> for measurement::Config {
-    type Error = ConfigValidationError;
-
-    fn try_from(fields: &ConfigFields) -> std::result::Result<Self, Self::Error> {
-        let duration = fields
-            .duration
-            .parse()
-            .map(Duration::from_secs_f32)
-            .map_err(|_| ConfigValidationError::Duration)?;
-
-        let start_frequency = fields
-            .start_frequency
-            .parse()
-            .map_err(|_| ConfigValidationError::StartFrequency)?;
-
-        let end_frequency = fields
-            .end_frequency
-            .parse()
-            .map_err(|_| ConfigValidationError::EndFrequency)?;
-
-        Ok(Self {
-            duration,
-            start_frequency,
-            end_frequency,
-        })
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +56,13 @@ enum State {
     },
     Error(audio::Error),
 }
+
+// enum Page {
+//     PortSetup,
+//     LoudnessTest,
+//     MeasurementSetup,
+//     MeasurementRunning,
+// }
 
 enum MeasurementState {
     Init,
@@ -120,7 +91,7 @@ pub enum Message {
     StopTesting,
     TestOk,
     RmsChanged(audio::Loudness),
-    RunMeasurement,
+    RunMeasurement(measurement::Config),
     RecordingChunk(Box<[f32]>),
     JackNotification(audio::Notification),
     RecordingFinished,
@@ -154,7 +125,6 @@ impl Recording {
             volume: 0.5,
             selected_out_port: None,
             selected_in_port: None,
-            measurement_config: measurement::Config::default(),
             cache: canvas::Cache::new(),
         }
     }
@@ -315,12 +285,12 @@ impl Recording {
                 };
 
                 *measurement = MeasurementState::PreparingMeasurement(ConfigFields::from(
-                    &self.measurement_config,
+                    &measurement::Config::default(),
                 ));
 
                 Action::None
             }
-            Message::RunMeasurement => {
+            Message::RunMeasurement(config) => {
                 let State::Connected {
                     backend,
                     measurement,
@@ -330,16 +300,10 @@ impl Recording {
                 };
 
                 let state = std::mem::replace(measurement, MeasurementState::Init);
-                if let MeasurementState::PreparingMeasurement(ref fields) = state {
-                    let Ok(config) = measurement::Config::try_from(fields) else {
-                        // TODO validation error
-                        *measurement = state;
-                        return Action::None;
-                    };
-
+                if let MeasurementState::PreparingMeasurement(_) = state {
                     *measurement = MeasurementState::MeasurementRunning {
                         finished_len: data::Samples::from_duration(
-                            config.duration,
+                            config.duration(),
                             backend.sample_rate,
                         )
                         .into(),
@@ -523,6 +487,13 @@ impl Recording {
                                 .view(sample_rate)
                         }
                         MeasurementState::PreparingMeasurement(fields) => {
+                            let range = config::FrequencyRange::from_strings(
+                                &fields.start_frequency,
+                                &fields.end_frequency,
+                            );
+                            let range_err = range.is_err();
+                            let duration = fields.duration.parse().map(Duration::from_secs_f32);
+                            let duration_err = duration.is_err();
                             Page::new("Setup Measurement")
                                 .content(
                                     column![
@@ -549,33 +520,75 @@ impl Recording {
                                         ]
                                         .spacing(12),
                                         row![
-                                            container(
-                                                column![
-                                                    text("Frequency"),
-                                                    horizontal_rule(1),
-                                                    row![
-                                                        text("From"),
-                                                        text_input("From", &fields.start_frequency)
-                                                            .on_input(|s| {
-                                                                Message::ConfigFieldChanged(
-                                                                    Field::StartFrequency(s),
+                                            {
+                                                let color = move |theme: &iced::Theme| {
+                                                    if range_err {
+                                                        theme.extended_palette().danger.weak.color
+                                                    } else {
+                                                        theme
+                                                            .extended_palette()
+                                                            .secondary
+                                                            .strong
+                                                            .color
+                                                    }
+                                                };
+
+                                                container(
+                                                    column![text("Frequency"), horizontal_rule(1),]
+                                                        .push_maybe(
+                                                            range
+                                                                .as_ref()
+                                                                .err()
+                                                                .map(|err| text!("{err}")),
+                                                        )
+                                                        .push(
+                                                            row![
+                                                                text("From"),
+                                                                text_input(
+                                                                    "From",
+                                                                    &fields.start_frequency
                                                                 )
-                                                            }),
-                                                        text("To"),
-                                                        text_input("To", &fields.end_frequency)
-                                                            .on_input(|s| {
-                                                                Message::ConfigFieldChanged(
-                                                                    Field::EndFrequency(s),
+                                                                .on_input(|s| {
+                                                                    Message::ConfigFieldChanged(
+                                                                        Field::StartFrequency(s),
+                                                                    )
+                                                                })
+                                                                .style(move |theme, status| {
+                                                                    let mut style =
+                                                                        text_input::default(
+                                                                            theme, status,
+                                                                        );
+                                                                    style.border = style
+                                                                        .border
+                                                                        .color(color(theme));
+                                                                    style
+                                                                }),
+                                                                text("To"),
+                                                                text_input(
+                                                                    "To",
+                                                                    &fields.end_frequency
                                                                 )
-                                                            }),
-                                                    ]
-                                                    .spacing(8)
-                                                    .align_y(Alignment::Center),
-                                                ]
-                                                .spacing(6)
-                                            )
-                                            .style(container::rounded_box)
-                                            .padding(8),
+                                                                .on_input(|s| {
+                                                                    Message::ConfigFieldChanged(
+                                                                        Field::EndFrequency(s),
+                                                                    )
+                                                                }),
+                                                            ]
+                                                            .spacing(8)
+                                                            .align_y(Alignment::Center),
+                                                        )
+                                                        .spacing(6),
+                                                )
+                                                .style(move |theme| {
+                                                    let style = container::rounded_box(theme);
+                                                    if range_err {
+                                                        style.color(color(theme))
+                                                    } else {
+                                                        style
+                                                    }
+                                                })
+                                                .padding(8)
+                                            },
                                             container(row![
                                                 column![
                                                     text("Duration"),
@@ -583,12 +596,49 @@ impl Recording {
                                                     text_input("Duration", &fields.duration)
                                                         .on_input(|s| Message::ConfigFieldChanged(
                                                             Field::Duration(s)
-                                                        )),
+                                                        ))
+                                                        .style(
+                                                            move |theme: &iced::Theme, status| {
+                                                                if duration_err {
+                                                                    text_input::Style {
+                                                                        border: iced::Border {
+                                                                            color: theme
+                                                                                .extended_palette()
+                                                                                .danger
+                                                                                .base
+                                                                                .color,
+                                                                            width: 1.0,
+                                                                            ..Default::default()
+                                                                        },
+                                                                        ..text_input::default(
+                                                                            theme, status,
+                                                                        )
+                                                                    }
+                                                                } else {
+                                                                    text_input::default(
+                                                                        theme, status,
+                                                                    )
+                                                                }
+                                                            }
+                                                        ),
                                                 ]
                                                 .spacing(8),
                                                 horizontal_space()
                                             ])
-                                            .style(container::rounded_box)
+                                            .style(move |theme| {
+                                                let style = container::rounded_box(theme);
+                                                if duration_err {
+                                                    style.color(
+                                                        theme
+                                                            .extended_palette()
+                                                            .danger
+                                                            .strong
+                                                            .color,
+                                                    )
+                                                } else {
+                                                    style
+                                                }
+                                            })
                                             .padding(8)
                                         ]
                                         .spacing(8)
@@ -597,9 +647,14 @@ impl Recording {
                                     .spacing(12),
                                 )
                                 .push_button(button("Cancel").on_press(Message::Back))
-                                .push_button(
-                                    button("Start Measurement").on_press(Message::RunMeasurement),
-                                )
+                                .push_button(button("Start Measurement").on_press_maybe(
+                                    if let (Ok(range), Ok(duration)) = (range, duration) {
+                                        let config = measurement::Config::new(range, duration);
+                                        Some(Message::RunMeasurement(config))
+                                    } else {
+                                        None
+                                    },
+                                ))
                                 .view(sample_rate)
                         }
                         MeasurementState::MeasurementRunning {
@@ -782,9 +837,9 @@ where
 impl From<&measurement::Config> for ConfigFields {
     fn from(config: &measurement::Config) -> Self {
         Self {
-            duration: format!("{}", config.duration.as_secs()),
-            start_frequency: format!("{}", config.start_frequency),
-            end_frequency: format!("{}", config.end_frequency),
+            duration: format!("{}", config.duration().as_secs()),
+            start_frequency: format!("{}", config.start_frequency()),
+            end_frequency: format!("{}", config.end_frequency()),
         }
     }
 }
