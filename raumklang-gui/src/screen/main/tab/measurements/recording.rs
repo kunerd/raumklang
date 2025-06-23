@@ -1,13 +1,13 @@
 mod page;
 
-use page::{Component, ConfigFields, Page};
+use page::{signal_setup, Component, Page};
 
 use crate::{
     audio,
     data::{
         self,
         measurement::{self, config},
-        recording,
+        recording::{self, port},
     },
     log,
     widgets::{colored_circle, RmsPeakMeter},
@@ -80,14 +80,13 @@ pub enum Message {
     RetryTick(time::Instant),
     VolumeChanged(f32),
     StopTesting,
-    TestOk(recording::Volume),
+    TestOk(port::Config, recording::Volume),
     RmsChanged(audio::Loudness),
-    RunMeasurement(measurement::Config),
     RecordingChunk(Box<[f32]>),
     JackNotification(audio::Notification),
     RecordingFinished,
-    ConfigFieldChanged(Field),
     Cancel,
+    SignalSetup(signal_setup::Message),
 }
 
 pub enum Action {
@@ -125,31 +124,6 @@ impl Recording {
     pub fn update(&mut self, message: Message) -> Action {
         match message {
             Message::Back => Action::None,
-            Message::RunTest(_config) => {
-                let State::Connected { backend } = &mut self.state else {
-                    return Action::None;
-                };
-
-                // FIXME duration not used
-                let duration = Duration::from_secs(3);
-                let rms_receiver = backend.run_test(duration);
-
-                let (recv, handle) = Task::stream(ReceiverStream::new(rms_receiver))
-                    .map(Message::RmsChanged)
-                    .abortable();
-
-                let handle = handle.abort_on_drop();
-
-                self.page = Page::LoudnessTest {
-                    loudness: audio::Loudness::default(),
-                    _stream_handle: handle,
-                };
-
-                Action::Task(Task::batch([
-                    Task::future(backend.clone().set_volume(self.volume)).discard(),
-                    recv,
-                ]))
-            }
             Message::AudioBackend(event) => match event {
                 audio::Event::Ready(backend, receiver) => {
                     self.state = State::Connected { backend };
@@ -243,103 +217,112 @@ impl Recording {
 
                 Action::None
             }
-            Message::TestOk(_volume) => {
-                self.page =
-                    Page::MeasurementSetup(ConfigFields::from(&measurement::Config::default()));
+            Message::RunTest(config) => {
+                let State::Connected { backend } = &mut self.state else {
+                    return Action::None;
+                };
+
+                // FIXME duration not used
+                let duration = Duration::from_secs(3);
+                let rms_receiver = backend.run_test(duration);
+
+                let (recv, handle) = Task::stream(ReceiverStream::new(rms_receiver))
+                    .map(Message::RmsChanged)
+                    .abortable();
+
+                let handle = handle.abort_on_drop();
+
+                self.page = Page::LoudnessTest {
+                    config,
+                    loudness: audio::Loudness::default(),
+                    _stream_handle: handle,
+                };
+
+                Action::Task(Task::batch([
+                    Task::future(backend.clone().set_volume(self.volume)).discard(),
+                    recv,
+                ]))
+            }
+            Message::TestOk(config, _volume) => {
+                self.page = Page::SignalSetup {
+                    config,
+                    page: page::SignalSetup::new(),
+                };
 
                 Action::None
             }
-            Message::RunMeasurement(config) => {
-                // let State::Connected {
-                //     backend,
-                //     measurement,
-                // } = &mut self.state
-                // else {
-                //     return Action::None;
-                // };
+            Message::SignalSetup(message) => {
+                let Page::SignalSetup { page, .. } = &mut self.page else {
+                    return Action::None;
+                };
 
-                // let state = std::mem::replace(measurement, MeasurementState::Init);
-                // if let MeasurementState::PreparingMeasurement(_) = state {
-                //     *measurement = MeasurementState::MeasurementRunning {
-                //         finished_len: data::Samples::from_duration(
-                //             config.duration(),
-                //             backend.sample_rate,
-                //         )
-                //         .into(),
-                //         loudness: audio::Loudness::default(),
-                //         data: vec![],
-                //     };
+                match page.update(message) {
+                    Some(config) => {
+                        let State::Connected { backend } = &mut self.state else {
+                            return Action::None;
+                        };
 
-                //     let (loudness_receiver, mut data_receiver) = backend.run_measurement(config);
+                        let finished_len =
+                            data::Samples::from_duration(config.duration(), backend.sample_rate)
+                                .into();
 
-                //     let measurement_sipper = iced::task::sipper(async move |mut progress| {
-                //         while let Some(data) = data_receiver.recv().await {
-                //             progress.send(data).await;
-                //         }
-                //     });
+                        self.page = Page::MeasurementRunning {
+                            finished_len,
+                            loudness: audio::Loudness::default(),
+                            data: vec![],
+                        };
 
-                //     Action::Task(Task::batch(vec![
-                //         Task::stream(ReceiverStream::new(loudness_receiver))
-                //             .map(Message::RmsChanged),
-                //         Task::sip(measurement_sipper, Message::RecordingChunk, |_| {
-                //             Message::RecordingFinished
-                //         }),
-                //     ]))
-                // } else {
-                //     *measurement = state;
-                //     Action::None
-                // }
-                Action::None
+                        let (loudness_receiver, mut data_receiver) =
+                            backend.run_measurement(config);
+
+                        let measurement_sipper = iced::task::sipper(async move |mut progress| {
+                            while let Some(data) = data_receiver.recv().await {
+                                progress.send(data).await;
+                            }
+                        });
+
+                        Action::Task(Task::batch(vec![
+                            Task::stream(ReceiverStream::new(loudness_receiver))
+                                .map(Message::RmsChanged),
+                            Task::sip(measurement_sipper, Message::RecordingChunk, |_| {
+                                Message::RecordingFinished
+                            }),
+                        ]))
+                    }
+                    None => Action::None,
+                }
             }
             Message::RecordingChunk(chunk) => {
-                // let State::Connected {
-                //     backend: _,
-                //     measurement: MeasurementState::MeasurementRunning { data, .. },
-                // } = &mut self.state
-                // else {
-                //     return Action::None;
-                // };
+                let Page::MeasurementRunning { data, .. } = &mut self.page else {
+                    return Action::None;
+                };
 
-                // data.extend_from_slice(&chunk);
+                data.extend_from_slice(&chunk);
 
                 Action::None
             }
             Message::RecordingFinished => {
-                // let State::Connected {
-                //     backend,
-                //     measurement: MeasurementState::MeasurementRunning { data, .. },
-                // } = &mut self.state
-                // else {
-                //     return Action::None;
-                // };
-
-                // let sample_rate = backend.sample_rate.into();
-                // let data = std::mem::replace(data, Vec::new());
-
-                // let result = match self.kind {
-                //     Kind::Loopback => {
-                //         Result::Loopback(raumklang_core::Loopback::new(sample_rate, data))
-                //     }
-                //     Kind::Measurement => {
-                //         Result::Measurement(raumklang_core::Measurement::new(sample_rate, data))
-                //     }
-                // };
-
-                // Action::Finished(result)
-                Action::None
-            }
-            Message::ConfigFieldChanged(field) => {
-                let Page::MeasurementSetup(fields) = &mut self.page else {
+                let State::Connected { backend } = &mut self.state else {
                     return Action::None;
                 };
 
-                match field {
-                    Field::StartFrequency(start) => fields.start_frequency = start,
-                    Field::EndFrequency(end) => fields.end_frequency = end,
-                    Field::Duration(duration) => fields.duration = duration,
-                }
+                let Page::MeasurementRunning { data, .. } = &mut self.page else {
+                    return Action::None;
+                };
 
-                Action::None
+                let sample_rate = backend.sample_rate.into();
+                let data = std::mem::replace(data, Vec::new());
+
+                let result = match self.kind {
+                    Kind::Loopback => {
+                        Result::Loopback(raumklang_core::Loopback::new(sample_rate, data))
+                    }
+                    Kind::Measurement => {
+                        Result::Measurement(raumklang_core::Measurement::new(sample_rate, data))
+                    }
+                };
+
+                Action::Finished(result)
             }
             Message::Cancel => Action::Cancel,
         }
@@ -353,163 +336,80 @@ impl Recording {
             State::Connected { backend } => {
                 match &self.page {
                     Page::PortSetup => self.port_setup(backend),
-                    Page::LoudnessTest { loudness, .. } => self.loudness_test(loudness),
-                    Page::MeasurementSetup(fields) => {
-                        let range = config::FrequencyRange::from_strings(
-                            &fields.start_frequency,
-                            &fields.end_frequency,
-                        );
-
-                        let range_err = range.is_err();
-
-                        let duration = fields.duration.parse().map(Duration::from_secs_f32);
-
-                        let duration_err = duration.is_err();
-
-                        page::Component::new("Signal Setup")
-                            .content(
-                                column![
-                                    row![
-                                        column![
-                                            text("Out port"),
-                                            container(text!(
-                                                "{}",
-                                                self.selected_out_port.as_ref().unwrap()
-                                            ))
-                                            .padding(3)
-                                            .style(container::rounded_box)
-                                        ]
-                                        .spacing(6),
-                                        column![
-                                            text("In port"),
-                                            container(text!(
-                                                "{}",
-                                                self.selected_in_port.as_ref().unwrap()
-                                            ))
-                                            .padding(3)
-                                        ]
-                                        .spacing(6),
-                                    ]
-                                    .spacing(12),
-                                    row![
-                                        {
-                                            let color = move |theme: &iced::Theme| {
-                                                if range_err {
-                                                    theme.extended_palette().danger.weak.color
-                                                } else {
-                                                    theme.extended_palette().secondary.strong.color
-                                                }
-                                            };
-
-                                            container(
-                                                column![text("Frequency"), horizontal_rule(1),]
-                                                    .push_maybe(
-                                                        range
-                                                            .as_ref()
-                                                            .err()
-                                                            .map(|err| text!("{err}")),
-                                                    )
-                                                    .push(
-                                                        row![
-                                                            text("From"),
-                                                            text_input(
-                                                                "From",
-                                                                &fields.start_frequency
-                                                            )
-                                                            .on_input(|s| {
-                                                                Message::ConfigFieldChanged(
-                                                                    Field::StartFrequency(s),
-                                                                )
-                                                            })
-                                                            .style(move |theme, status| {
-                                                                let mut style = text_input::default(
-                                                                    theme, status,
-                                                                );
-                                                                style.border = style
-                                                                    .border
-                                                                    .color(color(theme));
-                                                                style
-                                                            }),
-                                                            text("To"),
-                                                            text_input("To", &fields.end_frequency)
-                                                                .on_input(|s| {
-                                                                    Message::ConfigFieldChanged(
-                                                                        Field::EndFrequency(s),
-                                                                    )
-                                                                }),
-                                                        ]
-                                                        .spacing(8)
-                                                        .align_y(Alignment::Center),
-                                                    )
-                                                    .spacing(6),
-                                            )
-                                            .style(move |theme| {
-                                                let style = container::rounded_box(theme);
-                                                if range_err {
-                                                    style.color(color(theme))
-                                                } else {
-                                                    style
-                                                }
-                                            })
-                                            .padding(8)
-                                        },
-                                        container(row![
-                                            column![
-                                                text("Duration"),
-                                                horizontal_rule(1),
-                                                text_input("Duration", &fields.duration)
-                                                    .on_input(|s| Message::ConfigFieldChanged(
-                                                        Field::Duration(s)
-                                                    ))
-                                                    .style(move |theme: &iced::Theme, status| {
-                                                        if duration_err {
-                                                            text_input::Style {
-                                                                border: iced::Border {
-                                                                    color: theme
-                                                                        .extended_palette()
-                                                                        .danger
-                                                                        .base
-                                                                        .color,
-                                                                    width: 1.0,
-                                                                    ..Default::default()
-                                                                },
-                                                                ..text_input::default(theme, status)
-                                                            }
-                                                        } else {
-                                                            text_input::default(theme, status)
-                                                        }
-                                                    }),
-                                            ]
-                                            .spacing(8),
-                                            horizontal_space()
-                                        ])
-                                        .style(move |theme| {
-                                            let style = container::rounded_box(theme);
-                                            if duration_err {
-                                                style.color(
-                                                    theme.extended_palette().danger.strong.color,
-                                                )
-                                            } else {
-                                                style
-                                            }
-                                        })
-                                        .padding(8)
-                                    ]
-                                    .spacing(8)
-                                    .align_y(Alignment::Center),
-                                ]
-                                .spacing(12),
-                            )
-                            .next_button("Next", {
-                                if let (Ok(range), Ok(duration)) = (range, duration) {
-                                    let config = measurement::Config::new(range, duration);
-                                    Some(Message::RunMeasurement(config))
-                                } else {
-                                    None
-                                }
-                            })
+                    Page::LoudnessTest {
+                        config, loudness, ..
+                    } => self.loudness_test(config, loudness),
+                    Page::SignalSetup { config, page } => {
+                        page.view(config).map(Message::SignalSetup)
                     }
-                    Page::MeasurementRunning => todo!(),
+                    Page::MeasurementRunning {
+                        finished_len,
+                        loudness,
+                        data,
+                    } => {
+                        fn loudness_text<'a>(label: &'a str, value: f32) -> Element<'a, Message> {
+                            column![
+                                text(label).size(12).align_y(Vertical::Bottom),
+                                horizontal_rule(1),
+                                text!("{:.1}", value).size(24),
+                            ]
+                            .spacing(3)
+                            .width(Length::Shrink)
+                            .align_x(Horizontal::Center)
+                            .into()
+                        }
+
+                        Component::new("Measurement Running ...").content(
+                            row![
+                                container(
+                                    canvas(RmsPeakMeter::new(
+                                        loudness.rms,
+                                        loudness.peak,
+                                        &self.cache
+                                    ))
+                                    .width(60)
+                                    .height(200)
+                                )
+                                .padding(10),
+                                column![
+                                    container(
+                                        row![
+                                            loudness_text("RMS", loudness.rms),
+                                            vertical_rule(3).style(|theme| {
+                                                let mut style = rule::default(theme);
+                                                style.width = 3;
+                                                style
+                                            }),
+                                            loudness_text("Peak", loudness.peak),
+                                        ]
+                                        .align_y(Vertical::Bottom)
+                                        .height(Length::Shrink)
+                                        .spacing(10)
+                                    )
+                                    .center_x(Length::Fill),
+                                    Chart::<_, (), _>::new()
+                                        .x_range(0.0..=*finished_len as f32)
+                                        .y_range(-0.5..=0.5)
+                                        .push_series(
+                                            line_series(
+                                                data.iter()
+                                                    .enumerate()
+                                                    .map(|(i, s)| (i as f32, *s))
+                                            )
+                                            .color(
+                                                iced::Color::from_rgb8(50, 175, 50)
+                                                    .scale_alpha(0.6)
+                                            )
+                                        )
+                                ]
+                                .spacing(12)
+                                .padding(10)
+                            ]
+                            .spacing(12)
+                            .align_y(Vertical::Center),
+                        )
+                        // .push_button(button("Stop").on_press(Message::StopTesting))
+                    }
                 }
                 // page::Component::new(self.page.to_string())
                 //     .content(match self.page {
@@ -1071,7 +971,11 @@ impl Recording {
             )
     }
 
-    fn loudness_test(&self, loudness: &audio::Loudness) -> page::Component<'_, Message> {
+    fn loudness_test(
+        &self,
+        config: &port::Config,
+        loudness: &audio::Loudness,
+    ) -> page::Component<'_, Message> {
         fn loudness_text<'a>(label: &'a str, value: f32) -> Element<'a, Message> {
             column![
                 text(label).size(12).align_y(Vertical::Bottom),
@@ -1119,7 +1023,7 @@ impl Recording {
                 "Next",
                 recording::Volume::new(self.volume, loudness)
                     .ok()
-                    .map(Message::TestOk),
+                    .map(|volume| Message::TestOk(config.clone(), volume)),
             )
     }
 

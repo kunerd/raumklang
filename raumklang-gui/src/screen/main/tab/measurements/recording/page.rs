@@ -1,59 +1,40 @@
 mod component;
-
-use std::fmt::Display;
+pub mod signal_setup;
 
 pub use component::Page as Component;
+pub use signal_setup::SignalSetup;
+
+use crate::{
+    audio,
+    data::{measurement, recording::port},
+};
 
 use iced::{
     task,
     widget::{column, pick_list, row, text},
 };
 
-use crate::{audio, data::measurement};
-
 #[derive(Debug)]
 pub enum Page {
     PortSetup,
     LoudnessTest {
+        config: port::Config,
         loudness: audio::Loudness,
         _stream_handle: task::Handle,
     },
-    MeasurementSetup(ConfigFields),
-    MeasurementRunning,
+    SignalSetup {
+        config: port::Config,
+        page: signal_setup::SignalSetup,
+    },
+    MeasurementRunning {
+        finished_len: usize,
+        loudness: audio::Loudness,
+        data: Vec<f32>,
+    },
 }
 
 impl Default for Page {
     fn default() -> Self {
         Self::PortSetup
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ConfigFields {
-    pub duration: String,
-    pub start_frequency: String,
-    pub end_frequency: String,
-}
-
-// impl Display for Page {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         let title = match self {
-//             Page::PortSetup => "Port Setup",
-//             Page::LoudnessTest { .. } => "Loudness Test ...",
-//             Page::MeasurementSetup(..) => "Measurement Setup",
-//             Page::MeasurementRunning => "Measurement Running ...",
-//         };
-
-//         write!(f, "{title}")
-//     }
-// }
-
-impl From<&measurement::Config> for ConfigFields {
-    fn from(config: &measurement::Config) -> Self {
-        Self {
-            duration: format!("{}", config.duration().as_secs()),
-            start_frequency: format!("{}", config.start_frequency()),
-            end_frequency: format!("{}", config.end_frequency()),
-        }
     }
 }

@@ -12,4 +12,12 @@ impl Config {
             None
         }
     }
+
+    pub fn out_port(&self) -> &String {
+        &self.out_port
+    }
+
+    pub fn in_port(&self) -> &String {
+        &self.in_port
+    }
 }
