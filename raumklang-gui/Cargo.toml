@@ -3,6 +3,10 @@ name = "gui"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "raumklang"
+path = "src/main.rs"
+
 [dependencies]
 raumklang-core = { workspace = true }
 prism = "0.2"

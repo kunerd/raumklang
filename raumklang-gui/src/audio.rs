@@ -28,8 +28,7 @@ use std::time::Duration;
 #[derive(Debug, Clone)]
 pub enum Event {
     Ready(Backend, Arc<mpsc::Receiver<Notification>>),
-    Error(Error),
-    RetryIn(Duration),
+    Error { err: Error, retry_in: Duration },
 }
 
 #[derive(Debug, Clone)]
@@ -125,22 +124,25 @@ enum Command {
 }
 
 enum State {
-    NotConnected(u64),
+    Connecting(u64),
     Connected {
         client: jack::AsyncClient<Notifications, ProcessHandler>,
         is_server_shutdown: Arc<AtomicBool>,
         command_rx: mpsc::Receiver<Command>,
         process_tx: HeapProd<ProcessHandlerMessage>,
     },
-    Error(u64),
+    Retrying {
+        err: Error,
+        retry_count: u64,
+    },
 }
 
 fn run_audio_backend(sender: mpsc::Sender<Event>) {
-    let mut state = State::NotConnected(0);
+    let mut state = State::Connecting(0);
 
     loop {
         match state {
-            State::NotConnected(retry_count) => {
+            State::Connecting(retry_count) => {
                 let (notification_sender, notification_receiver) = mpsc::channel(128);
                 let is_server_shutdown = Arc::new(AtomicBool::new(false));
                 // TODO: make configurable
@@ -183,8 +185,10 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                         };
                     }
                     Err(err) => {
-                        let _ = sender.blocking_send(Event::Error(err));
-                        state = State::Error(retry_count);
+                        state = State::Retrying {
+                            err: err.into(),
+                            retry_count,
+                        };
                     }
                 }
             }
@@ -198,26 +202,28 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                     // FIXME: wrong channel type
                     match command_rx.try_recv() {
                         Ok(Command::ConnectOutPort(dest)) => {
-                            if let Some(out_port) =
-                                client.as_client().port_by_name("gui:measurement_out")
-                            {
-                                client.as_client().disconnect(&out_port);
+                            let client_name = env!("CARGO_BIN_NAME");
+                            let port_name = format!("{client_name}:measurement_out");
+
+                            if let Some(out_port) = client.as_client().port_by_name(&port_name) {
+                                client.as_client().disconnect(&out_port).unwrap();
                             }
 
                             client
                                 .as_client()
-                                .connect_ports_by_name("gui:measurement_out", &dest);
+                                .connect_ports_by_name(&port_name, &dest)
+                                .unwrap();
                         }
                         Ok(Command::ConnectInPort(source)) => {
-                            if let Some(in_port) =
-                                client.as_client().port_by_name("gui:measurement_in")
-                            {
-                                client.as_client().disconnect(&in_port);
+                            let client_name = env!("CARGO_BIN_NAME");
+                            let port_name = format!("{client_name}:measurement_in");
+                            if let Some(in_port) = client.as_client().port_by_name(&port_name) {
+                                client.as_client().disconnect(&in_port).unwrap();
                             }
 
                             client
                                 .as_client()
-                                .connect_ports_by_name(&source, "gui:measurement_in")
+                                .connect_ports_by_name(&source, &port_name)
                                 .unwrap();
                         }
                         Ok(Command::RunTest {
@@ -286,25 +292,33 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
 
                 match client.deactivate() {
                     Ok(_) => {
-                        let _ = sender.blocking_send(Event::Error(Error::ConnectionLost));
-                        state = State::Error(0);
+                        state = State::Retrying {
+                            err: Error::ConnectionLost,
+                            retry_count: 0,
+                        };
                     }
                     Err(err) => {
                         log::error!("{}", err);
-                        state = State::Error(0);
+                        state = State::Retrying {
+                            err: Error::from(err),
+                            retry_count: 0,
+                        };
                     }
                 }
             }
-            State::Error(retry_count) => {
+            State::Retrying { err, retry_count } => {
                 const SLEEP_TIME_BASE: u64 = 3;
 
                 let timeout = retry_count * SLEEP_TIME_BASE;
                 let timeout = Duration::from_secs(timeout);
 
-                let _ = sender.blocking_send(Event::RetryIn(timeout));
+                let _ = sender.blocking_send(Event::Error {
+                    err,
+                    retry_in: timeout,
+                });
                 std::thread::sleep(timeout);
 
-                state = State::NotConnected(retry_count + 1);
+                state = State::Connecting(retry_count + 1);
             }
         }
     }

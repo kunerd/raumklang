@@ -164,7 +164,7 @@ impl Measurements {
                 };
 
                 match recording.update(message) {
-                    recording::Action::Back => {
+                    recording::Action::Cancel => {
                         self.recording = None;
                         Action::None
                     }
