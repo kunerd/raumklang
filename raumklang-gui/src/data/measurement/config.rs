@@ -18,7 +18,7 @@ pub struct FrequencyRange {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Duration(time::Duration);
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum Error<'a> {
     #[error("parsing '{field}' failed: {err}")]
     ParseField { field: &'a str, err: ParseIntError },

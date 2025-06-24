@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use crate::data::{
     measurement::{self, config},
     recording::port,
@@ -5,8 +7,8 @@ use crate::data::{
 
 use iced::{
     alignment::{Horizontal, Vertical},
-    widget::{column, container, horizontal_rule, horizontal_space, row, text, text_input},
-    Alignment,
+    widget::{column, container, horizontal_rule, row, text, text_input},
+    Alignment, Element,
 };
 
 #[derive(Debug)]
@@ -51,10 +53,8 @@ impl SignalSetup {
     pub fn view(&self, config: &port::Config) -> super::Component<Message> {
         let range =
             config::FrequencyRange::from_strings(&self.start_frequency, &self.end_frequency);
-        let range_err = range.is_err();
 
         let duration = config::Duration::from_string(&self.duration);
-        let duration_err = duration.is_err();
 
         super::Component::new("Signal Setup")
             .content(
@@ -75,100 +75,27 @@ impl SignalSetup {
                     ]
                     .spacing(12),
                     row![
-                        {
-                            let color = move |theme: &iced::Theme| {
-                                if range_err {
-                                    theme.extended_palette().danger.weak.color
-                                } else {
-                                    theme.extended_palette().secondary.strong.color
-                                }
-                            };
-
-                            container(
-                                column![text("Frequency"), horizontal_rule(1),]
-                                    .push(
-                                        column!().push_maybe(
-                                            range.as_ref().err().map(|err| text!("{err}")),
-                                        ),
-                                    )
-                                    .push(
-                                        row![
-                                            text("From"),
-                                            text_input("", &self.start_frequency)
-                                                .id(text_input::Id::new("from"))
-                                                .align_x(Horizontal::Right)
-                                                .on_input(Message::StartFrequency)
-                                                .style(move |theme, status| {
-                                                    let mut style =
-                                                        text_input::default(theme, status);
-                                                    style.border = style.border.color(color(theme));
-                                                    style
-                                                }),
-                                            text("To"),
-                                            text_input("", &self.end_frequency)
-                                                .id(text_input::Id::new("to"))
-                                                .align_x(Horizontal::Right)
-                                                .on_input(Message::EndFrequency),
-                                        ]
-                                        .spacing(8)
-                                        .align_y(Alignment::Center),
-                                    )
-                                    .spacing(6),
-                            )
-                            .style(move |theme| {
-                                let style = container::rounded_box(theme);
-                                if range_err {
-                                    style.color(color(theme))
-                                } else {
-                                    style
-                                }
-                            })
-                            .padding(8)
-                        },
-                        container(row![
-                            column![
-                                text("Duration"),
-                                horizontal_rule(1),
-                                row![
-                                    text_input("", &self.duration)
-                                        .id(text_input::Id::new("duration"))
-                                        .align_x(Horizontal::Right)
-                                        .on_input(Message::Duration)
-                                        .style(move |theme: &iced::Theme, status| {
-                                            if duration_err {
-                                                text_input::Style {
-                                                    border: iced::Border {
-                                                        color: theme
-                                                            .extended_palette()
-                                                            .danger
-                                                            .base
-                                                            .color,
-                                                        width: 1.0,
-                                                        ..Default::default()
-                                                    },
-                                                    ..text_input::default(theme, status)
-                                                }
-                                            } else {
-                                                text_input::default(theme, status)
-                                            }
-                                        }),
-                                    text!("s")
-                                ]
-                                .align_y(Vertical::Center)
-                                .spacing(3)
+                        field_group(
+                            "Frequency",
+                            row![
+                                number_input("From", &self.start_frequency, range.is_ok())
+                                    .unit("Hz")
+                                    .on_input(Message::StartFrequency),
+                                number_input("To", &self.end_frequency, range.is_ok())
+                                    .unit("Hz")
+                                    .on_input(Message::EndFrequency)
                             ]
-                            .spacing(8),
-                            horizontal_space()
-                        ])
-                        .style(move |theme| {
-                            let style = container::rounded_box(theme);
-                            if duration_err {
-                                style.color(theme.extended_palette().danger.strong.color)
-                            } else {
-                                style
-                            }
-                        })
-                        .padding(8)
+                            .spacing(8)
+                            .align_y(Alignment::Center),
+                            range.as_ref().err()
+                        ),
+                        field_group(
+                            "Duration",
+                            number_input("", &self.duration, duration.is_ok())
+                                .unit("s")
+                                .on_input(Message::Duration),
+                            duration.as_ref().err()
+                        )
                     ]
                     .spacing(8)
                     .align_y(Alignment::Center),
@@ -200,4 +127,117 @@ impl From<measurement::Config> for SignalSetup {
     fn from(config: measurement::Config) -> Self {
         SignalSetup::from(&config)
     }
+}
+
+fn number_input<'a, Message>(
+    label: &'a str,
+    value: &'a str,
+    is_valid: bool,
+) -> NumberInput<'a, Message>
+where
+    Message: 'a + Clone,
+{
+    NumberInput::new(label, value, is_valid)
+}
+
+struct NumberInput<'a, Message> {
+    label: &'a str,
+    value: &'a str,
+    unit: Option<&'a str>,
+    is_valid: bool,
+    on_input: Option<Box<dyn Fn(String) -> Message + 'a>>,
+}
+
+impl<'a, Message> NumberInput<'a, Message>
+where
+    Message: 'a + Clone,
+{
+    fn new(label: &'a str, value: &'a str, is_valid: bool) -> Self {
+        Self {
+            label,
+            value,
+            unit: None,
+            is_valid,
+            on_input: None,
+        }
+    }
+
+    fn unit(mut self, unit: &'a str) -> Self {
+        self.unit = Some(unit);
+        self
+    }
+
+    fn on_input(mut self, on_input: impl Fn(String) -> Message + 'a) -> Self {
+        self.on_input = Some(Box::new(on_input));
+        self
+    }
+
+    fn view(self) -> Element<'a, Message> {
+        column![
+            text(self.label),
+            row![text_input("", self.value)
+                .id(text_input::Id::new("from"))
+                .align_x(Horizontal::Right)
+                .on_input_maybe(self.on_input)
+                .style(if self.is_valid {
+                    text_input::default
+                } else {
+                    number_input_danger
+                })]
+            .push_maybe(self.unit.map(text))
+            .align_y(Vertical::Center)
+            .spacing(3)
+        ]
+        .into()
+    }
+}
+
+fn number_input_danger(theme: &iced::Theme, status: text_input::Status) -> text_input::Style {
+    let danger = theme.extended_palette().danger;
+
+    let mut style = text_input::default(theme, status);
+
+    let color = match status {
+        text_input::Status::Active => danger.base.color,
+        text_input::Status::Hovered => danger.strong.color,
+        text_input::Status::Focused { is_hovered: _ } => danger.strong.color,
+        text_input::Status::Disabled => danger.weak.color,
+    };
+
+    style.border = style.border.color(color);
+    style
+}
+
+impl<'a, Message> From<NumberInput<'a, Message>> for Element<'a, Message>
+where
+    Message: 'a + Clone,
+{
+    fn from(number_input: NumberInput<'a, Message>) -> Self {
+        number_input.view()
+    }
+}
+
+fn field_group<'a, Message>(
+    label: &'a str,
+    content: impl Into<Element<'a, Message>>,
+    err: Option<&impl Display>,
+) -> Element<'a, Message>
+where
+    Message: 'a,
+{
+    container(
+        column![text(label), horizontal_rule(1),]
+            .push(column!().push_maybe(err.map(|err| {
+                text!("{}", err).style(|theme| {
+                    let mut style = text::default(theme);
+                    style.color = Some(theme.extended_palette().danger.base.color);
+                    style
+                })
+            })))
+            .push(content)
+            .spacing(6),
+    )
+    .style(container::rounded_box)
+    .padding(8)
+    .into()
 }
