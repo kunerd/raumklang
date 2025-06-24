@@ -189,10 +189,6 @@ impl Project {
             })
             .collect())
     }
-
-    pub fn sample_rate(&self) -> super::SampleRate {
-        self.window.sample_rate()
-    }
 }
 
 impl Default for Project {

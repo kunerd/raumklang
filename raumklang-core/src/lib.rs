@@ -43,8 +43,8 @@ pub struct Measurement {
 }
 
 impl Loopback {
-    pub fn new(sample_rate: u32, data: Vec<f32>) -> Self {
-        Self(Measurement::new(sample_rate, data))
+    pub fn new(inner: Measurement) -> Self {
+        Self(inner)
     }
 
     pub fn iter(&self) -> Iter<f32> {
