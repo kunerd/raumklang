@@ -4,8 +4,8 @@ use page::{measurement, signal_setup, Component, Page};
 
 use crate::{
     audio,
-    data::recording::{self, port},
-    widgets::RmsPeakMeter,
+    data::recording::{self, port, volume},
+    widgets::{meter, RmsPeakMeter},
 };
 
 use iced::{
@@ -351,13 +351,22 @@ impl Recording {
             .into()
         }
 
+        let volume = recording::Volume::new(self.volume, loudness);
         Component::new("Loudness Test ...")
             .content(
                 row![
                     container(
-                        canvas(RmsPeakMeter::new(loudness.rms, loudness.peak, &self.cache))
-                            .width(60)
-                            .height(200)
+                        canvas(
+                            RmsPeakMeter::new(loudness.rms, loudness.peak, &self.cache).state(
+                                match volume {
+                                    Ok(_) => meter::State::Normal,
+                                    Err(volume::ValidationError::ToLow(_)) => meter::State::Warning,
+                                    Err(volume::ValidationError::ToHigh(_)) => meter::State::Danger,
+                                }
+                            )
+                        )
+                        .width(60)
+                        .height(200)
                     )
                     .padding(10),
                     column![
@@ -384,7 +393,7 @@ impl Recording {
             )
             .next_button(
                 "Next",
-                recording::Volume::new(self.volume, loudness)
+                volume
                     .ok()
                     .map(|volume| Message::TestOk(config.clone(), volume)),
             )

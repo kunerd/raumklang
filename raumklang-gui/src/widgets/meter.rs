@@ -10,10 +10,15 @@ use iced::{
 pub struct RmsPeakMeter<'a> {
     rms: f32,
     peak: f32,
-
     ticks: Vec<i8>,
-
+    state: State,
     cache: &'a canvas::Cache,
+}
+
+pub enum State {
+    Normal,
+    Warning,
+    Danger,
 }
 
 impl<'a> RmsPeakMeter<'a> {
@@ -23,8 +28,14 @@ impl<'a> RmsPeakMeter<'a> {
             rms,
             peak,
             ticks,
+            state: State::Normal,
             cache,
         }
+    }
+
+    pub fn state(mut self, state: State) -> Self {
+        self.state = state;
+        self
     }
 }
 
@@ -79,14 +90,12 @@ impl<'a, Message> canvas::Program<Message> for RmsPeakMeter<'a> {
             let range = min - max;
             let pixel_per_unit = height / range;
 
-            let color = if self.rms <= -14.0 {
-                palette.warning.strong.color
-            } else if self.rms < -10.0 {
-                palette.success.strong.color
-            } else {
-                palette.danger.strong.color
-            }
-            .scale_alpha(0.6);
+            let color = match self.state {
+                State::Normal => palette.success.base.color,
+                State::Warning => palette.warning.base.color,
+                State::Danger => palette.danger.base.color,
+            };
+            // .scale_alpha(0.6);
 
             let rms_heigh = pixel_per_unit * self.rms.clamp(min, max) - max * pixel_per_unit;
             frame.fill_rectangle(
