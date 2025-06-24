@@ -1,9 +1,12 @@
-use std::{num::ParseIntError, time::Duration};
+use std::{
+    num::{ParseFloatError, ParseIntError},
+    time,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
-    duration: Duration,
     frequency_range: FrequencyRange,
+    duration: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,12 +15,23 @@ pub struct FrequencyRange {
     to: u16,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Duration(time::Duration);
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error<'a> {
-    #[error("parsing {field:?} failed: {err:?}")]
+    #[error("parsing '{field}' failed: {err}")]
     ParseField { field: &'a str, err: ParseIntError },
     #[error("`from` must be lesser than `to`")]
     Range,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ValidationError {
+    #[error("needs to be greater than zero")]
+    SmallerThanZero,
+    #[error("needs to be floating point")]
+    Parse(#[from] ParseFloatError),
 }
 
 impl FrequencyRange {
@@ -34,6 +48,28 @@ impl FrequencyRange {
         } else {
             Err(Error::Range)
         }
+    }
+}
+
+impl Duration {
+    pub fn from_string(duration: &str) -> Result<Self, ValidationError> {
+        let duration = duration.parse()?;
+
+        if duration <= 0.0 {
+            return Err(ValidationError::SmallerThanZero);
+        }
+
+        let duration = time::Duration::from_secs_f32(duration);
+
+        Ok(Self(duration))
+    }
+
+    pub fn into_inner(self) -> time::Duration {
+        self.0
+    }
+
+    fn from_secs(secs: u64) -> Duration {
+        Duration(time::Duration::from_secs(secs))
     }
 }
 

@@ -78,7 +78,7 @@ impl Backend {
         let (data_sender, data_receiver) = mpsc::channel(1024);
 
         let command = Command::RunMeasurement {
-            duration: config.duration(),
+            duration: config.duration().into_inner(),
             start_frequency: config.start_frequency(),
             end_frequency: config.end_frequency(),
             data_sender,

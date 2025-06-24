@@ -33,7 +33,8 @@ pub enum Message {
 impl Measurement {
     pub fn new(config: measurement::Config, backend: &audio::Backend) -> (Self, Task<Message>) {
         let sample_rate = backend.sample_rate;
-        let finished_len = data::Samples::from_duration(config.duration(), sample_rate).into();
+        let finished_len =
+            data::Samples::from_duration(config.duration().into_inner(), sample_rate).into();
 
         let (loudness_receiver, mut data_receiver) = backend.run_measurement(config);
 

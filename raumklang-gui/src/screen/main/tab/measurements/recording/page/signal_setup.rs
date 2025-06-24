@@ -4,11 +4,10 @@ use crate::data::{
 };
 
 use iced::{
+    alignment::{Horizontal, Vertical},
     widget::{column, container, horizontal_rule, horizontal_space, row, text, text_input},
     Alignment,
 };
-
-use std::time::Duration;
 
 #[derive(Debug)]
 pub struct SignalSetup {
@@ -52,11 +51,9 @@ impl SignalSetup {
     pub fn view(&self, config: &port::Config) -> super::Component<Message> {
         let range =
             config::FrequencyRange::from_strings(&self.start_frequency, &self.end_frequency);
-
         let range_err = range.is_err();
 
-        let duration = self.duration.parse().map(Duration::from_secs_f32);
-
+        let duration = config::Duration::from_string(&self.duration);
         let duration_err = duration.is_err();
 
         super::Component::new("Signal Setup")
@@ -89,11 +86,17 @@ impl SignalSetup {
 
                             container(
                                 column![text("Frequency"), horizontal_rule(1),]
-                                    .push_maybe(range.as_ref().err().map(|err| text!("{err}")))
+                                    .push(
+                                        column!().push_maybe(
+                                            range.as_ref().err().map(|err| text!("{err}")),
+                                        ),
+                                    )
                                     .push(
                                         row![
                                             text("From"),
-                                            text_input("From", &self.start_frequency)
+                                            text_input("", &self.start_frequency)
+                                                .id(text_input::Id::new("from"))
+                                                .align_x(Horizontal::Right)
                                                 .on_input(Message::StartFrequency)
                                                 .style(move |theme, status| {
                                                     let mut style =
@@ -102,7 +105,9 @@ impl SignalSetup {
                                                     style
                                                 }),
                                             text("To"),
-                                            text_input("To", &self.end_frequency)
+                                            text_input("", &self.end_frequency)
+                                                .id(text_input::Id::new("to"))
+                                                .align_x(Horizontal::Right)
                                                 .on_input(Message::EndFrequency),
                                         ]
                                         .spacing(8)
@@ -124,26 +129,33 @@ impl SignalSetup {
                             column![
                                 text("Duration"),
                                 horizontal_rule(1),
-                                text_input("Duration", &self.duration)
-                                    .on_input(Message::Duration)
-                                    .style(move |theme: &iced::Theme, status| {
-                                        if duration_err {
-                                            text_input::Style {
-                                                border: iced::Border {
-                                                    color: theme
-                                                        .extended_palette()
-                                                        .danger
-                                                        .base
-                                                        .color,
-                                                    width: 1.0,
-                                                    ..Default::default()
-                                                },
-                                                ..text_input::default(theme, status)
+                                row![
+                                    text_input("", &self.duration)
+                                        .id(text_input::Id::new("duration"))
+                                        .align_x(Horizontal::Right)
+                                        .on_input(Message::Duration)
+                                        .style(move |theme: &iced::Theme, status| {
+                                            if duration_err {
+                                                text_input::Style {
+                                                    border: iced::Border {
+                                                        color: theme
+                                                            .extended_palette()
+                                                            .danger
+                                                            .base
+                                                            .color,
+                                                        width: 1.0,
+                                                        ..Default::default()
+                                                    },
+                                                    ..text_input::default(theme, status)
+                                                }
+                                            } else {
+                                                text_input::default(theme, status)
                                             }
-                                        } else {
-                                            text_input::default(theme, status)
-                                        }
-                                    }),
+                                        }),
+                                    text!("s")
+                                ]
+                                .align_y(Vertical::Center)
+                                .spacing(3)
                             ]
                             .spacing(8),
                             horizontal_space()
@@ -177,7 +189,7 @@ impl SignalSetup {
 impl From<&measurement::Config> for SignalSetup {
     fn from(config: &measurement::Config) -> Self {
         Self {
-            duration: format!("{}", config.duration().as_secs()),
+            duration: format!("{}", config.duration().into_inner().as_secs()),
             start_frequency: format!("{}", config.start_frequency()),
             end_frequency: format!("{}", config.end_frequency()),
         }
