@@ -1,5 +1,6 @@
 mod audio;
 mod impulse_response;
+pub mod loudness;
 mod window;
 
 pub use audio::*;
@@ -7,7 +8,6 @@ pub use impulse_response::*;
 pub use window::*;
 
 use rand::{distributions, distributions::Distribution, rngs, SeedableRng};
-use ringbuf::Rb;
 use thiserror::Error;
 
 use std::{
@@ -15,6 +15,7 @@ use std::{
     io::{self},
     path::Path,
     slice::Iter,
+    time::Duration,
 };
 
 #[derive(Error, Debug)]
@@ -43,8 +44,8 @@ pub struct Measurement {
 }
 
 impl Loopback {
-    pub fn new(sample_rate: u32, data: Vec<f32>) -> Self {
-        Self(Measurement::new(sample_rate, data))
+    pub fn new(inner: Measurement) -> Self {
+        Self(inner)
     }
 
     pub fn iter(&self) -> Iter<f32> {
@@ -63,6 +64,12 @@ impl Loopback {
         let measurement = Measurement::from_file(path)?;
 
         Ok(Self(measurement))
+    }
+}
+
+impl AsRef<Measurement> for Loopback {
+    fn as_ref(&self) -> &Measurement {
+        &self.0
     }
 }
 
@@ -117,6 +124,7 @@ where
     Infinite(I),
 }
 
+#[derive(Debug, Clone)]
 pub struct LinearSineSweep {
     sample_rate: usize,
     sample_index: usize,
@@ -132,18 +140,18 @@ impl LinearSineSweep {
     pub fn new(
         start_frequency: u16,
         end_frequency: u16,
-        duration: usize,
+        duration: Duration,
         amplitude: f32,
         sample_rate: usize,
     ) -> Self {
+        let n_samples = sample_rate as f32 * duration.as_secs_f32();
         LinearSineSweep {
             sample_rate,
             sample_index: 0,
-            n_samples: sample_rate * duration,
+            n_samples: n_samples as usize,
             amplitude,
             frequency: start_frequency as f32,
-            delta_frequency: (end_frequency - start_frequency) as f32
-                / (sample_rate * duration) as f32,
+            delta_frequency: (end_frequency - start_frequency) as f32 / n_samples,
             phase: 0.0,
         }
     }
@@ -181,6 +189,7 @@ pub trait FiniteSignal: Send + Sync + ExactSizeIterator<Item = f32> {}
 
 impl FiniteSignal for LinearSineSweep {}
 
+#[derive(Debug, Clone)]
 pub struct WhiteNoise {
     amplitude: f32,
     rng: rngs::SmallRng,
@@ -221,6 +230,7 @@ impl Iterator for WhiteNoise {
 impl ExactSizeIterator for WhiteNoise {}
 impl FiniteSignal for std::iter::Take<WhiteNoise> {}
 
+#[derive(Debug, Clone)]
 pub struct PinkNoise {
     b0: f32,
     b1: f32,
@@ -308,72 +318,7 @@ pub fn write_signal_to_file(
 
 #[inline]
 pub fn dbfs(v: f32) -> f32 {
-    20.0 * f32::log10(v)
-}
-
-pub struct LoudnessMeter {
-    peak: f32,
-    square_sum: f32,
-    window_size: usize,
-    buf: ringbuf::HeapRb<f32>,
-}
-
-impl LoudnessMeter {
-    pub fn new(window_size: usize) -> Self {
-        let buf = ringbuf::HeapRb::<_>::new(window_size);
-        Self {
-            square_sum: 0.0,
-            peak: f32::NEG_INFINITY,
-            window_size,
-            buf,
-        }
-    }
-
-    pub fn update_from_iter<I>(&mut self, iter: I) -> bool
-    where
-        I: IntoIterator<Item = f32>,
-    {
-        let mut new_peak = false;
-
-        for s in iter {
-            new_peak = new_peak || self.update(s);
-        }
-
-        new_peak
-    }
-
-    pub fn update(&mut self, sample: f32) -> bool {
-        let sample_squared = sample * sample;
-        self.square_sum += sample_squared;
-
-        let mut new_peak = false;
-        if self.peak < sample {
-            self.peak = sample;
-            new_peak = true;
-        }
-
-        let removed = self.buf.push_overwrite(sample_squared);
-        if let Some(r) = removed {
-            self.square_sum -= r;
-        }
-
-        new_peak
-    }
-
-    pub fn rms(&self) -> f32 {
-        (self.square_sum / (self.window_size as f32)).sqrt()
-    }
-
-    pub fn peak(&self) -> f32 {
-        self.peak
-    }
-
-    pub fn reset_peak(&mut self) {
-        self.peak = f32::NEG_INFINITY;
-        for s in self.buf.iter() {
-            self.peak = self.peak.max(*s)
-        }
-    }
+    20.0 * f32::log10(v.abs())
 }
 
 //pub fn old_rir(

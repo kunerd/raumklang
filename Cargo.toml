@@ -9,3 +9,7 @@ resolver = "2"
 
 [workspace.dependencies]
 raumklang-core = { path = "./raumklang-core" }
+
+[patch.crates-io]
+iced = { git = "https://github.com/iced-rs/iced.git", branch = "master" }
+prism = { path = "../prism" }

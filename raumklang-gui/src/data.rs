@@ -4,6 +4,7 @@ pub mod impulse_response;
 pub mod measurement;
 pub mod project;
 mod recent_projects;
+pub mod recording;
 mod sample_rate;
 mod samples;
 pub mod window;

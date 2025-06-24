@@ -1,19 +1,24 @@
+mod recording;
+pub use recording::Recording;
+
 use crate::{
     data::{
         self,
-        measurement::{self, loopback, FromFile},
+        measurement::{self, FromFile},
     },
-    delete_icon,
+    icon,
 };
 
-use pliced::chart::{line_series, Chart, Labels};
+use prism::chart::{line_series, Chart, Labels};
 use raumklang_core::WavLoadError;
 
 use iced::{
+    alignment::{Horizontal, Vertical},
     keyboard,
     mouse::ScrollDelta,
     widget::{
-        self, button, column, container, horizontal_rule, horizontal_space, row, scrollable, text,
+        button, column, container, horizontal_rule, horizontal_space, row, scrollable, text,
+        text::Wrapping, Button,
     },
     Alignment, Element, Length, Point, Subscription, Task,
 };
@@ -23,6 +28,7 @@ use rfd::FileHandle;
 use std::{ops::RangeInclusive, path::PathBuf, sync::Arc};
 
 pub struct Measurements {
+    recording: Option<Recording>,
     selected: Option<Selected>,
 
     shift_key_pressed: bool,
@@ -34,11 +40,12 @@ pub struct Measurements {
 pub enum Message {
     AddLoopback,
     RemoveLoopback,
-    LoopbackSignalLoaded(Result<Arc<data::measurement::Loopback>, Error>),
+    LoopbackSignalLoaded(Result<Arc<data::measurement::State<data::measurement::Loopback>>, Error>),
     AddMeasurement,
     RemoveMeasurement(usize),
-    MeasurementSignalLoaded(Result<Arc<data::measurement::State>, Error>),
+    MeasurementSignalLoaded(Result<Arc<data::measurement::State<data::Measurement>>, Error>),
     Select(Selected),
+    StartRecording(recording::Kind),
     ChartScroll(
         Option<Point>,
         Option<ScrollDelta>,
@@ -46,6 +53,7 @@ pub enum Message {
     ),
     ShiftKeyPressed,
     ShiftKeyReleased,
+    Recording(recording::Message),
 }
 
 #[derive(Debug, Clone)]
@@ -55,9 +63,9 @@ pub enum Selected {
 }
 
 pub enum Action {
-    LoopbackAdded(data::measurement::Loopback),
+    LoopbackAdded(data::measurement::State<data::measurement::Loopback>),
     RemoveLoopback,
-    MeasurementAdded(data::measurement::State),
+    MeasurementAdded(data::measurement::State<data::Measurement>),
     RemoveMeasurement(usize),
     Task(Task<Message>),
     None,
@@ -74,6 +82,7 @@ pub enum Error {
 impl Measurements {
     pub fn new() -> Self {
         Self {
+            recording: None,
             selected: None,
             shift_key_pressed: false,
             x_max: None,
@@ -145,60 +154,135 @@ impl Measurements {
                 self.shift_key_pressed = false;
                 Action::None
             }
+            Message::StartRecording(kind) => {
+                self.recording = Some(Recording::new(kind));
+                Action::None
+            }
+            Message::Recording(message) => {
+                let Some(recording) = &mut self.recording else {
+                    return Action::None;
+                };
+
+                match recording.update(message) {
+                    recording::Action::Cancel => {
+                        self.recording = None;
+                        Action::None
+                    }
+                    recording::Action::None => Action::None,
+                    recording::Action::Task(task) => Action::Task(task.map(Message::Recording)),
+                    recording::Action::Finished(result) => {
+                        self.recording = None;
+
+                        match result {
+                            recording::Result::Loopback(loopback) => {
+                                let details = measurement::Details {
+                                    // FIXME auto generate
+                                    name: "Loopback".to_string(),
+                                    path: PathBuf::default(),
+                                };
+                                Action::LoopbackAdded(data::measurement::State::Loaded(
+                                    data::measurement::Loopback::new(loopback, details),
+                                ))
+                            }
+                            recording::Result::Measurement(measurement) => {
+                                let details = measurement::Details {
+                                    // FIXME auto generate
+                                    name: "Measurement".to_string(),
+                                    path: PathBuf::default(),
+                                };
+                                Action::MeasurementAdded(data::measurement::State::Loaded(
+                                    data::Measurement::new(measurement, details),
+                                ))
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
     pub fn view<'a>(&'a self, project: &'a data::Project) -> Element<'a, Message> {
-        let sidebar =
-            {
-                let loopback = {
-                    let (msg, content) = match project.loopback() {
-                        Some(signal) => (
-                            None,
-                            loopback_list_entry(self.selected.as_ref(), signal).into(),
-                        ),
-                        None => (Some(Message::AddLoopback), horizontal_space().into()),
-                    };
+        let sidebar = {
+            let loopback = Category::new("Loopback")
+                .push_button(
+                    button("+")
+                        .on_press_maybe(project.loopback().as_ref().map(|_| Message::AddLoopback))
+                        .style(button::secondary),
+                )
+                .push_button(
+                    button(icon::record())
+                        .on_press(Message::StartRecording(recording::Kind::Loopback))
+                        .style(button::secondary),
+                )
+                .push_entry_maybe(
+                    project
+                        .loopback()
+                        .as_ref()
+                        .map(|loopback| loopback_list_entry(self.selected.as_ref(), &loopback)),
+                );
 
-                    signal_list_category("Loopback", msg, content)
-                };
+            let measurements = Category::new("Measurements")
+                .push_button(
+                    button("+")
+                        .style(button::secondary)
+                        .on_press(Message::AddMeasurement),
+                )
+                .push_button(
+                    button(icon::record())
+                        .on_press(Message::StartRecording(recording::Kind::Measurement))
+                        .style(button::secondary),
+                )
+                .extend_entries(project.measurements().iter().enumerate().map(
+                    |(id, measurement)| {
+                        measurement_list_entry(id, measurement, self.selected.as_ref())
+                    },
+                ));
 
-                let measurements =
-                    {
-                        let content =
-                            if project.measurements().is_empty() {
-                                horizontal_space().into()
-                            } else {
-                                column(project.measurements().iter().enumerate().map(
-                                    |(id, signal)| {
-                                        measurement_list_entry(id, signal, self.selected.as_ref())
-                                    },
-                                ))
-                                .spacing(3)
-                                .into()
-                            };
+            container(scrollable(
+                column![loopback, measurements].spacing(20).padding(10),
+            ))
+            .style(container::rounded_box)
+        };
 
-                        signal_list_category("Measurements", Some(Message::AddMeasurement), content)
-                    };
-
-                container(scrollable(
-                    column![loopback, measurements].spacing(20).padding(10),
-                ))
-                .style(container::rounded_box)
+        let content: Element<_> = 'content: {
+            if let Some(recording) = &self.recording {
+                break 'content recording.view().map(Message::Recording);
             }
-            .width(Length::FillPortion(1));
 
-        let content = {
+            let welcome_text = |base_text| {
+                column![
+                    text("Welcome").size(24),
+                    column![
+                        base_text,
+                        row![
+                            text("You can load signals from file by pressing [+] or"),
+                            button(icon::record())
+                                .style(button::secondary)
+                                .on_press(Message::StartRecording(recording::Kind::Measurement))
+                        ]
+                        .spacing(8)
+                        .align_y(Vertical::Center)
+                    ]
+                    .align_x(Horizontal::Center)
+                    .spacing(10)
+                ]
+                .spacing(16)
+                .align_x(Horizontal::Center)
+                .into()
+            };
+
             let content: Element<_> = if project.has_no_measurements() {
-                text("You need to load one loopback or measurement signal at least.").into()
+                welcome_text(text(
+                    "You need to load at least one loopback or measurement signal.",
+                ))
             } else {
                 let signal = self
                     .selected
                     .as_ref()
                     .and_then(|selection| match selection {
                         Selected::Loopback => project.loopback().and_then(|s| {
-                            if let loopback::State::Loaded(data) = &s.state {
-                                Some(data.iter())
+                            if let data::measurement::State::Loaded(data) = &s {
+                                Some(data.as_ref().iter())
                             } else {
                                 None
                             }
@@ -220,7 +304,7 @@ impl Measurements {
                             line_series(signal.copied().enumerate().map(|(i, s)| (i as f32, s)))
                                 .color(iced::Color::from_rgb8(2, 125, 66)),
                         )
-                        .on_scroll(|state: &pliced::chart::State<()>| {
+                        .on_scroll(|state| {
                             let pos = state.get_coords();
                             let delta = state.scroll_delta();
                             let x_range = state.x_range();
@@ -228,18 +312,26 @@ impl Measurements {
                         })
                         .into()
                 } else {
-                    text("Select a signal to view its data.").into()
+                    welcome_text(text("Select a signal to view its data."))
                 }
             };
 
-            container(content).center(Length::FillPortion(4))
+            container(content).center(Length::Fill).into()
         };
 
-        column!(row![sidebar, content]).padding(10).into()
+        column!(row![
+            container(sidebar).width(Length::FillPortion(1)),
+            container(content).width(Length::FillPortion(4))
+        ]
+        .spacing(8))
+        .padding(10)
+        .into()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        Subscription::batch(vec![
+        let mut subscriptions = vec![];
+
+        subscriptions.extend([
             keyboard::on_key_press(|key, _modifiers| match key {
                 keyboard::Key::Named(keyboard::key::Named::Shift) => Some(Message::ShiftKeyPressed),
                 _ => None,
@@ -250,7 +342,13 @@ impl Measurements {
                 }
                 _ => None,
             }),
-        ])
+        ]);
+
+        if let Some(recording) = &self.recording {
+            subscriptions.push(recording.subscription().map(Message::Recording));
+        }
+
+        Subscription::batch(subscriptions)
     }
 
     fn scroll_right(&mut self) {
@@ -337,31 +435,14 @@ impl Measurements {
     }
 }
 
-fn signal_list_category<'a>(
-    name: &'a str,
-    add_msg: Option<Message>,
-    content: Element<'a, Message>,
-) -> Element<'a, Message> {
-    let add_button = add_msg.map(|msg| button("+").on_press(msg).style(button::secondary));
-
-    let header = row![widget::text(name), horizontal_space()]
-        .push_maybe(add_button)
-        .padding(5)
-        .align_y(Alignment::Center);
-
-    column!(header, horizontal_rule(1), content)
-        .width(Length::Fill)
-        .spacing(5)
-        .into()
-}
-
 fn loopback_list_entry<'a>(
     selected: Option<&Selected>,
-    signal: &'a data::measurement::Loopback,
+    signal: &'a data::measurement::State<data::measurement::Loopback>,
 ) -> Element<'a, Message> {
-    let (data_info, select_msg) = match &signal.state {
-        loopback::State::NotLoaded => (None, None),
-        loopback::State::Loaded(data) => {
+    let (data_info, select_msg) = match &signal {
+        data::measurement::State::NotLoaded(_) => (None, None),
+        data::measurement::State::Loaded(data) => {
+            let data = data.as_ref();
             let samples = data.duration();
             let sample_rate = data.sample_rate() as f32;
             let info = column![
@@ -381,7 +462,7 @@ fn loopback_list_entry<'a>(
         row![
             horizontal_space(),
             button("...").style(button::secondary),
-            button(delete_icon())
+            button(icon::delete())
                 .on_press(Message::RemoveLoopback)
                 .style(button::danger)
         ]
@@ -405,14 +486,15 @@ fn loopback_list_entry<'a>(
 
 fn measurement_list_entry<'a>(
     index: usize,
-    signal: &'a data::measurement::State,
+    signal: &'a data::measurement::State<data::Measurement>,
     selected: Option<&Selected>,
 ) -> Element<'a, Message> {
     let (data_info, select_msg) = match &signal {
         measurement::State::NotLoaded(_) => (None, None),
         measurement::State::Loaded(measurement) => {
-            let samples = measurement.signal().duration();
-            let sample_rate = measurement.signal().sample_rate() as f32;
+            let measurement = measurement.as_ref();
+            let samples = measurement.duration();
+            let sample_rate = measurement.sample_rate() as f32;
             let info = column![
                 text(format!("Samples: {}", samples)).size(12),
                 text(format!("Duration: {} s", samples as f32 / sample_rate)).size(12),
@@ -433,7 +515,7 @@ fn measurement_list_entry<'a>(
         row![
             horizontal_space(),
             button("...").style(button::secondary),
-            button(delete_icon())
+            button(icon::delete())
                 .on_press(Message::RemoveMeasurement(index))
                 .style(button::danger)
         ]
@@ -473,4 +555,70 @@ async fn pick_file(file_type: impl AsRef<str>) -> Result<FileHandle, Error> {
         .pick_file()
         .await
         .ok_or(Error::DialogClosed)
+}
+
+pub struct Category<'a, Message> {
+    title: &'a str,
+    entries: Vec<Element<'a, Message>>,
+    buttons: Vec<Button<'a, Message>>,
+}
+
+impl<'a, Message> Category<'a, Message>
+where
+    Message: 'a + Clone,
+{
+    pub fn new(title: &'a str) -> Self {
+        Self {
+            title,
+            entries: vec![],
+            buttons: vec![],
+        }
+    }
+
+    pub fn push_button(mut self, button: Button<'a, Message>) -> Self {
+        self.buttons.push(button);
+        self
+    }
+
+    pub fn push_entry(mut self, entry: impl Into<Element<'a, Message>>) -> Self {
+        self.entries.push(entry.into());
+        self
+    }
+
+    pub fn push_entry_maybe(self, entry: Option<impl Into<Element<'a, Message>>>) -> Self {
+        if let Some(entry) = entry {
+            self.push_entry(entry)
+        } else {
+            self
+        }
+    }
+
+    pub fn extend_entries(self, entries: impl IntoIterator<Item = Element<'a, Message>>) -> Self {
+        entries.into_iter().fold(self, Self::push_entry)
+    }
+
+    pub fn view(self) -> Element<'a, Message> {
+        let header = row![container(text(self.title).wrapping(Wrapping::WordOrGlyph))
+            .width(Length::Fill)
+            .clip(true),]
+        .extend(self.buttons.into_iter().map(|btn| btn.width(30).into()))
+        .spacing(5)
+        .padding(5)
+        .align_y(Alignment::Center);
+
+        column!(header, horizontal_rule(1))
+            .extend(self.entries.into_iter())
+            .width(Length::Fill)
+            .spacing(5)
+            .into()
+    }
+}
+
+impl<'a, Message> From<Category<'a, Message>> for Element<'a, Message>
+where
+    Message: 'a + Clone,
+{
+    fn from(category: Category<'a, Message>) -> Self {
+        category.view()
+    }
 }

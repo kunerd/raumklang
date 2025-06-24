@@ -2,8 +2,8 @@ pub mod file;
 
 use super::{
     frequency_response, impulse_response,
-    measurement::{self, loopback},
-    Error, Samples, Window,
+    measurement::{self, Loopback},
+    Error, Measurement, Samples, Window,
 };
 pub use file::File;
 
@@ -14,18 +14,18 @@ use std::path::Path;
 #[derive(Debug)]
 pub struct Project {
     window: Window<Samples>,
-    loopback: Option<measurement::Loopback>,
-    measurements: Vec<measurement::State>,
+    loopback: Option<measurement::State<Loopback>>,
+    measurements: Vec<measurement::State<Measurement>>,
 }
 
 impl Project {
     pub fn new(
-        loopback: Option<measurement::Loopback>,
-        measurements: Vec<measurement::State>,
+        loopback: Option<measurement::State<Loopback>>,
+        measurements: Vec<measurement::State<Measurement>>,
     ) -> Self {
         let sample_rate = loopback
             .as_ref()
-            .and_then(measurement::Loopback::sample_rate)
+            .and_then(measurement::State::<Loopback>::sample_rate)
             .unwrap_or_default();
 
         let window = Window::new(sample_rate).into();
@@ -41,7 +41,7 @@ impl Project {
         let path = path.as_ref();
         let project_file = File::load(path).await?;
 
-        let loopback: Option<measurement::Loopback> = match project_file.loopback {
+        let loopback = match project_file.loopback {
             Some(loopback) => measurement::load_from_file(loopback.path()).await.ok(),
             None => None,
         };
@@ -64,15 +64,15 @@ impl Project {
         &self.window
     }
 
-    pub fn loopback(&self) -> Option<&measurement::Loopback> {
+    pub fn loopback(&self) -> Option<&measurement::State<Loopback>> {
         self.loopback.as_ref()
     }
 
-    pub fn measurements(&self) -> &[measurement::State] {
+    pub fn measurements(&self) -> &[measurement::State<Measurement>] {
         &self.measurements
     }
 
-    pub fn measurements_mut(&mut self) -> &mut [measurement::State] {
+    pub fn measurements_mut(&mut self) -> &mut [measurement::State<Measurement>] {
         &mut self.measurements
     }
 
@@ -80,10 +80,10 @@ impl Project {
         self.loopback.is_none() && self.measurements.is_empty()
     }
 
-    pub fn set_loopback(&mut self, loopback: Option<measurement::Loopback>) {
+    pub fn set_loopback(&mut self, loopback: Option<measurement::State<Loopback>>) {
         let sample_rate = loopback
             .as_ref()
-            .and_then(measurement::Loopback::sample_rate)
+            .and_then(measurement::State::<Loopback>::sample_rate)
             .unwrap_or_default();
 
         self.window = Window::new(sample_rate).into();
@@ -92,11 +92,11 @@ impl Project {
         self.reset_impulse_responses();
     }
 
-    pub fn push_measurements(&mut self, measurement: measurement::State) {
+    pub fn push_measurements(&mut self, measurement: measurement::State<Measurement>) {
         self.measurements.push(measurement);
     }
 
-    pub fn remove_measurement(&mut self, index: usize) -> measurement::State {
+    pub fn remove_measurement(&mut self, index: usize) -> measurement::State<Measurement> {
         self.measurements.remove(index)
     }
 
@@ -128,12 +128,12 @@ impl Project {
             return Err(Error::ImpulseResponseComputationFailed);
         };
 
-        let loopback::State::Loaded(loopback) = &loopback.state else {
+        let measurement::State::Loaded(loopback) = &loopback else {
             return Err(Error::ImpulseResponseComputationFailed);
         };
 
         let computation = if let measurement::State::Loaded(measurement) = measurement {
-            measurement.impulse_response_computation(id, loopback.clone())
+            measurement.impulse_response_computation(id, loopback.as_ref().clone())
         } else {
             None
         };
@@ -148,7 +148,7 @@ impl Project {
             return Err(Error::ImpulseResponseComputationFailed);
         };
 
-        let loopback::State::Loaded(loopback) = &loopback.state else {
+        let measurement::State::Loaded(loopback) = &loopback else {
             return Err(Error::ImpulseResponseComputationFailed);
         };
 
@@ -166,7 +166,7 @@ impl Project {
             .flat_map(|(id, measurement)| match &measurement.analysis {
                 measurement::Analysis::None => {
                     let computation = measurement
-                        .impulse_response_computation(id, loopback.clone())
+                        .impulse_response_computation(id, loopback.as_ref().clone())
                         .unwrap();
                     Some(
                         frequency_response::Computation::from_impulse_response_computation(

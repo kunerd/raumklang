@@ -1,6 +1,6 @@
 use raumklang_core::dbfs;
 
-use pliced::chart::{line_series, Chart, Labels};
+use prism::{line_series, Chart, Labels};
 
 use iced::{
     keyboard,
@@ -142,9 +142,12 @@ impl FrequencyResponses {
         };
 
         row![
-            container(sidebar).width(FillPortion(1)),
+            container(sidebar)
+                .width(FillPortion(1))
+                .style(container::bordered_box),
             container(content).center(Length::FillPortion(4))
         ]
+        .spacing(10)
         .into()
     }
 

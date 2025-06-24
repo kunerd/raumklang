@@ -5,7 +5,7 @@ use crate::data::{
     Samples,
 };
 
-use pliced::chart::{line_series, point_series, Chart, Labels, PointStyle};
+use prism::{line_series, point_series, series::point, Chart, Labels};
 
 use iced::{
     keyboard,
@@ -125,7 +125,7 @@ impl ImpulseReponses {
 
     pub fn view<'a>(
         &'a self,
-        measurements: &'a [data::measurement::State],
+        measurements: &'a [data::measurement::State<data::Measurement>],
     ) -> Element<'a, Message> {
         let sidebar = {
             let header = {
@@ -221,7 +221,7 @@ impl ImpulseReponses {
                                     ))
                                     .color(iced::Color::from_rgb8(2, 125, 66)),
                                 )
-                                .on_scroll(|state: &pliced::chart::State<SeriesId>| {
+                                .on_scroll(|state| {
                                     let pos = state.get_coords();
                                     let delta = state.scroll_delta();
                                     let x_range = state.x_range();
@@ -248,29 +248,29 @@ impl ImpulseReponses {
                                     .style_for_each(|index, _handle| {
                                         if self.window_settings.hovered.is_some_and(|i| i == index)
                                         {
-                                            PointStyle {
+                                            point::Style {
                                                 color: Some(iced::Color::from_rgb8(220, 250, 250)),
                                                 radius: 10.0,
                                                 ..Default::default()
                                             }
                                         } else {
-                                            PointStyle::default()
+                                            point::Style::default()
                                         }
                                     })
                                     .color(iced::Color::from_rgb8(255, 0, 0)),
                                 )
-                                .on_press(|state: &pliced::chart::State<SeriesId>| {
+                                .on_press(|state| {
                                     let id = state.items().and_then(|l| l.first().map(|i| i.1));
                                     Message::Window(WindowOperation::MouseDown(
                                         id,
                                         state.get_offset(),
                                     ))
                                 })
-                                .on_move(|state: &pliced::chart::State<SeriesId>| {
+                                .on_move(|state| {
                                     let id = state.items().and_then(|l| l.first().map(|i| i.1));
                                     Message::Window(WindowOperation::OnMove(id, state.get_offset()))
                                 })
-                                .on_release(|state: &pliced::chart::State<SeriesId>| {
+                                .on_release(|state| {
                                     Message::Window(WindowOperation::MouseUp(state.get_offset()))
                                 })
                         };

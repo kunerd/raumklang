@@ -1,3 +1,4 @@
+use jack::PortFlags;
 use ringbuf::{HeapConsumer, HeapProducer, HeapRb};
 use thiserror::Error;
 
@@ -99,6 +100,7 @@ where
     }
 }
 
+#[derive(Debug)]
 pub struct AudioEngine<I, J>
 where
     I: Iterator<Item = f32>,
@@ -142,7 +144,7 @@ where
         let out_port = self
             .client
             .as_client()
-            .register_port(port_name, jack::AudioOut)?;
+            .register_port(port_name, jack::AudioOut::default())?;
 
         let full_port_name = out_port.name()?;
 
@@ -167,7 +169,7 @@ where
         let in_port = self
             .client
             .as_client()
-            .register_port(port_name, jack::AudioIn)?;
+            .register_port(port_name, jack::AudioIn::default())?;
 
         let rb = HeapRb::<_>::new(BUFF_SIZE);
         let (prod, cons) = rb.split();
@@ -194,5 +196,11 @@ where
         })?;
 
         Ok(rx)
+    }
+
+    pub fn out_ports(&self) -> Vec<String> {
+        self.client
+            .as_client()
+            .ports(None, Some("32 bit float mono audio"), PortFlags::IS_INPUT)
     }
 }

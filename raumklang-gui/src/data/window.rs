@@ -23,6 +23,12 @@ pub struct Handles {
     right: Handle,
 }
 
+impl<D> Window<D> {
+    pub fn sample_rate(&self) -> SampleRate {
+        self.sample_rate
+    }
+}
+
 impl Window<Duration> {
     pub fn new(sample_rate: SampleRate) -> Self {
         Self {
