@@ -78,6 +78,7 @@ impl Measurement {
             }
             Message::RmsChanged(loudness) => {
                 self.loudness = loudness;
+                self.cache.clear();
                 None
             }
         }
