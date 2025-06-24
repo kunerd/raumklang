@@ -63,6 +63,7 @@ pub enum Message {
     Cancel,
     SignalSetup(signal_setup::Message),
     Measurement(measurement::Message),
+    Back,
 }
 
 pub enum Action {
@@ -239,6 +240,18 @@ impl Recording {
                 }
             }
             Message::Cancel => Action::Cancel,
+            Message::Back => {
+                let page = std::mem::take(&mut self.page);
+
+                self.page = match page {
+                    Page::PortSetup => page,
+                    Page::LoudnessTest { .. } => Page::PortSetup,
+                    Page::SignalSetup { .. } => Page::PortSetup,
+                    Page::Measurement(_measurement) => Page::PortSetup,
+                };
+
+                Action::None
+            }
         }
     }
 
@@ -251,8 +264,13 @@ impl Recording {
                 Page::PortSetup => self.port_setup(backend),
                 Page::LoudnessTest {
                     config, loudness, ..
-                } => self.loudness_test(config, loudness),
-                Page::SignalSetup { config, page } => page.view(config).map(Message::SignalSetup),
+                } => self
+                    .loudness_test(config, loudness)
+                    .back_button("Back", Message::Back),
+                Page::SignalSetup { config, page } => page
+                    .view(config)
+                    .map(Message::SignalSetup)
+                    .back_button("Back", Message::Back),
                 Page::Measurement(page) => page.view().map(Message::Measurement),
             },
             State::Retrying { err, remaining, .. } => page::Component::new("Jack error").content(
