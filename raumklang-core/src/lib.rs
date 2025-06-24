@@ -15,6 +15,7 @@ use std::{
     io::{self},
     path::Path,
     slice::Iter,
+    time::Duration,
 };
 
 #[derive(Error, Debug)]
@@ -139,18 +140,18 @@ impl LinearSineSweep {
     pub fn new(
         start_frequency: u16,
         end_frequency: u16,
-        duration: usize,
+        duration: Duration,
         amplitude: f32,
         sample_rate: usize,
     ) -> Self {
+        let n_samples = sample_rate as f32 * duration.as_secs_f32();
         LinearSineSweep {
             sample_rate,
             sample_index: 0,
-            n_samples: sample_rate * duration,
+            n_samples: n_samples as usize,
             amplitude,
             frequency: start_frequency as f32,
-            delta_frequency: (end_frequency - start_frequency) as f32
-                / (sample_rate * duration) as f32,
+            delta_frequency: (end_frequency - start_frequency) as f32 / n_samples,
             phase: 0.0,
         }
     }

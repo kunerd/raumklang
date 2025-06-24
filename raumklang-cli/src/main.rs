@@ -409,6 +409,7 @@ fn play_signal(
             start_frequency,
             end_frequency,
         } => {
+            let duration = Duration::from_secs(duration as u64);
             let sweep = LinearSineSweep::new(
                 start_frequency,
                 end_frequency,

@@ -78,10 +78,12 @@ impl SignalSetup {
                         field_group(
                             "Frequency",
                             row![
-                                number_input("From", &self.start_frequency, range.is_ok())
+                                number_input(&self.start_frequency, range.is_ok())
+                                    .label("From")
                                     .unit("Hz")
                                     .on_input(Message::StartFrequency),
-                                number_input("To", &self.end_frequency, range.is_ok())
+                                number_input(&self.end_frequency, range.is_ok())
+                                    .label("To")
                                     .unit("Hz")
                                     .on_input(Message::EndFrequency)
                             ]
@@ -91,7 +93,7 @@ impl SignalSetup {
                         ),
                         field_group(
                             "Duration",
-                            number_input("", &self.duration, duration.is_ok())
+                            number_input(&self.duration, duration.is_ok())
                                 .unit("s")
                                 .on_input(Message::Duration),
                             duration.as_ref().err()
@@ -129,19 +131,15 @@ impl From<measurement::Config> for SignalSetup {
     }
 }
 
-fn number_input<'a, Message>(
-    label: &'a str,
-    value: &'a str,
-    is_valid: bool,
-) -> NumberInput<'a, Message>
+fn number_input<'a, Message>(value: &'a str, is_valid: bool) -> NumberInput<'a, Message>
 where
     Message: 'a + Clone,
 {
-    NumberInput::new(label, value, is_valid)
+    NumberInput::new(value, is_valid)
 }
 
 struct NumberInput<'a, Message> {
-    label: &'a str,
+    label: Option<&'a str>,
     value: &'a str,
     unit: Option<&'a str>,
     is_valid: bool,
@@ -152,14 +150,19 @@ impl<'a, Message> NumberInput<'a, Message>
 where
     Message: 'a + Clone,
 {
-    fn new(label: &'a str, value: &'a str, is_valid: bool) -> Self {
+    fn new(value: &'a str, is_valid: bool) -> Self {
         Self {
-            label,
+            label: None,
             value,
             unit: None,
             is_valid,
             on_input: None,
         }
+    }
+
+    fn label(mut self, label: &'a str) -> Self {
+        self.label = Some(label);
+        self
     }
 
     fn unit(mut self, unit: &'a str) -> Self {
@@ -173,22 +176,23 @@ where
     }
 
     fn view(self) -> Element<'a, Message> {
-        column![
-            text(self.label),
-            row![text_input("", self.value)
-                .id(text_input::Id::new("from"))
-                .align_x(Horizontal::Right)
-                .on_input_maybe(self.on_input)
-                .style(if self.is_valid {
-                    text_input::default
-                } else {
-                    number_input_danger
-                })]
-            .push_maybe(self.unit.map(text))
-            .align_y(Vertical::Center)
-            .spacing(3)
-        ]
-        .into()
+        column![]
+            .push_maybe(self.label.map(text))
+            .push(
+                row![text_input("", self.value)
+                    .id(text_input::Id::new("from"))
+                    .align_x(Horizontal::Right)
+                    .on_input_maybe(self.on_input)
+                    .style(if self.is_valid {
+                        text_input::default
+                    } else {
+                        number_input_danger
+                    })]
+                .push_maybe(self.unit.map(text))
+                .align_y(Vertical::Center)
+                .spacing(3),
+            )
+            .into()
     }
 }
 

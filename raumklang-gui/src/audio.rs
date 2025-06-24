@@ -263,7 +263,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                             let sweep = raumklang_core::LinearSineSweep::new(
                                 start_frequency,
                                 end_frequency,
-                                duration.as_secs() as usize,
+                                duration,
                                 0.8,
                                 sample_rate,
                             );
