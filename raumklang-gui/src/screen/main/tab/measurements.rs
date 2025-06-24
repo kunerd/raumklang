@@ -598,11 +598,9 @@ where
     }
 
     pub fn view(self) -> Element<'a, Message> {
-        let header = row![
-            // container(text(self.title).wrapping(Wrapping::WordOrGlyph)).clip(true),
-            text(self.title),
-            horizontal_space()
-        ]
+        let header = row![container(text(self.title).wrapping(Wrapping::WordOrGlyph))
+            .width(Length::Fill)
+            .clip(true),]
         .extend(self.buttons.into_iter().map(|btn| btn.width(30).into()))
         .spacing(5)
         .padding(5)
