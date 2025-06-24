@@ -33,3 +33,7 @@ atomic_float = "1.1.0"
 [dependencies.iced]
 version = "0.14.0-dev"
 features = ["canvas", "tokio", "advanced", "sipper"]
+
+[build-dependencies]
+iced_fontello = "0.14.0-dev"
+

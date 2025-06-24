@@ -1,5 +1,6 @@
 mod audio;
 mod data;
+mod icon;
 mod log;
 mod screen;
 mod widgets;
@@ -12,7 +13,7 @@ use screen::{
 
 use data::{project::file, RecentProjects};
 
-use iced::{futures::FutureExt, widget::text, Element, Font, Settings, Subscription, Task, Theme};
+use iced::{futures::FutureExt, Element, Font, Subscription, Task, Theme};
 
 use std::{
     path::{Path, PathBuf},
@@ -33,12 +34,7 @@ fn main() -> iced::Result {
         .title(Raumklang::title)
         .subscription(Raumklang::subscription)
         .theme(Raumklang::theme)
-        .settings(Settings {
-            fonts: vec![include_bytes!("../fonts/raumklang-icons.ttf")
-                .as_slice()
-                .into()],
-            ..Default::default()
-        })
+        .font(icon::FONT)
         .default_font(Font::with_name("Noto Sans"))
         .antialiasing(true)
         .run()
@@ -162,16 +158,6 @@ pub enum PickAndLoadError {
     DialogClosed,
     #[error(transparent)]
     File(#[from] file::Error),
-}
-
-pub fn icon<'a, M>(codepoint: char) -> Element<'a, M> {
-    const ICON_FONT: Font = Font::with_name("raumklang-icons");
-
-    text(codepoint).font(ICON_FONT).into()
-}
-
-pub fn delete_icon<'a, M>() -> Element<'a, M> {
-    icon('\u{F1F8}')
 }
 
 async fn pick_project_file() -> Result<PathBuf, PickAndLoadError> {

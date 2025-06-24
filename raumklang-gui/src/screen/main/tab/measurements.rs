@@ -1,12 +1,12 @@
 mod recording;
-pub use recording::{recording_button, Recording};
+pub use recording::Recording;
 
 use crate::{
     data::{
         self,
         measurement::{self, FromFile},
     },
-    delete_icon,
+    icon,
 };
 
 use prism::chart::{line_series, Chart, Labels};
@@ -17,8 +17,8 @@ use iced::{
     keyboard,
     mouse::ScrollDelta,
     widget::{
-        self, button, column, container, horizontal_rule, horizontal_space, row, scrollable, text,
-        Button,
+        button, column, container, horizontal_rule, horizontal_space, row, scrollable, text,
+        text::Wrapping, Button,
     },
     Alignment, Element, Length, Point, Subscription, Task,
 };
@@ -210,7 +210,8 @@ impl Measurements {
                         .style(button::secondary),
                 )
                 .push_button(
-                    recording_button(Message::StartRecording(recording::Kind::Loopback))
+                    button(icon::record())
+                        .on_press(Message::StartRecording(recording::Kind::Loopback))
                         .style(button::secondary),
                 )
                 .push_entry_maybe(
@@ -225,6 +226,11 @@ impl Measurements {
                     button("+")
                         .style(button::secondary)
                         .on_press(Message::AddMeasurement),
+                )
+                .push_button(
+                    button(icon::record())
+                        .on_press(Message::StartRecording(recording::Kind::Measurement))
+                        .style(button::secondary),
                 )
                 .extend_entries(project.measurements().iter().enumerate().map(
                     |(id, measurement)| {
@@ -250,7 +256,9 @@ impl Measurements {
                         base_text,
                         row![
                             text("You can load signals from file by pressing [+] or"),
-                            recording_button(Message::StartRecording(recording::Kind::Measurement))
+                            button(icon::record())
+                                .style(button::secondary)
+                                .on_press(Message::StartRecording(recording::Kind::Measurement))
                         ]
                         .spacing(8)
                         .align_y(Vertical::Center)
@@ -454,7 +462,7 @@ fn loopback_list_entry<'a>(
         row![
             horizontal_space(),
             button("...").style(button::secondary),
-            button(delete_icon())
+            button(icon::delete())
                 .on_press(Message::RemoveLoopback)
                 .style(button::danger)
         ]
@@ -507,7 +515,7 @@ fn measurement_list_entry<'a>(
         row![
             horizontal_space(),
             button("...").style(button::secondary),
-            button(delete_icon())
+            button(icon::delete())
                 .on_press(Message::RemoveMeasurement(index))
                 .style(button::danger)
         ]
@@ -590,11 +598,15 @@ where
     }
 
     pub fn view(self) -> Element<'a, Message> {
-        let header = row![widget::text(self.title), horizontal_space()]
-            .extend(self.buttons.into_iter().map(Into::into))
-            .spacing(5)
-            .padding(5)
-            .align_y(Alignment::Center);
+        let header = row![
+            // container(text(self.title).wrapping(Wrapping::WordOrGlyph)).clip(true),
+            text(self.title),
+            horizontal_space()
+        ]
+        .extend(self.buttons.into_iter().map(|btn| btn.width(30).into()))
+        .spacing(5)
+        .padding(5)
+        .align_y(Alignment::Center);
 
         column!(header, horizontal_rule(1))
             .extend(self.entries.into_iter())

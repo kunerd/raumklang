@@ -5,17 +5,17 @@ use page::{measurement, signal_setup, Component, Page};
 use crate::{
     audio,
     data::recording::{self, port},
-    widgets::{colored_circle, RmsPeakMeter},
+    widgets::RmsPeakMeter,
 };
 
 use iced::{
     alignment::{Horizontal, Vertical},
     time,
     widget::{
-        button, canvas, column, container, horizontal_rule, pick_list, row, rule, slider, text,
-        vertical_rule, Button,
+        canvas, column, container, horizontal_rule, pick_list, row, rule, slider, text,
+        vertical_rule,
     },
-    Color, Element, Length, Subscription, Task,
+    Element, Length, Subscription, Task,
 };
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -407,8 +407,4 @@ impl Default for Recording {
     fn default() -> Self {
         Self::new(Kind::Measurement)
     }
-}
-
-pub fn recording_button<'a, Message: 'a>(msg: Message) -> Button<'a, Message> {
-    button(colored_circle(8.0, Color::from_rgb8(200, 56, 42))).on_press(msg)
 }
