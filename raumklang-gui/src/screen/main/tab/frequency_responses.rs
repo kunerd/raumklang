@@ -11,6 +11,7 @@ use iced::{
     Point, Subscription,
 };
 use rand::Rng;
+use rustfft::num_complex::Complex;
 
 use crate::{
     data::{self, frequency_response, measurement},
@@ -94,20 +95,24 @@ impl FrequencyResponses {
                         None
                     }
                 })
-                .map(|(frequency_response, color)| {
+                .flat_map(|(frequency_response, color)| {
                     let sample_reate = frequency_response.origin.sample_rate;
                     let len = frequency_response.origin.data.len() * 2;
                     let resolution = sample_reate as f32 / len as f32;
 
-                    line_series(
-                        frequency_response
-                            .origin
-                            .data
-                            .iter()
-                            .enumerate()
-                            .map(move |(i, s)| (i as f32 * resolution, dbfs(s.re.abs()))),
-                    )
-                    .color(color)
+                    let closure = move |(i, s): (usize, &Complex<f32>)| {
+                        (i as f32 * resolution, dbfs(s.re.abs()))
+                    };
+                    [
+                        line_series(frequency_response.origin.data.iter().enumerate().map(
+                            closure, // move |(i, s)| (i as f32 * resolution, dbfs(s.re.abs())),
+                        ))
+                        .color(color.scale_alpha(0.2)),
+                        line_series(frequency_response.smoothed.iter().enumerate().map(
+                            closure, // move |(i, s)| (i as f32 * resolution, dbfs(s.re.abs())),
+                        ))
+                        .color(color),
+                    ]
                 });
 
             let length = self
