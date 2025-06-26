@@ -3,6 +3,7 @@ use super::{impulse_response, ImpulseResponse, Samples, Window};
 use iced::task::Sipper;
 use ndarray::{concatenate, Array, Array1, ArrayView, Axis};
 use ndarray_interp::interp1d::{cubic_spline::CubicSpline, Interp1DBuilder};
+use ndarray_stats::SummaryStatisticsExt;
 use rustfft::num_complex::Complex;
 
 #[derive(Debug, Clone)]
@@ -79,7 +80,7 @@ impl FrequencyResponse {
     pub fn new(origin: raumklang_core::FrequencyResponse) -> Self {
         let smoothed = nth_octave_smoothing(
             &origin.data.iter().map(|s| s.re.abs()).collect::<Vec<f32>>(),
-            6,
+            3,
         );
         let smoothed = smoothed.iter().map(Complex::from).collect();
         Self { origin, smoothed }
@@ -140,6 +141,18 @@ pub fn nth_octave_smoothing(signal: &[f32], num_fractions: usize) -> Vec<f32> {
         .build()
         .unwrap();
     let result = interpolator.interp_array(&n_log).unwrap();
+    // add padding nearest value to start and end
+    let first = result.first().unwrap();
+    let last = result.last().unwrap();
+    let half_window_size = n_window / 2;
+
+    let result = concatenate![
+        Axis(0),
+        Array1::from_elem(half_window_size, *first),
+        result,
+        Array1::from_elem(half_window_size, *last),
+    ];
+
     //         # apply a moving average filter based on the window function
     //         data[nn] = generic_filter1d(
     //             data[nn],
@@ -150,7 +163,7 @@ pub fn nth_octave_smoothing(signal: &[f32], num_fractions: usize) -> Vec<f32> {
     let result: Array1<f32> = result
         .windows(n_window)
         .into_iter()
-        .map(|d| d.mean().unwrap())
+        .map(|d| d.weighted_mean(&window.view()).unwrap())
         .collect();
 
     //         # interpolate to original frequency axis
@@ -159,12 +172,12 @@ pub fn nth_octave_smoothing(signal: &[f32], num_fractions: usize) -> Vec<f32> {
     //         data[nn] = interpolator(n_lin + 1)
 
     // FIXME: ugly hack, use nearest here
-    let last = result.last().unwrap();
-    let result = concatenate![
-        Axis(0),
-        result,
-        Array1::from_elem(n_log.len() - result.len(), *last),
-    ];
+    // let last = result.last().unwrap();
+    // let result = concatenate![
+    //     Axis(0),
+    //     result,
+    //     Array1::from_elem(n_log.len() - result.len(), *last),
+    // ];
 
     let interpolator = Interp1DBuilder::new(result)
         .strategy(CubicSpline::new())
