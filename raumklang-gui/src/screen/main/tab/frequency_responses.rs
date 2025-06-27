@@ -29,7 +29,7 @@ pub enum Message {
 
 pub enum Action {
     None,
-    Smooth(u8),
+    Smooth(Option<u8>),
 }
 
 pub struct FrequencyResponses {
@@ -443,7 +443,8 @@ impl ChartData {
 }
 
 impl Smoothing {
-    const ALL: [Smoothing; 7] = [
+    const ALL: [Smoothing; 8] = [
+        Smoothing::None,
         Smoothing::OneOne,
         Smoothing::OneSecond,
         Smoothing::OneThird,
@@ -453,16 +454,16 @@ impl Smoothing {
         Smoothing::OneFourtyEighth,
     ];
 
-    pub fn fraction(&self) -> u8 {
+    pub fn fraction(&self) -> Option<u8> {
         match self {
-            Smoothing::None => 1,
-            Smoothing::OneOne => 1,
-            Smoothing::OneSecond => 2,
-            Smoothing::OneThird => 3,
-            Smoothing::OneSixth => 6,
-            Smoothing::OneTwelfth => 12,
-            Smoothing::OneTwentyFourth => 24,
-            Smoothing::OneFourtyEighth => 48,
+            Smoothing::None => None,
+            Smoothing::OneOne => Some(1),
+            Smoothing::OneSecond => Some(2),
+            Smoothing::OneThird => Some(3),
+            Smoothing::OneSixth => Some(6),
+            Smoothing::OneTwelfth => Some(12),
+            Smoothing::OneTwentyFourth => Some(24),
+            Smoothing::OneFourtyEighth => Some(48),
         }
     }
 }
@@ -480,7 +481,7 @@ impl fmt::Display for Smoothing {
                 Smoothing::OneTwelfth => "1/12",
                 Smoothing::OneTwentyFourth => "1/24",
                 Smoothing::OneFourtyEighth => "1/48",
-                Smoothing::None => "None",
+                Smoothing::None => "No",
             }
         )
     }

@@ -193,6 +193,21 @@ impl Main {
                 match tab.update(message) {
                     frequency_responses::Action::None => Task::none(),
                     frequency_responses::Action::Smooth(fraction) => {
+                        let Some(fraction) = fraction else {
+                            self.project
+                                .measurements_mut()
+                                .iter_mut()
+                                .filter_map(|m| match m {
+                                    data::measurement::State::NotLoaded(_details) => None,
+                                    data::measurement::State::Loaded(measurement) => {
+                                        measurement.frequency_response_mut()
+                                    }
+                                })
+                                .for_each(|fr| fr.smoothed = None);
+
+                            return Task::none();
+                        };
+
                         let frequency_responses = self
                             .project
                             .measurements()
