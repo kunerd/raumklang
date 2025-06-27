@@ -474,6 +474,7 @@ impl fmt::Display for Smoothing {
             f,
             "{} smoothing",
             match self {
+                Smoothing::None => "No",
                 Smoothing::OneOne => "1/1",
                 Smoothing::OneSecond => "1/2",
                 Smoothing::OneThird => "1/3",
@@ -481,7 +482,6 @@ impl fmt::Display for Smoothing {
                 Smoothing::OneTwelfth => "1/12",
                 Smoothing::OneTwentyFourth => "1/24",
                 Smoothing::OneFourtyEighth => "1/48",
-                Smoothing::None => "No",
             }
         )
     }

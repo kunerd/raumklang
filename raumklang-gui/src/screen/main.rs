@@ -236,7 +236,7 @@ impl Main {
                                     tokio::task::spawn_blocking(move || {
                                         (
                                             id,
-                                            data::frequency_response::nth_octave_smoothing(
+                                            data::frequency_response::smooth_fractional_octave(
                                                 &data, fraction,
                                             ),
                                         )
