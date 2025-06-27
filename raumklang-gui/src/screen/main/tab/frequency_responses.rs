@@ -5,29 +5,37 @@ use prism::{line_series, Chart, Labels};
 use iced::{
     keyboard,
     mouse::ScrollDelta,
-    widget::{column, container, horizontal_space, row, stack, text, toggler},
+    widget::{column, container, horizontal_space, pick_list, row, stack, text, toggler},
     Alignment, Color, Element,
     Length::{self, FillPortion},
     Point, Subscription,
 };
 use rand::Rng;
+use rustfft::num_complex::Complex;
 
 use crate::{
     data::{self, frequency_response, measurement},
     widgets::colored_circle,
 };
 
-use std::ops::RangeInclusive;
-
-pub struct FrequencyResponses {
-    chart: ChartData,
-    entries: Vec<Entry>,
-}
+use std::{fmt, ops::RangeInclusive};
 
 #[derive(Debug, Clone)]
 pub enum Message {
     ShowInGraphToggled(usize, bool),
     Chart(ChartOperation),
+    SmoothingChanged(Smoothing),
+}
+
+pub enum Action {
+    None,
+    Smooth(Option<u8>),
+}
+
+pub struct FrequencyResponses {
+    chart: ChartData,
+    entries: Vec<Entry>,
+    smoothing: Smoothing,
 }
 
 struct Entry {
@@ -54,12 +62,25 @@ pub enum ChartOperation {
     ShiftKeyReleased,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Smoothing {
+    None,
+    OneOne,
+    OneSecond,
+    OneThird,
+    OneSixth,
+    OneTwelfth,
+    OneTwentyFourth,
+    OneFourtyEighth,
+}
+
 impl FrequencyResponses {
     pub fn new(iter: impl Iterator<Item = usize>) -> Self {
         let entries = iter.map(Entry::new).collect();
 
         Self {
             chart: ChartData::default(),
+            smoothing: Smoothing::None,
             entries,
         }
     }
@@ -80,6 +101,27 @@ impl FrequencyResponses {
             container(column(entries).spacing(10).padding(8)).style(container::rounded_box)
         };
 
+        let header = {
+            let computed_frs = self
+                .entries
+                .iter()
+                .flat_map(|entry| measurements.get(entry.measurement_id))
+                .flat_map(|m| m.frequency_response())
+                .count();
+
+            let smoothing_options = if computed_frs == self.entries.len() {
+                Some(pick_list(
+                    Smoothing::ALL,
+                    Some(&self.smoothing),
+                    Message::SmoothingChanged,
+                ))
+            } else {
+                None
+            };
+
+            row![].push_maybe(smoothing_options)
+        };
+
         let content: Element<_> = if self.entries.iter().any(|entry| entry.show) {
             let series_list = self
                 .entries
@@ -94,21 +136,32 @@ impl FrequencyResponses {
                         None
                     }
                 })
-                .map(|(frequency_response, color)| {
+                .flat_map(|(frequency_response, color)| {
                     let sample_reate = frequency_response.origin.sample_rate;
                     let len = frequency_response.origin.data.len() * 2;
                     let resolution = sample_reate as f32 / len as f32;
 
-                    line_series(
-                        frequency_response
-                            .origin
-                            .data
-                            .iter()
-                            .enumerate()
-                            .map(move |(i, s)| (i as f32 * resolution, dbfs(s.re.abs()))),
-                    )
-                    .color(color)
-                });
+                    let closure = move |(i, s): (usize, &Complex<f32>)| {
+                        (i as f32 * resolution, dbfs(s.re.abs()))
+                    };
+                    [
+                        Some(
+                            line_series(frequency_response.origin.data.iter().enumerate().map(
+                                closure, // move |(i, s)| (i as f32 * resolution, dbfs(s.re.abs())),
+                            ))
+                            .color(color.scale_alpha(0.2)),
+                        ),
+                        frequency_response.smoothed.as_ref().map(|smoothed| {
+                            {
+                                line_series(smoothed.iter().enumerate().map(
+                                    closure, // move |(i, s)| (i as f32 * resolution, dbfs(s.re.abs())),
+                                ))
+                            }
+                            .color(color)
+                        }),
+                    ]
+                })
+                .flatten();
 
             let length = self
                 .entries
@@ -145,20 +198,31 @@ impl FrequencyResponses {
             container(sidebar)
                 .width(FillPortion(1))
                 .style(container::bordered_box),
-            container(content).center(Length::FillPortion(4))
+            column![header, container(content).center(Length::FillPortion(4))].spacing(12)
         ]
         .spacing(10)
         .into()
     }
 
-    pub fn update(&mut self, message: Message) {
+    #[must_use]
+    pub fn update(&mut self, message: Message) -> Action {
         match message {
             Message::ShowInGraphToggled(id, state) => {
                 if let Some(entry) = self.entries.get_mut(id) {
                     entry.show = state;
                 }
+
+                Action::None
             }
-            Message::Chart(operation) => self.chart.apply(operation),
+            Message::Chart(operation) => {
+                self.chart.apply(operation);
+                Action::None
+            }
+            Message::SmoothingChanged(smoothing) => {
+                self.smoothing = smoothing;
+
+                Action::Smooth(smoothing.fraction())
+            }
         }
     }
 
@@ -375,5 +439,50 @@ impl ChartData {
         let new_start = position.x - (new_len * center_scale);
         let new_end = new_start + new_len;
         self.x_range = Some(new_start..=new_end);
+    }
+}
+
+impl Smoothing {
+    const ALL: [Smoothing; 8] = [
+        Smoothing::None,
+        Smoothing::OneOne,
+        Smoothing::OneSecond,
+        Smoothing::OneThird,
+        Smoothing::OneSixth,
+        Smoothing::OneTwelfth,
+        Smoothing::OneTwentyFourth,
+        Smoothing::OneFourtyEighth,
+    ];
+
+    pub fn fraction(&self) -> Option<u8> {
+        match self {
+            Smoothing::None => None,
+            Smoothing::OneOne => Some(1),
+            Smoothing::OneSecond => Some(2),
+            Smoothing::OneThird => Some(3),
+            Smoothing::OneSixth => Some(6),
+            Smoothing::OneTwelfth => Some(12),
+            Smoothing::OneTwentyFourth => Some(24),
+            Smoothing::OneFourtyEighth => Some(48),
+        }
+    }
+}
+
+impl fmt::Display for Smoothing {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} smoothing",
+            match self {
+                Smoothing::None => "No",
+                Smoothing::OneOne => "1/1",
+                Smoothing::OneSecond => "1/2",
+                Smoothing::OneThird => "1/3",
+                Smoothing::OneSixth => "1/6",
+                Smoothing::OneTwelfth => "1/12",
+                Smoothing::OneTwentyFourth => "1/24",
+                Smoothing::OneFourtyEighth => "1/48",
+            }
+        )
     }
 }

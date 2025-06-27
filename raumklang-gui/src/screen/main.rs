@@ -2,6 +2,7 @@ pub mod tab;
 
 use std::fmt::Display;
 
+use rustfft::num_complex::Complex;
 pub use tab::Tab;
 use tab::{frequency_responses, impulse_responses, measurements};
 
@@ -47,6 +48,7 @@ pub enum Message {
     ImpulseResponseComputed(Result<(usize, data::ImpulseResponse), data::Error>),
     Modal(ModalAction),
     FrequencyResponseComputed((usize, data::FrequencyResponse)),
+    FrequencyResponsesSmoothingComputed((usize, Vec<f32>)),
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TabId {
@@ -188,9 +190,67 @@ impl Main {
                     return Task::none();
                 };
 
-                tab.update(message);
+                match tab.update(message) {
+                    frequency_responses::Action::None => Task::none(),
+                    frequency_responses::Action::Smooth(fraction) => {
+                        let Some(fraction) = fraction else {
+                            self.project
+                                .measurements_mut()
+                                .iter_mut()
+                                .filter_map(|m| match m {
+                                    data::measurement::State::NotLoaded(_details) => None,
+                                    data::measurement::State::Loaded(measurement) => {
+                                        measurement.frequency_response_mut()
+                                    }
+                                })
+                                .for_each(|fr| fr.smoothed = None);
 
-                Task::none()
+                            return Task::none();
+                        };
+
+                        let frequency_responses = self
+                            .project
+                            .measurements()
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(id, m)| match &m {
+                                data::measurement::State::NotLoaded(_details) => None,
+                                data::measurement::State::Loaded(measurement) => {
+                                    measurement.frequency_response().as_ref().and_then(|fr| {
+                                        let data: Vec<f32> = fr
+                                            .origin
+                                            .data
+                                            .iter()
+                                            .copied()
+                                            .map(|s| s.re.abs())
+                                            .collect();
+
+                                        Some((id, data))
+                                    })
+                                }
+                            });
+
+                        let tasks = frequency_responses.map(|(id, data)| {
+                            Task::perform(
+                                async move {
+                                    tokio::task::spawn_blocking(move || {
+                                        (
+                                            id,
+                                            data::frequency_response::smooth_fractional_octave(
+                                                &data, fraction,
+                                            ),
+                                        )
+                                    })
+                                    .await
+                                    .unwrap()
+                                },
+                                Message::FrequencyResponsesSmoothingComputed,
+                            )
+                        });
+
+                        Task::batch(tasks)
+                    }
+                }
             }
             Message::FrequencyResponseComputed((id, frequency_response)) => {
                 self.project
@@ -202,6 +262,21 @@ impl Main {
                             measurement.frequency_response_computed(frequency_response)
                         }
                     });
+
+                Task::none()
+            }
+            Message::FrequencyResponsesSmoothingComputed((id, smoothed)) => {
+                let Some(data::measurement::State::Loaded(measurement)) =
+                    self.project.measurements_mut().get_mut(id)
+                else {
+                    return Task::none();
+                };
+
+                let Some(frequency_response) = measurement.frequency_response_mut() else {
+                    return Task::none();
+                };
+
+                frequency_response.smoothed = Some(smoothed.iter().map(Complex::from).collect());
 
                 Task::none()
             }
