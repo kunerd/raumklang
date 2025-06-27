@@ -115,6 +115,20 @@ impl Measurement {
             frequency_response::State::Computed(frequency_response) => Some(frequency_response),
         }
     }
+
+    pub fn frequency_response_mut(&mut self) -> Option<&mut FrequencyResponse> {
+        let state = match &mut self.analysis {
+            Analysis::None => None,
+            Analysis::ImpulseResponse(_state) => None,
+            Analysis::FrequencyResponse(_impulse_response, state) => Some(state),
+        }?;
+
+        match state {
+            frequency_response::State::Computing => None,
+            frequency_response::State::Computed(frequency_response) => Some(frequency_response),
+        }
+    }
+
     pub fn frequency_response_state(&self) -> Option<&frequency_response::State> {
         match &self.analysis {
             Analysis::None => None,

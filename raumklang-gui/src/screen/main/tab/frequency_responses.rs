@@ -5,7 +5,7 @@ use prism::{line_series, Chart, Labels};
 use iced::{
     keyboard,
     mouse::ScrollDelta,
-    widget::{column, container, horizontal_space, row, stack, text, toggler},
+    widget::{column, container, horizontal_space, pick_list, row, stack, text, toggler},
     Alignment, Color, Element,
     Length::{self, FillPortion},
     Point, Subscription,
@@ -18,17 +18,24 @@ use crate::{
     widgets::colored_circle,
 };
 
-use std::ops::RangeInclusive;
-
-pub struct FrequencyResponses {
-    chart: ChartData,
-    entries: Vec<Entry>,
-}
+use std::{fmt, ops::RangeInclusive};
 
 #[derive(Debug, Clone)]
 pub enum Message {
     ShowInGraphToggled(usize, bool),
     Chart(ChartOperation),
+    SmoothingChanged(Smoothing),
+}
+
+pub enum Action {
+    None,
+    Smooth(u8),
+}
+
+pub struct FrequencyResponses {
+    chart: ChartData,
+    entries: Vec<Entry>,
+    smoothing: Smoothing,
 }
 
 struct Entry {
@@ -55,12 +62,25 @@ pub enum ChartOperation {
     ShiftKeyReleased,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Smoothing {
+    None,
+    OneOne,
+    OneSecond,
+    OneThird,
+    OneSixth,
+    OneTwelfth,
+    OneTwentyFourth,
+    OneFourtyEighth,
+}
+
 impl FrequencyResponses {
     pub fn new(iter: impl Iterator<Item = usize>) -> Self {
         let entries = iter.map(Entry::new).collect();
 
         Self {
             chart: ChartData::default(),
+            smoothing: Smoothing::None,
             entries,
         }
     }
@@ -79,6 +99,27 @@ impl FrequencyResponses {
             );
 
             container(column(entries).spacing(10).padding(8)).style(container::rounded_box)
+        };
+
+        let header = {
+            let computed_frs = self
+                .entries
+                .iter()
+                .flat_map(|entry| measurements.get(entry.measurement_id))
+                .flat_map(|m| m.frequency_response())
+                .count();
+
+            let smoothing_options = if computed_frs == self.entries.len() {
+                Some(pick_list(
+                    Smoothing::ALL,
+                    Some(&self.smoothing),
+                    Message::SmoothingChanged,
+                ))
+            } else {
+                None
+            };
+
+            row![].push_maybe(smoothing_options)
         };
 
         let content: Element<_> = if self.entries.iter().any(|entry| entry.show) {
@@ -104,16 +145,23 @@ impl FrequencyResponses {
                         (i as f32 * resolution, dbfs(s.re.abs()))
                     };
                     [
-                        line_series(frequency_response.origin.data.iter().enumerate().map(
-                            closure, // move |(i, s)| (i as f32 * resolution, dbfs(s.re.abs())),
-                        ))
-                        .color(color.scale_alpha(0.2)),
-                        line_series(frequency_response.smoothed.iter().enumerate().map(
-                            closure, // move |(i, s)| (i as f32 * resolution, dbfs(s.re.abs())),
-                        ))
-                        .color(color),
+                        Some(
+                            line_series(frequency_response.origin.data.iter().enumerate().map(
+                                closure, // move |(i, s)| (i as f32 * resolution, dbfs(s.re.abs())),
+                            ))
+                            .color(color.scale_alpha(0.2)),
+                        ),
+                        frequency_response.smoothed.as_ref().map(|smoothed| {
+                            {
+                                line_series(smoothed.iter().enumerate().map(
+                                    closure, // move |(i, s)| (i as f32 * resolution, dbfs(s.re.abs())),
+                                ))
+                            }
+                            .color(color)
+                        }),
                     ]
-                });
+                })
+                .flatten();
 
             let length = self
                 .entries
@@ -150,20 +198,31 @@ impl FrequencyResponses {
             container(sidebar)
                 .width(FillPortion(1))
                 .style(container::bordered_box),
-            container(content).center(Length::FillPortion(4))
+            column![header, container(content).center(Length::FillPortion(4))].spacing(12)
         ]
         .spacing(10)
         .into()
     }
 
-    pub fn update(&mut self, message: Message) {
+    #[must_use]
+    pub fn update(&mut self, message: Message) -> Action {
         match message {
             Message::ShowInGraphToggled(id, state) => {
                 if let Some(entry) = self.entries.get_mut(id) {
                     entry.show = state;
                 }
+
+                Action::None
             }
-            Message::Chart(operation) => self.chart.apply(operation),
+            Message::Chart(operation) => {
+                self.chart.apply(operation);
+                Action::None
+            }
+            Message::SmoothingChanged(smoothing) => {
+                self.smoothing = smoothing;
+
+                Action::Smooth(smoothing.fraction())
+            }
         }
     }
 
@@ -380,5 +439,49 @@ impl ChartData {
         let new_start = position.x - (new_len * center_scale);
         let new_end = new_start + new_len;
         self.x_range = Some(new_start..=new_end);
+    }
+}
+
+impl Smoothing {
+    const ALL: [Smoothing; 7] = [
+        Smoothing::OneOne,
+        Smoothing::OneSecond,
+        Smoothing::OneThird,
+        Smoothing::OneSixth,
+        Smoothing::OneTwelfth,
+        Smoothing::OneTwentyFourth,
+        Smoothing::OneFourtyEighth,
+    ];
+
+    pub fn fraction(&self) -> u8 {
+        match self {
+            Smoothing::None => 1,
+            Smoothing::OneOne => 1,
+            Smoothing::OneSecond => 2,
+            Smoothing::OneThird => 3,
+            Smoothing::OneSixth => 6,
+            Smoothing::OneTwelfth => 12,
+            Smoothing::OneTwentyFourth => 24,
+            Smoothing::OneFourtyEighth => 48,
+        }
+    }
+}
+
+impl fmt::Display for Smoothing {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} smoothing",
+            match self {
+                Smoothing::OneOne => "1/1",
+                Smoothing::OneSecond => "1/2",
+                Smoothing::OneThird => "1/3",
+                Smoothing::OneSixth => "1/6",
+                Smoothing::OneTwelfth => "1/12",
+                Smoothing::OneTwentyFourth => "1/24",
+                Smoothing::OneFourtyEighth => "1/48",
+                Smoothing::None => "None",
+            }
+        )
     }
 }

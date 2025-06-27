@@ -9,7 +9,7 @@ use rustfft::num_complex::Complex;
 #[derive(Debug, Clone)]
 pub struct FrequencyResponse {
     pub origin: raumklang_core::FrequencyResponse,
-    pub smoothed: Vec<Complex<f32>>,
+    pub smoothed: Option<Vec<Complex<f32>>>,
 }
 
 #[derive(Debug)]
@@ -78,16 +78,19 @@ impl Computation {
 
 impl FrequencyResponse {
     pub fn new(origin: raumklang_core::FrequencyResponse) -> Self {
-        let smoothed = nth_octave_smoothing(
-            &origin.data.iter().map(|s| s.re.abs()).collect::<Vec<f32>>(),
-            3,
-        );
-        let smoothed = smoothed.iter().map(Complex::from).collect();
-        Self { origin, smoothed }
+        // let smoothed = nth_octave_smoothing(
+        //     &origin.data.iter().map(|s| s.re.abs()).collect::<Vec<f32>>(),
+        //     3,
+        // );
+        // let smoothed = smoothed.iter().map(Complex::from).collect();
+        Self {
+            origin,
+            smoothed: None,
+        }
     }
 }
 
-pub fn nth_octave_smoothing(signal: &[f32], num_fractions: usize) -> Vec<f32> {
+pub fn nth_octave_smoothing(signal: &[f32], num_fractions: u8) -> Vec<f32> {
     let signal = ArrayView::from(signal);
     let len = signal.len() as f32;
     let n_lin = Array::range(0., len as f32, 1.0);
