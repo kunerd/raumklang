@@ -11,8 +11,8 @@ use iced::{
     keyboard,
     mouse::ScrollDelta,
     widget::{
-        button, column, container, horizontal_rule, horizontal_space, pick_list, row, scrollable,
-        text,
+        button, canvas, column, container, horizontal_rule, horizontal_space, pick_list, row,
+        scrollable, text,
     },
     Alignment, Element, Length, Point, Subscription,
 };
@@ -51,6 +51,7 @@ pub struct ChartData {
     shift_key_pressed: bool,
     amplitude_unit: chart::AmplitudeUnit,
     time_unit: chart::TimeSeriesUnit,
+    cache: canvas::Cache,
 }
 
 #[derive(Debug, Default)]
@@ -117,6 +118,8 @@ impl ImpulseReponses {
             Message::Window(operation) => {
                 self.window_settings
                     .apply(operation, self.chart_data.time_unit);
+
+                self.chart_data.cache.clear();
 
                 Action::WindowModified(self.window_settings.window.clone())
             }
@@ -192,6 +195,7 @@ impl ImpulseReponses {
                             let chart = Chart::new()
                                 .width(Length::Fill)
                                 .height(Length::Fill)
+                                .cache(&self.chart_data.cache)
                                 .x_range(
                                     self.chart_data
                                         .x_range
@@ -360,6 +364,8 @@ impl ChartData {
                 self.shift_key_pressed = false;
             }
         }
+
+        self.cache.clear();
     }
 
     fn scroll_right(&mut self) {
