@@ -1,6 +1,7 @@
 mod audio;
 mod impulse_response;
 pub mod loudness;
+pub mod sweep;
 mod window;
 
 pub use audio::*;
@@ -187,7 +188,9 @@ impl ExactSizeIterator for LinearSineSweep {
 
 pub trait FiniteSignal: Send + Sync + ExactSizeIterator<Item = f32> {}
 
-impl FiniteSignal for LinearSineSweep {}
+// impl FiniteSignal for LinearSineSweep {}
+
+impl<T> FiniteSignal for T where T: Send + Sync + ExactSizeIterator<Item = f32> {}
 
 #[derive(Debug, Clone)]
 pub struct WhiteNoise {
@@ -228,7 +231,7 @@ impl Iterator for WhiteNoise {
 }
 
 impl ExactSizeIterator for WhiteNoise {}
-impl FiniteSignal for std::iter::Take<WhiteNoise> {}
+// impl FiniteSignal for std::iter::Take<WhiteNoise> {}
 
 #[derive(Debug, Clone)]
 pub struct PinkNoise {
@@ -274,7 +277,7 @@ impl Iterator for PinkNoise {
 }
 
 impl ExactSizeIterator for PinkNoise {}
-impl FiniteSignal for std::iter::Take<PinkNoise> {}
+// impl FiniteSignal for std::iter::Take<PinkNoise> {}
 
 pub fn volume_to_amplitude(volume: f32) -> f32 {
     assert!((0.0..=1.0).contains(&volume));
