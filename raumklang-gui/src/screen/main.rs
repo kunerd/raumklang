@@ -263,6 +263,10 @@ impl Main {
                         }
                     });
 
+                if let Tab::FrequencyResponses(ref tab) = self.active_tab {
+                    tab.clear_cache();
+                }
+
                 Task::none()
             }
             Message::FrequencyResponsesSmoothingComputed((id, smoothed)) => {
@@ -277,6 +281,10 @@ impl Main {
                 };
 
                 frequency_response.smoothed = Some(smoothed.iter().map(Complex::from).collect());
+
+                if let Tab::FrequencyResponses(ref tab) = self.active_tab {
+                    tab.clear_cache();
+                }
 
                 Task::none()
             }

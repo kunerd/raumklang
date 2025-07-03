@@ -1,11 +1,11 @@
 use raumklang_core::dbfs;
 
-use prism::{line_series, Chart, Labels};
+use prism::{axis, line_series, Axis, Chart, Labels};
 
 use iced::{
     keyboard,
     mouse::ScrollDelta,
-    widget::{column, container, horizontal_space, pick_list, row, stack, text, toggler},
+    widget::{canvas, column, container, horizontal_space, pick_list, row, stack, text, toggler},
     Alignment, Color, Element,
     Length::{self, FillPortion},
     Point, Subscription,
@@ -48,6 +48,7 @@ struct Entry {
 pub struct ChartData {
     x_max: Option<f32>,
     x_range: Option<RangeInclusive<f32>>,
+    cache: canvas::Cache,
     shift_key_pressed: bool,
 }
 
@@ -82,6 +83,28 @@ impl FrequencyResponses {
             chart: ChartData::default(),
             smoothing: Smoothing::None,
             entries,
+        }
+    }
+
+    #[must_use]
+    pub fn update(&mut self, message: Message) -> Action {
+        match message {
+            Message::ShowInGraphToggled(id, state) => {
+                if let Some(entry) = self.entries.get_mut(id) {
+                    entry.show = state;
+                }
+
+                Action::None
+            }
+            Message::Chart(operation) => {
+                self.chart.apply(operation);
+                Action::None
+            }
+            Message::SmoothingChanged(smoothing) => {
+                self.smoothing = smoothing;
+
+                Action::Smooth(smoothing.fraction())
+            }
         }
     }
 
@@ -137,51 +160,49 @@ impl FrequencyResponses {
                     }
                 })
                 .flat_map(|(frequency_response, color)| {
-                    let sample_reate = frequency_response.origin.sample_rate;
-                    let len = frequency_response.origin.data.len() * 2;
-                    let resolution = sample_reate as f32 / len as f32;
+                    let sample_rate = frequency_response.origin.sample_rate;
+                    let len = frequency_response.origin.data.len() * 2 + 1;
+                    let resolution = sample_rate as f32 / len as f32;
 
                     let closure = move |(i, s): (usize, &Complex<f32>)| {
                         (i as f32 * resolution, dbfs(s.re.abs()))
                     };
                     [
                         Some(
-                            line_series(frequency_response.origin.data.iter().enumerate().map(
-                                closure, // move |(i, s)| (i as f32 * resolution, dbfs(s.re.abs())),
-                            ))
-                            .color(color.scale_alpha(0.2)),
+                            line_series(
+                                frequency_response
+                                    .origin
+                                    .data
+                                    .iter()
+                                    .enumerate()
+                                    .skip(1)
+                                    .map(closure),
+                            )
+                            .color(color.scale_alpha(0.1)),
                         ),
                         frequency_response.smoothed.as_ref().map(|smoothed| {
-                            {
-                                line_series(smoothed.iter().enumerate().map(
-                                    closure, // move |(i, s)| (i as f32 * resolution, dbfs(s.re.abs())),
-                                ))
-                            }
-                            .color(color)
+                            { line_series(smoothed.iter().enumerate().skip(1).map(closure)) }
+                                .color(color)
                         }),
                     ]
                 })
                 .flatten();
 
-            let length = self
-                .entries
-                .iter()
-                .find_map(|entry| {
-                    if entry.show {
-                        let measurement = measurements.get(entry.measurement_id)?;
-                        let frequency_response = measurement.frequency_response()?;
-
-                        Some(frequency_response)
-                    } else {
-                        None
-                    }
-                })
-                .map_or(0.0..=22_050.0, |fr| 0.0..=fr.origin.data.len() as f32);
-
             let chart: Chart<Message, ()> = Chart::new()
-                .x_range(self.chart.x_range.clone().unwrap_or(length))
+                .x_axis(
+                    Axis::new(axis::Alignment::Horizontal)
+                        .scale(axis::Scale::Log)
+                        .x_tick_marks(
+                            [0, 20, 50, 100, 1000, 10_000, 20_000]
+                                .into_iter()
+                                .map(|v| v as f32)
+                                .collect(),
+                        ),
+                )
+                .x_range(self.chart.x_range.clone().unwrap_or(20.0..=22_500.0))
                 .y_labels(Labels::default().format(&|v| format!("{v:.0}")))
                 .extend_series(series_list)
+                .cache(&self.chart.cache)
                 .on_scroll(|state| {
                     let pos = state.get_coords();
                     let delta = state.scroll_delta();
@@ -204,28 +225,6 @@ impl FrequencyResponses {
         .into()
     }
 
-    #[must_use]
-    pub fn update(&mut self, message: Message) -> Action {
-        match message {
-            Message::ShowInGraphToggled(id, state) => {
-                if let Some(entry) = self.entries.get_mut(id) {
-                    entry.show = state;
-                }
-
-                Action::None
-            }
-            Message::Chart(operation) => {
-                self.chart.apply(operation);
-                Action::None
-            }
-            Message::SmoothingChanged(smoothing) => {
-                self.smoothing = smoothing;
-
-                Action::Smooth(smoothing.fraction())
-            }
-        }
-    }
-
     pub fn subscription(&self) -> Subscription<Message> {
         Subscription::batch(vec![
             keyboard::on_key_press(|key, _modifiers| match key {
@@ -241,6 +240,10 @@ impl FrequencyResponses {
                 _ => None,
             }),
         ])
+    }
+
+    pub(crate) fn clear_cache(&self) {
+        self.chart.cache.clear();
     }
 }
 
@@ -347,6 +350,8 @@ impl ChartData {
                     (false, true) => self.zoom_in(pos),
                     (false, false) => self.zoom_out(pos),
                 }
+
+                self.cache.clear();
             }
             ChartOperation::ShiftKeyPressed => {
                 self.shift_key_pressed = true;
