@@ -13,8 +13,9 @@ use plotters::{
     style::RGBColor,
 };
 use raumklang_core::{
-    dbfs, loudness, sweep, volume_to_amplitude, AudioEngine, FiniteSignal, ImpulseResponse,
-    LinearSineSweep, PinkNoise, WhiteNoise,
+    dbfs, loudness,
+    signals::{ExponentialSweep, FiniteSignal, LinearSineSweep, PinkNoise, WhiteNoise},
+    volume_to_amplitude, AudioEngine, ImpulseResponse,
 };
 use rustfft::{num_complex::Complex, FftPlanner};
 
@@ -429,9 +430,8 @@ fn play_signal(
             start_frequency,
             end_frequency,
         } => {
-            // let duration = Duration::from_secs(duration as u64);
             let n_samples = duration * sample_rate;
-            let sweep = sweep::Log::new(
+            let sweep = ExponentialSweep::new(
                 start_frequency as f32,
                 end_frequency as f32,
                 amplitude,
@@ -439,7 +439,8 @@ fn play_signal(
                 sample_rate,
             );
 
-            Box::new(sweep.as_vec().into_iter().take(n_samples))
+            // Box::new(sweep.iter().collect::<Vec<_>>().into_iter())
+            Box::new(sweep.into_iter())
         }
     };
 

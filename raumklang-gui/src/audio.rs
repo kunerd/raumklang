@@ -231,7 +231,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                             loudness: sender,
                         }) => {
                             let sample_rate = client.as_client().sample_rate();
-                            let signal = raumklang_core::PinkNoise::with_amplitude(0.8)
+                            let signal = raumklang_core::signals::PinkNoise::with_amplitude(0.8)
                                 .take_duration(
                                     sample_rate,
                                     data::Samples::from_duration(
@@ -260,7 +260,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                             data_sender,
                         }) => {
                             let sample_rate = client.as_client().sample_rate();
-                            let sweep = raumklang_core::LinearSineSweep::new(
+                            let sweep = raumklang_core::signals::LinearSineSweep::new(
                                 start_frequency,
                                 end_frequency,
                                 duration,
