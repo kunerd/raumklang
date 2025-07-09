@@ -1,3 +1,4 @@
+#[derive(Debug, Clone)]
 pub struct ExponentialSweep {
     sample_index: usize,
     start_frequency: f32,

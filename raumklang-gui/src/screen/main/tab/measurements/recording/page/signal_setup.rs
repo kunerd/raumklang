@@ -13,9 +13,9 @@ use iced::{
 
 #[derive(Debug)]
 pub struct SignalSetup {
-    duration: String,
     start_frequency: String,
     end_frequency: String,
+    duration: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
