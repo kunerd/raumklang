@@ -66,12 +66,7 @@ impl ImpulseResponse {
         fft.process(&mut result);
 
         let scale: f32 = 1.0 / (result.len() as f32);
-        let impulse_response_len = result.len() / 2 - 1;
-        let impulse_response: Vec<_> = result
-            .into_iter()
-            .map(|s| s.scale(scale))
-            .take(impulse_response_len)
-            .collect();
+        let impulse_response: Vec<_> = result.into_iter().map(|s| s.scale(scale)).collect();
 
         Ok(Self {
             sample_rate,
