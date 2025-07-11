@@ -126,10 +126,7 @@ impl ImpulseReponses {
         }
     }
 
-    pub fn view<'a>(
-        &'a self,
-        measurements: &'a [data::measurement::State<data::Measurement>],
-    ) -> Element<'a, Message> {
+    pub fn view<'a>(&'a self, measurements: &[&'a data::Measurement]) -> Element<'a, Message> {
         let sidebar = {
             let header = {
                 column!(text("For Measurements"), horizontal_rule(1))
@@ -138,7 +135,7 @@ impl ImpulseReponses {
             };
 
             let measurements = measurements.iter().enumerate().map(|(id, entry)| {
-                let content = column![text(&entry.details().name).size(16),]
+                let content = column![text(&entry.details.name).size(16),]
                     .spacing(5)
                     .clip(true)
                     .spacing(3);

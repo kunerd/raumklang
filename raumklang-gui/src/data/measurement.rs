@@ -13,6 +13,53 @@ use std::{
     slice,
 };
 
+#[derive(Debug, Default)]
+pub struct List(Vec<State<Measurement>>);
+
+impl List {
+    pub(crate) fn from_iter(iter: impl IntoIterator<Item = State<Measurement>>) -> Self {
+        Self(iter.into_iter().collect())
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &State<Measurement>> {
+        self.0.iter()
+    }
+
+    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = &mut State<Measurement>> {
+        self.0.iter_mut()
+    }
+
+    pub(crate) fn get(&self, id: usize) -> Option<&State<Measurement>> {
+        self.0.get(id)
+    }
+
+    pub(crate) fn get_mut(&mut self, id: usize) -> Option<&mut State<Measurement>> {
+        self.0.get_mut(id)
+    }
+
+    pub(crate) fn loaded(&self) -> Vec<&Measurement> {
+        self.0
+            .iter()
+            .filter_map(|entry| match &entry {
+                State::NotLoaded(_) => None,
+                State::Loaded(measurement) => Some(measurement),
+            })
+            .collect()
+    }
+
+    pub(crate) fn push(&mut self, measurement: State<Measurement>) {
+        self.0.push(measurement);
+    }
+
+    pub(crate) fn remove(&mut self, id: usize) -> State<Measurement> {
+        self.0.remove(id)
+    }
+}
+
 #[derive(Debug)]
 pub enum State<Inner> {
     NotLoaded(Details),
@@ -54,18 +101,6 @@ impl State<Measurement> {
             State::Loaded(measurement) => &measurement.details,
         }
     }
-
-    pub fn impulse_response(&self) -> Option<&super::ImpulseResponse> {
-        match self {
-            State::NotLoaded(_details) => None,
-            State::Loaded(measurement) => match &measurement.analysis {
-                Analysis::None => None,
-                Analysis::ImpulseResponse(impulse_response::State::Computing) => None,
-                Analysis::ImpulseResponse(impulse_response::State::Computed(impulse_response))
-                | Analysis::FrequencyResponse(impulse_response, _) => Some(impulse_response),
-            },
-        }
-    }
 }
 
 impl Measurement {
@@ -79,6 +114,15 @@ impl Measurement {
 
     pub fn reset_analysis(&mut self) {
         self.analysis = Analysis::None
+    }
+
+    pub fn impulse_response(&self) -> Option<&super::ImpulseResponse> {
+        match &self.analysis {
+            Analysis::None => None,
+            Analysis::ImpulseResponse(impulse_response::State::Computing) => None,
+            Analysis::ImpulseResponse(impulse_response::State::Computed(impulse_response))
+            | Analysis::FrequencyResponse(impulse_response, _) => Some(impulse_response),
+        }
     }
 
     pub fn impulse_response_computation(

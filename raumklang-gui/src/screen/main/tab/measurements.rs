@@ -232,7 +232,7 @@ impl Measurements {
                         .on_press(Message::StartRecording(recording::Kind::Measurement))
                         .style(button::secondary),
                 )
-                .extend_entries(project.measurements().iter().enumerate().map(
+                .extend_entries(project.measurements.iter().enumerate().map(
                     |(id, measurement)| {
                         measurement_list_entry(id, measurement, self.selected.as_ref())
                     },
@@ -288,7 +288,7 @@ impl Measurements {
                             }
                         }),
                         Selected::Measurement(id) => project
-                            .measurements()
+                            .measurements
                             .get(*id)
                             .and_then(measurement::State::signal),
                     });

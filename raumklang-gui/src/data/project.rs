@@ -1,11 +1,14 @@
+mod analyses;
 pub mod file;
+
+pub use analyses::Analyses;
+pub use file::File;
 
 use super::{
     frequency_response, impulse_response,
     measurement::{self, Loopback},
-    Error, Measurement, Samples, Window,
+    Error, Samples, Window,
 };
-pub use file::File;
 
 use iced::futures::future::join_all;
 
@@ -15,13 +18,14 @@ use std::path::Path;
 pub struct Project {
     window: Window<Samples>,
     loopback: Option<measurement::State<Loopback>>,
-    measurements: Vec<measurement::State<Measurement>>,
+    pub measurements: measurement::List,
+    analyses: Analyses,
 }
 
 impl Project {
     pub fn new(
         loopback: Option<measurement::State<Loopback>>,
-        measurements: Vec<measurement::State<Measurement>>,
+        measurements: measurement::List,
     ) -> Self {
         let sample_rate = loopback
             .as_ref()
@@ -34,6 +38,7 @@ impl Project {
             window,
             loopback,
             measurements,
+            analyses: Analyses::default(),
         }
     }
 
@@ -46,7 +51,7 @@ impl Project {
             None => None,
         };
 
-        let measurements: Vec<_> = join_all(
+        let measurements = join_all(
             project_file
                 .measurements
                 .iter()
@@ -54,10 +59,12 @@ impl Project {
         )
         .await
         .into_iter()
-        .flatten()
-        .collect();
+        .flatten();
 
-        Ok(Self::new(loopback, measurements))
+        Ok(Self::new(
+            loopback,
+            measurement::List::from_iter(measurements),
+        ))
     }
 
     pub fn window(&self) -> &Window<Samples> {
@@ -66,14 +73,6 @@ impl Project {
 
     pub fn loopback(&self) -> Option<&measurement::State<Loopback>> {
         self.loopback.as_ref()
-    }
-
-    pub fn measurements(&self) -> &[measurement::State<Measurement>] {
-        &self.measurements
-    }
-
-    pub fn measurements_mut(&mut self) -> &mut [measurement::State<Measurement>] {
-        &mut self.measurements
     }
 
     pub fn has_no_measurements(&self) -> bool {
@@ -89,31 +88,13 @@ impl Project {
         self.window = Window::new(sample_rate).into();
         self.loopback = loopback;
 
-        self.reset_impulse_responses();
-    }
-
-    pub fn push_measurements(&mut self, measurement: measurement::State<Measurement>) {
-        self.measurements.push(measurement);
-    }
-
-    pub fn remove_measurement(&mut self, index: usize) -> measurement::State<Measurement> {
-        self.measurements.remove(index)
+        self.analyses.clear();
     }
 
     pub fn set_window(&mut self, window: Window<Samples>) {
         self.window = window;
 
-        self.measurements.iter_mut().for_each(|state| match state {
-            measurement::State::NotLoaded(_details) => {}
-            measurement::State::Loaded(measurement) => measurement.reset_frequency_responses(),
-        });
-    }
-
-    fn reset_impulse_responses(&mut self) {
-        self.measurements.iter_mut().for_each(|state| match state {
-            measurement::State::NotLoaded(_details) => {}
-            measurement::State::Loaded(measurement) => measurement.reset_analysis(),
-        });
+        self.analyses.reset_frequency_responses();
     }
 
     pub fn impulse_response_computation(
@@ -193,9 +174,6 @@ impl Project {
 
 impl Default for Project {
     fn default() -> Self {
-        let loopback = None;
-        let measurements = Vec::new();
-
-        Self::new(loopback, measurements)
+        Self::new(None, measurement::List::default())
     }
 }
