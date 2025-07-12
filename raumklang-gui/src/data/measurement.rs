@@ -66,6 +66,10 @@ impl List {
         self.loaded_mut().for_each(Measurement::reset_analysis);
     }
 
+    pub(crate) fn get_loaded(&self, id: usize) -> Option<&Measurement> {
+        self.get(id).and_then(State::loaded)
+    }
+
     pub(crate) fn get_loaded_mut(&mut self, id: usize) -> Option<&mut Measurement> {
         self.get_mut(id).and_then(State::loaded_mut)
     }

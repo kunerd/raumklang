@@ -291,17 +291,19 @@ impl Main {
                     .map(|(id, _)| id)
                     .collect();
 
-                let computations = self.project.all_frequency_response_computations().unwrap();
+                let tasks = ids
+                    .clone()
+                    .into_iter()
+                    .flat_map(|id| self.project.frequency_response_computation(id))
+                    .map(|computation| {
+                        Task::sip(
+                            computation.run(),
+                            |res| Message::ImpulseResponseComputed(Ok(res)),
+                            Message::FrequencyResponseComputed,
+                        )
+                    });
 
-                let tasks = computations.into_iter().map(|computation| {
-                    Task::sip(
-                        computation.run(),
-                        |res| Message::ImpulseResponseComputed(Ok(res)),
-                        Message::FrequencyResponseComputed,
-                    )
-                });
-
-                let tab = Tab::FrequencyResponses(tab::FrequencyResponses::new(ids.into_iter()));
+                let tab = Tab::FrequencyResponses(tab::FrequencyResponses::new(ids));
 
                 (tab, Task::batch(tasks))
             }

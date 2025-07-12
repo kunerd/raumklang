@@ -76,8 +76,8 @@ pub enum Smoothing {
 }
 
 impl FrequencyResponses {
-    pub fn new(iter: impl Iterator<Item = usize>) -> Self {
-        let entries = iter.map(Entry::new).collect();
+    pub fn new(iter: impl IntoIterator<Item = usize>) -> Self {
+        let entries = iter.into_iter().map(Entry::new).collect();
 
         Self {
             chart: ChartData::default(),

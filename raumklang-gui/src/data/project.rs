@@ -100,26 +100,23 @@ impl Project {
             return Err(Error::ImpulseResponseComputationFailed);
         };
 
-        let Some(measurement) = self.measurements.get_mut(id) else {
-            return Err(Error::ImpulseResponseComputationFailed);
-        };
-
         let measurement::State::Loaded(loopback) = &loopback else {
             return Err(Error::ImpulseResponseComputationFailed);
         };
 
-        let computation = if let measurement::State::Loaded(measurement) = measurement {
-            measurement.impulse_response_computation(id, loopback.as_ref().clone())
-        } else {
-            None
+        let Some(measurement) = self.measurements.get_loaded_mut(id) else {
+            return Err(Error::ImpulseResponseComputationFailed);
         };
+
+        let computation = measurement.impulse_response_computation(id, loopback.as_ref().clone());
 
         Ok(computation)
     }
 
-    pub fn all_frequency_response_computations(
+    pub fn frequency_response_computation(
         &mut self,
-    ) -> Result<Vec<frequency_response::Computation>, Error> {
+        id: usize,
+    ) -> Result<frequency_response::Computation, Error> {
         let Some(loopback) = self.loopback.as_ref() else {
             return Err(Error::ImpulseResponseComputationFailed);
         };
@@ -128,42 +125,22 @@ impl Project {
             return Err(Error::ImpulseResponseComputationFailed);
         };
 
-        Ok(self
-            .measurements
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(id, state)| {
-                if let measurement::State::Loaded(measurement) = state {
-                    Some((id, measurement))
-                } else {
-                    None
-                }
-            })
-            .flat_map(|(id, measurement)| match &measurement.analysis {
-                measurement::Analysis::None => {
-                    let computation = measurement
-                        .impulse_response_computation(id, loopback.as_ref().clone())
-                        .unwrap();
-                    Some(
-                        frequency_response::Computation::from_impulse_response_computation(
-                            computation,
-                            self.window.clone(),
-                        ),
-                    )
-                }
-                measurement::Analysis::ImpulseResponse(impulse_response::State::Computing) => None,
-                measurement::Analysis::ImpulseResponse(impulse_response::State::Computed(
-                    impulse_response,
-                ))
-                | measurement::Analysis::FrequencyResponse(impulse_response, _) => {
-                    Some(frequency_response::Computation::from_impulse_response(
-                        id,
-                        impulse_response.clone(),
-                        self.window.clone(),
-                    ))
-                }
-            })
-            .collect())
+        let Some(measurement) = self.measurements.get_loaded_mut(id) else {
+            return Err(Error::ImpulseResponseComputationFailed);
+        };
+
+        let window = self.window.clone();
+        let computation = if let Some(impulse_response) = measurement.impulse_response().cloned() {
+            frequency_response::Computation::from_impulse_response(id, impulse_response, window)
+        } else {
+            let computation = measurement
+                .impulse_response_computation(id, loopback.as_ref().clone())
+                .unwrap();
+
+            frequency_response::Computation::from_impulse_response_computation(computation, window)
+        };
+
+        Ok(computation)
     }
 }
 
