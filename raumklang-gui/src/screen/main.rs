@@ -147,12 +147,10 @@ impl Main {
                 }
             }
             Message::ImpulseResponseComputed(Ok((id, impulse_response))) => {
-                self.project.measurements.get_mut(id).map(|m| match m {
-                    data::measurement::State::NotLoaded(_) => {}
-                    data::measurement::State::Loaded(measurement) => {
-                        measurement.impulse_response_computed(impulse_response)
-                    }
-                });
+                self.project
+                    .measurements
+                    .get_loaded_mut(id)
+                    .map(|measurement| measurement.impulse_response_computed(impulse_response));
 
                 Task::none()
             }
@@ -194,13 +192,8 @@ impl Main {
                         let Some(fraction) = fraction else {
                             self.project
                                 .measurements
-                                .iter_mut()
-                                .filter_map(|m| match m {
-                                    data::measurement::State::NotLoaded(_details) => None,
-                                    data::measurement::State::Loaded(measurement) => {
-                                        measurement.frequency_response_mut()
-                                    }
-                                })
+                                .loaded_mut()
+                                .flat_map(|m| m.frequency_response_mut())
                                 .for_each(|fr| fr.smoothed = None);
 
                             return Task::none();
@@ -251,12 +244,10 @@ impl Main {
                 }
             }
             Message::FrequencyResponseComputed((id, frequency_response)) => {
-                self.project.measurements.get_mut(id).map(|m| match m {
-                    data::measurement::State::NotLoaded(_) => {}
-                    data::measurement::State::Loaded(measurement) => {
-                        measurement.frequency_response_computed(frequency_response)
-                    }
-                });
+                self.project
+                    .measurements
+                    .get_loaded_mut(id)
+                    .map(|measurement| measurement.frequency_response_computed(frequency_response));
 
                 if let Tab::FrequencyResponses(ref tab) = self.active_tab {
                     tab.clear_cache();
@@ -265,9 +256,7 @@ impl Main {
                 Task::none()
             }
             Message::FrequencyResponsesSmoothingComputed((id, smoothed)) => {
-                let Some(data::measurement::State::Loaded(measurement)) =
-                    self.project.measurements.get_mut(id)
-                else {
+                let Some(measurement) = self.project.measurements.get_loaded_mut(id) else {
                     return Task::none();
                 };
 
@@ -331,12 +320,12 @@ impl Main {
                     measurements.view(&self.project).map(Message::Measurements)
                 }
                 Tab::ImpulseResponses(irs) => {
-                    let loaded_measurements = self.project.measurements.loaded();
+                    let loaded_measurements: Vec<_> = self.project.measurements.loaded().collect();
                     irs.view(&loaded_measurements)
                         .map(Message::ImpulseResponses)
                 }
                 Tab::FrequencyResponses(frs) => {
-                    let loaded_measurements = self.project.measurements.loaded();
+                    let loaded_measurements: Vec<_> = self.project.measurements.loaded().collect();
                     frs.view(&loaded_measurements)
                         .map(Message::FrequencyResponses)
                 }

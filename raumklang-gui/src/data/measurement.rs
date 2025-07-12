@@ -41,14 +41,12 @@ impl List {
         self.0.get_mut(id)
     }
 
-    pub(crate) fn loaded(&self) -> Vec<&Measurement> {
-        self.0
-            .iter()
-            .filter_map(|entry| match &entry {
-                State::NotLoaded(_) => None,
-                State::Loaded(measurement) => Some(measurement),
-            })
-            .collect()
+    pub(crate) fn loaded(&self) -> impl Iterator<Item = &Measurement> {
+        self.0.iter().filter_map(State::loaded)
+    }
+
+    pub(crate) fn loaded_mut(&mut self) -> impl Iterator<Item = &mut Measurement> {
+        self.0.iter_mut().filter_map(State::loaded_mut)
     }
 
     pub(crate) fn push(&mut self, measurement: State<Measurement>) {
@@ -57,6 +55,19 @@ impl List {
 
     pub(crate) fn remove(&mut self, id: usize) -> State<Measurement> {
         self.0.remove(id)
+    }
+
+    pub(crate) fn clear_frequency_responses(&mut self) {
+        self.loaded_mut()
+            .for_each(Measurement::reset_frequency_response);
+    }
+
+    pub(crate) fn clear_analyses(&mut self) {
+        self.loaded_mut().for_each(Measurement::reset_analysis);
+    }
+
+    pub(crate) fn get_loaded_mut(&mut self, id: usize) -> Option<&mut Measurement> {
+        self.get_mut(id).and_then(State::loaded_mut)
     }
 }
 
@@ -86,6 +97,22 @@ pub struct Details {
     pub path: PathBuf,
 }
 
+impl<Inner> State<Inner> {
+    pub(crate) fn loaded(&self) -> Option<&Inner> {
+        match self {
+            State::NotLoaded(_) => None,
+            State::Loaded(measurement) => Some(measurement),
+        }
+    }
+
+    pub(crate) fn loaded_mut(&mut self) -> Option<&mut Inner> {
+        match self {
+            State::NotLoaded(_) => None,
+            State::Loaded(measurement) => Some(measurement),
+        }
+    }
+}
+
 impl State<Measurement> {
     pub fn signal(&self) -> Option<slice::Iter<f32>> {
         if let State::Loaded(measurement) = self {
@@ -110,10 +137,6 @@ impl Measurement {
             signal,
             analysis: Analysis::None,
         }
-    }
-
-    pub fn reset_analysis(&mut self) {
-        self.analysis = Analysis::None
     }
 
     pub fn impulse_response(&self) -> Option<&super::ImpulseResponse> {
@@ -197,7 +220,11 @@ impl Measurement {
         }
     }
 
-    pub fn reset_frequency_responses(&mut self) {
+    pub fn reset_analysis(&mut self) {
+        self.analysis = Analysis::None
+    }
+
+    pub fn reset_frequency_response(&mut self) {
         let analysis = std::mem::replace(&mut self.analysis, Analysis::None);
 
         self.analysis = match analysis {

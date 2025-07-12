@@ -1,7 +1,5 @@
-mod analyses;
 pub mod file;
 
-pub use analyses::Analyses;
 pub use file::File;
 
 use super::{
@@ -19,7 +17,6 @@ pub struct Project {
     window: Window<Samples>,
     loopback: Option<measurement::State<Loopback>>,
     pub measurements: measurement::List,
-    analyses: Analyses,
 }
 
 impl Project {
@@ -38,7 +35,6 @@ impl Project {
             window,
             loopback,
             measurements,
-            analyses: Analyses::default(),
         }
     }
 
@@ -88,13 +84,12 @@ impl Project {
         self.window = Window::new(sample_rate).into();
         self.loopback = loopback;
 
-        self.analyses.clear();
+        self.measurements.clear_analyses();
     }
 
     pub fn set_window(&mut self, window: Window<Samples>) {
         self.window = window;
-
-        self.analyses.reset_frequency_responses();
+        self.measurements.clear_frequency_responses();
     }
 
     pub fn impulse_response_computation(
