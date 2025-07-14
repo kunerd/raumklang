@@ -29,7 +29,6 @@ pub enum Message {
     FrequencyResponseComputed((measurement::Id, data::FrequencyResponse)),
     ImpulseResponseComputed(Result<(measurement::Id, data::ImpulseResponse), data::Error>),
     FrequencyResponseSmoothed((measurement::Id, Box<[Complex<f32>]>)),
-    // FrequencyResponsesSmoothingComputed((usize, Vec<f32>)),
 }
 
 pub enum Action {
@@ -336,6 +335,10 @@ impl FrequencyResponses {
                 _ => None,
             }),
         ])
+    }
+
+    pub(crate) fn remove(&mut self, id: measurement::Id) {
+        self.entries.remove(&id);
     }
 }
 

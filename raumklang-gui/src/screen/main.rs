@@ -110,6 +110,7 @@ impl Main {
 
                         if let Some(measurement) = measurement.loaded() {
                             self.impulse_responses.remove(measurement.id);
+                            self.frequency_responses.remove(measurement.id);
                         }
 
                         Task::none()
