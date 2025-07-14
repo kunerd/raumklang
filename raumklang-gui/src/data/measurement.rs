@@ -11,6 +11,7 @@ use raumklang_core::WavLoadError;
 use std::{
     path::{Path, PathBuf},
     slice,
+    sync::atomic::{self, AtomicUsize},
 };
 
 #[derive(Debug, Default)]
@@ -57,21 +58,21 @@ impl List {
         self.0.remove(id)
     }
 
-    pub(crate) fn clear_frequency_responses(&mut self) {
-        self.loaded_mut()
-            .for_each(Measurement::reset_frequency_response);
-    }
+    // pub(crate) fn clear_frequency_responses(&mut self) {
+    //     self.loaded_mut()
+    //         .for_each(Measurement::reset_frequency_response);
+    // }
 
-    pub(crate) fn clear_analyses(&mut self) {
-        self.loaded_mut().for_each(Measurement::reset_analysis);
-    }
+    // pub(crate) fn clear_analyses(&mut self) {
+    //     self.loaded_mut().for_each(Measurement::reset_analysis);
+    // }
 
     pub(crate) fn get_loaded(&self, id: usize) -> Option<&Measurement> {
-        self.get(id).and_then(State::loaded)
+        self.loaded().find(|m| m.id == id)
     }
 
     pub(crate) fn get_loaded_mut(&mut self, id: usize) -> Option<&mut Measurement> {
-        self.get_mut(id).and_then(State::loaded_mut)
+        self.loaded_mut().find(|m| m.id == id)
     }
 }
 
@@ -83,9 +84,10 @@ pub enum State<Inner> {
 
 #[derive(Debug)]
 pub struct Measurement {
+    pub id: usize,
     pub details: Details,
     signal: raumklang_core::Measurement,
-    pub analysis: Analysis,
+    // pub analysis: Analysis,
 }
 
 #[derive(Debug)]
@@ -136,109 +138,112 @@ impl State<Measurement> {
 
 impl Measurement {
     pub fn new(signal: raumklang_core::Measurement, details: Details) -> Self {
+        static ID: AtomicUsize = AtomicUsize::new(0);
+
         Self {
+            id: ID.fetch_add(1, atomic::Ordering::Relaxed),
             details,
             signal,
-            analysis: Analysis::None,
+            // analysis: Analysis::None,
         }
     }
 
-    pub fn impulse_response(&self) -> Option<&super::ImpulseResponse> {
-        match &self.analysis {
-            Analysis::None => None,
-            Analysis::ImpulseResponse(impulse_response::State::Computing) => None,
-            Analysis::ImpulseResponse(impulse_response::State::Computed(impulse_response))
-            | Analysis::FrequencyResponse(impulse_response, _) => Some(impulse_response),
-        }
-    }
+    // pub fn impulse_response(&self) -> Option<&super::ImpulseResponse> {
+    //     match &self.analysis {
+    //         Analysis::None => None,
+    //         Analysis::ImpulseResponse(impulse_response::State::Computing) => None,
+    //         Analysis::ImpulseResponse(impulse_response::State::Computed(impulse_response))
+    //         | Analysis::FrequencyResponse(impulse_response, _) => Some(impulse_response),
+    //     }
+    // }
 
-    pub fn impulse_response_computation(
-        &mut self,
-        id: usize,
-        loopback: raumklang_core::Loopback,
-    ) -> Option<impulse_response::Computation> {
-        match self.analysis {
-            Analysis::None => {
-                self.analysis = Analysis::ImpulseResponse(impulse_response::State::Computing);
+    // pub fn impulse_response_computation(
+    //     &mut self,
+    //     id: usize,
+    //     loopback: raumklang_core::Loopback,
+    // ) -> Option<impulse_response::Computation> {
+    //     match self.analysis {
+    //         Analysis::None => {
+    //             self.analysis = Analysis::ImpulseResponse(impulse_response::State::Computing);
 
-                Some(impulse_response::Computation::new(
-                    id,
-                    loopback,
-                    self.signal.clone(),
-                ))
-            }
-            Analysis::ImpulseResponse(_) => None,
-            Analysis::FrequencyResponse(_, _) => None,
-        }
-    }
+    //             Some(impulse_response::Computation::new(
+    //                 id,
+    //                 loopback,
+    //                 self.signal.clone(),
+    //             ))
+    //         }
+    //         Analysis::ImpulseResponse(_) => None,
+    //         Analysis::FrequencyResponse(_, _) => None,
+    //     }
+    // }
 
-    pub fn impulse_response_computed(&mut self, impulse_response: ImpulseResponse) {
-        self.analysis =
-            // Analysis::ImpulseResponse(impulse_response::State::Computed(impulse_response))
-        Analysis::FrequencyResponse(impulse_response, frequency_response::State::Computing)
-    }
+    // pub fn impulse_response_computed(&mut self, impulse_response: ImpulseResponse) {
+    //     self.analysis =
+    //         // Analysis::ImpulseResponse(impulse_response::State::Computed(impulse_response))
+    //     Analysis::FrequencyResponse(impulse_response, frequency_response::State::Computing)
+    // }
 
-    pub fn frequency_response(&self) -> Option<&FrequencyResponse> {
-        let state = self.frequency_response_state()?;
+    // pub fn frequency_response(&self) -> Option<&FrequencyResponse> {
+    //     let state = self.frequency_response_state()?;
 
-        match state {
-            frequency_response::State::Computing => None,
-            frequency_response::State::Computed(frequency_response) => Some(frequency_response),
-        }
-    }
+    //     match state {
+    //         frequency_response::State::Computing => None,
+    //         frequency_response::State::Computed(frequency_response) => Some(frequency_response),
+    //     }
+    // }
 
-    pub fn frequency_response_mut(&mut self) -> Option<&mut FrequencyResponse> {
-        let state = match &mut self.analysis {
-            Analysis::None => None,
-            Analysis::ImpulseResponse(_state) => None,
-            Analysis::FrequencyResponse(_impulse_response, state) => Some(state),
-        }?;
+    // pub fn frequency_response_mut(&mut self) -> Option<&mut FrequencyResponse> {
+    //     let state = match &mut self.analysis {
+    //         Analysis::None => None,
+    //         Analysis::ImpulseResponse(_state) => None,
+    //         Analysis::FrequencyResponse(_impulse_response, state) => Some(state),
+    //     }?;
 
-        match state {
-            frequency_response::State::Computing => None,
-            frequency_response::State::Computed(frequency_response) => Some(frequency_response),
-        }
-    }
+    //     match state {
+    //         frequency_response::State::Computing => None,
+    //         frequency_response::State::Computed(frequency_response) => Some(frequency_response),
+    //     }
+    // }
 
-    pub fn frequency_response_state(&self) -> Option<&frequency_response::State> {
-        match &self.analysis {
-            Analysis::None => None,
-            Analysis::ImpulseResponse(_state) => None,
-            Analysis::FrequencyResponse(_impulse_response, state) => Some(state),
-        }
-    }
+    // pub fn frequency_response_state(&self) -> Option<&frequency_response::State> {
+    //     match &self.analysis {
+    //         Analysis::None => None,
+    //         Analysis::ImpulseResponse(_state) => None,
+    //         Analysis::FrequencyResponse(_impulse_response, state) => Some(state),
+    //     }
+    // }
 
-    pub fn frequency_response_computed(&mut self, frequency_response: FrequencyResponse) {
-        let analysis = std::mem::replace(&mut self.analysis, Analysis::None);
+    // pub fn frequency_response_computed(&mut self, frequency_response: FrequencyResponse) {
+    //     let analysis = std::mem::replace(&mut self.analysis, Analysis::None);
 
-        self.analysis = match analysis {
-            Analysis::None => Analysis::None,
-            Analysis::ImpulseResponse(impulse_response::State::Computing) => {
-                Analysis::ImpulseResponse(impulse_response::State::Computing)
-            }
-            Analysis::ImpulseResponse(impulse_response::State::Computed(impulse_response))
-            | Analysis::FrequencyResponse(impulse_response, _) => Analysis::FrequencyResponse(
-                impulse_response,
-                frequency_response::State::Computed(frequency_response),
-            ),
-        }
-    }
+    //     self.analysis = match analysis {
+    //         Analysis::None => Analysis::None,
+    //         Analysis::ImpulseResponse(impulse_response::State::Computing) => {
+    //             Analysis::ImpulseResponse(impulse_response::State::Computing)
+    //         }
+    //         Analysis::ImpulseResponse(impulse_response::State::Computed(impulse_response))
+    //         | Analysis::FrequencyResponse(impulse_response, _) => Analysis::FrequencyResponse(
+    //             impulse_response,
+    //             frequency_response::State::Computed(frequency_response),
+    //         ),
+    //     }
+    // }
 
-    pub fn reset_analysis(&mut self) {
-        self.analysis = Analysis::None
-    }
+    // pub fn reset_analysis(&mut self) {
+    //     self.analysis = Analysis::None
+    // }
 
-    pub fn reset_frequency_response(&mut self) {
-        let analysis = std::mem::replace(&mut self.analysis, Analysis::None);
+    // pub fn reset_frequency_response(&mut self) {
+    //     let analysis = std::mem::replace(&mut self.analysis, Analysis::None);
 
-        self.analysis = match analysis {
-            Analysis::None => Analysis::None,
-            Analysis::ImpulseResponse(state) => Analysis::ImpulseResponse(state),
-            Analysis::FrequencyResponse(impulse_response, _) => {
-                Analysis::ImpulseResponse(impulse_response::State::Computed(impulse_response))
-            }
-        }
-    }
+    //     self.analysis = match analysis {
+    //         Analysis::None => Analysis::None,
+    //         Analysis::ImpulseResponse(state) => Analysis::ImpulseResponse(state),
+    //         Analysis::FrequencyResponse(impulse_response, _) => {
+    //             Analysis::ImpulseResponse(impulse_response::State::Computed(impulse_response))
+    //         }
+    //     }
+    // }
 }
 
 impl AsRef<raumklang_core::Measurement> for Measurement {

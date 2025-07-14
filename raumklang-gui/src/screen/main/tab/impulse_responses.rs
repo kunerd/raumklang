@@ -134,7 +134,8 @@ impl ImpulseReponses {
                     .spacing(5)
             };
 
-            let measurements = measurements.iter().enumerate().map(|(id, entry)| {
+            let measurements = measurements.iter().map(|entry| {
+                let id = entry.id;
                 let content = column![text(&entry.details.name).size(16),]
                     .spacing(5)
                     .clip(true)
@@ -161,148 +162,148 @@ impl ImpulseReponses {
         }
         .width(Length::FillPortion(1));
 
-        let content: Element<_> = {
-            if let Some(id) = self.selected {
-                let state = measurements.get(id).and_then(|s| s.impulse_response());
+        // let content: Element<_> = {
+        //     if let Some(id) = self.selected {
+        //         let state = measurements.get(id).and_then(|s| s.impulse_response());
 
-                match state {
-                    Some(impulse_response) => {
-                        let header = row![pick_list(
-                            &chart::AmplitudeUnit::ALL[..],
-                            Some(&self.chart_data.amplitude_unit),
-                            |unit| Message::Chart(ChartOperation::AmplitudeUnitChanged(unit))
-                        ),]
-                        .align_y(Alignment::Center)
-                        .spacing(10);
+        //         match state {
+        //             Some(impulse_response) => {
+        //                 let header = row![pick_list(
+        //                     &chart::AmplitudeUnit::ALL[..],
+        //                     Some(&self.chart_data.amplitude_unit),
+        //                     |unit| Message::Chart(ChartOperation::AmplitudeUnitChanged(unit))
+        //                 ),]
+        //                 .align_y(Alignment::Center)
+        //                 .spacing(10);
 
-                        let chart = {
-                            let x_scale_fn = match self.chart_data.time_unit {
-                                chart::TimeSeriesUnit::Samples => sample_scale,
-                                chart::TimeSeriesUnit::Time => time_scale,
-                            };
+        //                 let chart = {
+        //                     let x_scale_fn = match self.chart_data.time_unit {
+        //                         chart::TimeSeriesUnit::Samples => sample_scale,
+        //                         chart::TimeSeriesUnit::Time => time_scale,
+        //                     };
 
-                            let y_scale_fn: fn(f32, f32) -> f32 =
-                                match self.chart_data.amplitude_unit {
-                                    chart::AmplitudeUnit::PercentFullScale => percent_full_scale,
-                                    chart::AmplitudeUnit::DezibelFullScale => db_full_scale,
-                                };
+        //                     let y_scale_fn: fn(f32, f32) -> f32 =
+        //                         match self.chart_data.amplitude_unit {
+        //                             chart::AmplitudeUnit::PercentFullScale => percent_full_scale,
+        //                             chart::AmplitudeUnit::DezibelFullScale => db_full_scale,
+        //                         };
 
-                            let sample_rate = impulse_response.sample_rate as f32;
+        //                     let sample_rate = impulse_response.sample_rate as f32;
 
-                            let chart = Chart::new()
-                                .width(Length::Fill)
-                                .height(Length::Fill)
-                                .cache(&self.chart_data.cache)
-                                .x_range(
-                                    self.chart_data
-                                        .x_range
-                                        .as_ref()
-                                        .map(|r| {
-                                            x_scale_fn(*r.start(), sample_rate)
-                                                ..=x_scale_fn(*r.end(), sample_rate)
-                                        })
-                                        .unwrap_or_else(|| {
-                                            x_scale_fn(-sample_rate / 2.0, sample_rate)
-                                                ..=x_scale_fn(
-                                                    impulse_response.data.len() as f32,
-                                                    sample_rate,
-                                                )
-                                        }),
-                                )
-                                .x_labels(Labels::default().format(&|v| format!("{v:.2}")))
-                                .y_labels(Labels::default().format(&|v| format!("{v:.2}")))
-                                .push_series(
-                                    line_series(impulse_response.data.iter().enumerate().map(
-                                        move |(i, s)| {
-                                            (
-                                                x_scale_fn(i as f32, sample_rate),
-                                                y_scale_fn(*s, impulse_response.max),
-                                            )
-                                        },
-                                    ))
-                                    .color(iced::Color::from_rgb8(2, 125, 66)),
-                                )
-                                .on_scroll(|state| {
-                                    let pos = state.get_coords();
-                                    let delta = state.scroll_delta();
-                                    let x_range = state.x_range();
-                                    Message::Chart(ChartOperation::Scroll(pos, delta, x_range))
-                                });
+        //                     let chart = Chart::new()
+        //                         .width(Length::Fill)
+        //                         .height(Length::Fill)
+        //                         .cache(&self.chart_data.cache)
+        //                         .x_range(
+        //                             self.chart_data
+        //                                 .x_range
+        //                                 .as_ref()
+        //                                 .map(|r| {
+        //                                     x_scale_fn(*r.start(), sample_rate)
+        //                                         ..=x_scale_fn(*r.end(), sample_rate)
+        //                                 })
+        //                                 .unwrap_or_else(|| {
+        //                                     x_scale_fn(-sample_rate / 2.0, sample_rate)
+        //                                         ..=x_scale_fn(
+        //                                             impulse_response.data.len() as f32,
+        //                                             sample_rate,
+        //                                         )
+        //                                 }),
+        //                         )
+        //                         .x_labels(Labels::default().format(&|v| format!("{v:.2}")))
+        //                         .y_labels(Labels::default().format(&|v| format!("{v:.2}")))
+        //                         .push_series(
+        //                             line_series(impulse_response.data.iter().enumerate().map(
+        //                                 move |(i, s)| {
+        //                                     (
+        //                                         x_scale_fn(i as f32, sample_rate),
+        //                                         y_scale_fn(*s, impulse_response.max),
+        //                                     )
+        //                                 },
+        //                             ))
+        //                             .color(iced::Color::from_rgb8(2, 125, 66)),
+        //                         )
+        //                         .on_scroll(|state| {
+        //                             let pos = state.get_coords();
+        //                             let delta = state.scroll_delta();
+        //                             let x_range = state.x_range();
+        //                             Message::Chart(ChartOperation::Scroll(pos, delta, x_range))
+        //                         });
 
-                            let window_curve = self.window_settings.window.curve();
-                            let handles: window::Handles = Into::into(&self.window_settings.window);
-                            chart
-                                .push_series(
-                                    line_series(window_curve.map(move |(i, s)| {
-                                        (x_scale_fn(i, sample_rate), y_scale_fn(s, 1.0))
-                                    }))
-                                    .color(iced::Color::from_rgb8(255, 0, 0)),
-                                )
-                                .push_series(
-                                    point_series(handles.into_iter().map(move |handle| {
-                                        (
-                                            x_scale_fn(handle.x(), sample_rate),
-                                            y_scale_fn(handle.y().into(), 1.0),
-                                        )
-                                    }))
-                                    .with_id(SeriesId::Handles)
-                                    .style_for_each(|index, _handle| {
-                                        if self.window_settings.hovered.is_some_and(|i| i == index)
-                                        {
-                                            point::Style {
-                                                color: Some(iced::Color::from_rgb8(220, 250, 250)),
-                                                radius: 10.0,
-                                                ..Default::default()
-                                            }
-                                        } else {
-                                            point::Style::default()
-                                        }
-                                    })
-                                    .color(iced::Color::from_rgb8(255, 0, 0)),
-                                )
-                                .on_press(|state| {
-                                    let id = state.items().and_then(|l| l.first().map(|i| i.1));
-                                    Message::Window(WindowOperation::MouseDown(
-                                        id,
-                                        state.get_offset(),
-                                    ))
-                                })
-                                .on_move(|state| {
-                                    let id = state.items().and_then(|l| l.first().map(|i| i.1));
-                                    Message::Window(WindowOperation::OnMove(id, state.get_offset()))
-                                })
-                                .on_release(|state| {
-                                    Message::Window(WindowOperation::MouseUp(state.get_offset()))
-                                })
-                        };
+        //                     let window_curve = self.window_settings.window.curve();
+        //                     let handles: window::Handles = Into::into(&self.window_settings.window);
+        //                     chart
+        //                         .push_series(
+        //                             line_series(window_curve.map(move |(i, s)| {
+        //                                 (x_scale_fn(i, sample_rate), y_scale_fn(s, 1.0))
+        //                             }))
+        //                             .color(iced::Color::from_rgb8(255, 0, 0)),
+        //                         )
+        //                         .push_series(
+        //                             point_series(handles.into_iter().map(move |handle| {
+        //                                 (
+        //                                     x_scale_fn(handle.x(), sample_rate),
+        //                                     y_scale_fn(handle.y().into(), 1.0),
+        //                                 )
+        //                             }))
+        //                             .with_id(SeriesId::Handles)
+        //                             .style_for_each(|index, _handle| {
+        //                                 if self.window_settings.hovered.is_some_and(|i| i == index)
+        //                                 {
+        //                                     point::Style {
+        //                                         color: Some(iced::Color::from_rgb8(220, 250, 250)),
+        //                                         radius: 10.0,
+        //                                         ..Default::default()
+        //                                     }
+        //                                 } else {
+        //                                     point::Style::default()
+        //                                 }
+        //                             })
+        //                             .color(iced::Color::from_rgb8(255, 0, 0)),
+        //                         )
+        //                         .on_press(|state| {
+        //                             let id = state.items().and_then(|l| l.first().map(|i| i.1));
+        //                             Message::Window(WindowOperation::MouseDown(
+        //                                 id,
+        //                                 state.get_offset(),
+        //                             ))
+        //                         })
+        //                         .on_move(|state| {
+        //                             let id = state.items().and_then(|l| l.first().map(|i| i.1));
+        //                             Message::Window(WindowOperation::OnMove(id, state.get_offset()))
+        //                         })
+        //                         .on_release(|state| {
+        //                             Message::Window(WindowOperation::MouseUp(state.get_offset()))
+        //                         })
+        //                 };
 
-                        let footer = {
-                            row![
-                                horizontal_space(),
-                                pick_list(
-                                    &chart::TimeSeriesUnit::ALL[..],
-                                    Some(&self.chart_data.time_unit),
-                                    |unit| {
-                                        Message::Chart(ChartOperation::TimeUnitChanged(unit))
-                                    }
-                                ),
-                            ]
-                            .align_y(Alignment::Center)
-                        };
+        //                 let footer = {
+        //                     row![
+        //                         horizontal_space(),
+        //                         pick_list(
+        //                             &chart::TimeSeriesUnit::ALL[..],
+        //                             Some(&self.chart_data.time_unit),
+        //                             |unit| {
+        //                                 Message::Chart(ChartOperation::TimeUnitChanged(unit))
+        //                             }
+        //                         ),
+        //                     ]
+        //                     .align_y(Alignment::Center)
+        //                 };
 
-                        container(column![header, chart, footer]).into()
-                    }
-                    // TODO: add spinner
-                    None => text("Impulse response not computed, yet.").into(),
-                }
-            } else {
-                text("Please select an entry to view its data.").into()
-            }
-        };
+        //                 container(column![header, chart, footer]).into()
+        //             }
+        //             // TODO: add spinner
+        //             None => text("Impulse response not computed, yet.").into(),
+        //         }
+        //     } else {
+        //         text("Please select an entry to view its data.").into()
+        //     }
+        // };
 
         row![
             container(sidebar).width(Length::FillPortion(1)),
-            container(content).center(Length::FillPortion(4))
+            // container(content).center(Length::FillPortion(4))
         ]
         .spacing(10)
         .into()

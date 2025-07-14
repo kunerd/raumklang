@@ -84,64 +84,64 @@ impl Project {
         self.window = Window::new(sample_rate).into();
         self.loopback = loopback;
 
-        self.measurements.clear_analyses();
+        // self.measurements.clear_analyses();
     }
 
     pub fn set_window(&mut self, window: Window<Samples>) {
         self.window = window;
-        self.measurements.clear_frequency_responses();
+        // self.measurements.clear_frequency_responses();
     }
 
-    pub fn impulse_response_computation(
-        &mut self,
-        id: usize,
-    ) -> Result<Option<impulse_response::Computation>, Error> {
-        let Some(loopback) = self.loopback.as_ref() else {
-            return Err(Error::ImpulseResponseComputationFailed);
-        };
+    // pub fn impulse_response_computation(
+    //     &mut self,
+    //     id: usize,
+    // ) -> Result<Option<impulse_response::Computation>, Error> {
+    //     let Some(loopback) = self.loopback.as_ref() else {
+    //         return Err(Error::ImpulseResponseComputationFailed);
+    //     };
 
-        let measurement::State::Loaded(loopback) = &loopback else {
-            return Err(Error::ImpulseResponseComputationFailed);
-        };
+    //     let measurement::State::Loaded(loopback) = &loopback else {
+    //         return Err(Error::ImpulseResponseComputationFailed);
+    //     };
 
-        let Some(measurement) = self.measurements.get_loaded_mut(id) else {
-            return Err(Error::ImpulseResponseComputationFailed);
-        };
+    //     let Some(measurement) = self.measurements.get_loaded_mut(id) else {
+    //         return Err(Error::ImpulseResponseComputationFailed);
+    //     };
 
-        let computation = measurement.impulse_response_computation(id, loopback.as_ref().clone());
+    //     let computation = measurement.impulse_response_computation(id, loopback.as_ref().clone());
 
-        Ok(computation)
-    }
+    //     Ok(computation)
+    // }
 
-    pub fn frequency_response_computation(
-        &mut self,
-        id: usize,
-    ) -> Result<frequency_response::Computation, Error> {
-        let Some(loopback) = self.loopback.as_ref() else {
-            return Err(Error::ImpulseResponseComputationFailed);
-        };
+    // pub fn frequency_response_computation(
+    //     &mut self,
+    //     id: usize,
+    // ) -> Result<frequency_response::Computation, Error> {
+    //     let Some(loopback) = self.loopback.as_ref() else {
+    //         return Err(Error::ImpulseResponseComputationFailed);
+    //     };
 
-        let measurement::State::Loaded(loopback) = &loopback else {
-            return Err(Error::ImpulseResponseComputationFailed);
-        };
+    //     let measurement::State::Loaded(loopback) = &loopback else {
+    //         return Err(Error::ImpulseResponseComputationFailed);
+    //     };
 
-        let Some(measurement) = self.measurements.get_loaded_mut(id) else {
-            return Err(Error::ImpulseResponseComputationFailed);
-        };
+    //     let Some(measurement) = self.measurements.get_loaded_mut(id) else {
+    //         return Err(Error::ImpulseResponseComputationFailed);
+    //     };
 
-        let window = self.window.clone();
-        let computation = if let Some(impulse_response) = measurement.impulse_response().cloned() {
-            frequency_response::Computation::from_impulse_response(id, impulse_response, window)
-        } else {
-            let computation = measurement
-                .impulse_response_computation(id, loopback.as_ref().clone())
-                .unwrap();
+    //     let window = self.window.clone();
+    //     let computation = if let Some(impulse_response) = measurement.impulse_response().cloned() {
+    //         frequency_response::Computation::from_impulse_response(id, impulse_response, window)
+    //     } else {
+    //         let computation = measurement
+    //             .impulse_response_computation(id, loopback.as_ref().clone())
+    //             .unwrap();
 
-            frequency_response::Computation::from_impulse_response_computation(computation, window)
-        };
+    //         frequency_response::Computation::from_impulse_response_computation(computation, window)
+    //     };
 
-        Ok(computation)
-    }
+    //     Ok(computation)
+    // }
 }
 
 impl Default for Project {

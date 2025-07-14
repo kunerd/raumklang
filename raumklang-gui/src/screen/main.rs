@@ -3,7 +3,7 @@ pub mod tab;
 pub use tab::Tab;
 
 use crate::data::{self};
-use tab::{frequency_responses, impulse_responses, measurements};
+use tab::{impulse_responses, measurements};
 
 use iced::{
     widget::{button, center, column, container, horizontal_space, opaque, row, stack, text},
@@ -44,11 +44,11 @@ pub enum Message {
     TabSelected(TabId),
     Measurements(measurements::Message),
     ImpulseResponses(impulse_responses::Message),
-    FrequencyResponses(frequency_responses::Message),
+    // FrequencyResponses(frequency_responses::Message),
     ImpulseResponseComputed(Result<(usize, data::ImpulseResponse), data::Error>),
     Modal(ModalAction),
-    FrequencyResponseComputed((usize, data::FrequencyResponse)),
-    FrequencyResponsesSmoothingComputed((usize, Vec<f32>)),
+    // FrequencyResponseComputed((usize, data::FrequencyResponse)),
+    // FrequencyResponsesSmoothingComputed((usize, Vec<f32>)),
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TabId {
@@ -123,16 +123,17 @@ impl Main {
                 match action {
                     impulse_responses::Action::None => Task::none(),
                     impulse_responses::Action::ComputeImpulseResponse(id) => {
-                        let computation = match self.project.impulse_response_computation(id) {
-                            Ok(None) => return Task::none(),
-                            Ok(Some(computation)) => computation,
-                            Err(err) => {
-                                dbg!(err);
-                                return Task::none();
-                            }
-                        };
+                        // let computation = match self.project.impulse_response_computation(id) {
+                        //     Ok(None) => return Task::none(),
+                        //     Ok(Some(computation)) => computation,
+                        //     Err(err) => {
+                        //         dbg!(err);
+                        //         return Task::none();
+                        //     }
+                        // };
 
-                        Task::perform(computation.run(), Message::ImpulseResponseComputed)
+                        // Task::perform(computation.run(), Message::ImpulseResponseComputed)
+                        todo!()
                     }
 
                     impulse_responses::Action::WindowModified(modified) => {
@@ -147,12 +148,13 @@ impl Main {
                 }
             }
             Message::ImpulseResponseComputed(Ok((id, impulse_response))) => {
-                self.project
-                    .measurements
-                    .get_loaded_mut(id)
-                    .map(|measurement| measurement.impulse_response_computed(impulse_response));
+                // self.project
+                //     .measurements
+                //     .get_loaded_mut(id)
+                //     .map(|measurement| measurement.impulse_response_computed(impulse_response));
 
-                Task::none()
+                // Task::none()
+                todo!()
             }
 
             Message::ImpulseResponseComputed(Err(err)) => {
@@ -181,97 +183,97 @@ impl Main {
                     Task::none()
                 }
             },
-            Message::FrequencyResponses(message) => {
-                let Tab::FrequencyResponses(tab) = &mut self.active_tab else {
-                    return Task::none();
-                };
+            // Message::FrequencyResponses(message) => {
+            //     let Tab::FrequencyResponses(tab) = &mut self.active_tab else {
+            //         return Task::none();
+            //     };
 
-                match tab.update(message) {
-                    frequency_responses::Action::None => Task::none(),
-                    frequency_responses::Action::Smooth(fraction) => {
-                        let Some(fraction) = fraction else {
-                            self.project
-                                .measurements
-                                .loaded_mut()
-                                .flat_map(|m| m.frequency_response_mut())
-                                .for_each(|fr| fr.smoothed = None);
+            //     match tab.update(message) {
+            //         frequency_responses::Action::None => Task::none(),
+            //         frequency_responses::Action::Smooth(fraction) => {
+            //             let Some(fraction) = fraction else {
+            //                 self.project
+            //                     .measurements
+            //                     .loaded_mut()
+            //                     .flat_map(|m| m.frequency_response_mut())
+            //                     .for_each(|fr| fr.smoothed = None);
 
-                            return Task::none();
-                        };
+            //                 return Task::none();
+            //             };
 
-                        let frequency_responses = self
-                            .project
-                            .measurements
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(id, m)| match &m {
-                                data::measurement::State::NotLoaded(_details) => None,
-                                data::measurement::State::Loaded(measurement) => {
-                                    measurement.frequency_response().as_ref().and_then(|fr| {
-                                        let data: Vec<f32> = fr
-                                            .origin
-                                            .data
-                                            .iter()
-                                            .copied()
-                                            .map(|s| s.re.abs())
-                                            .collect();
+            //             let frequency_responses = self
+            //                 .project
+            //                 .measurements
+            //                 .iter()
+            //                 .enumerate()
+            //                 .filter_map(|(id, m)| match &m {
+            //                     data::measurement::State::NotLoaded(_details) => None,
+            //                     data::measurement::State::Loaded(measurement) => {
+            //                         measurement.frequency_response().as_ref().and_then(|fr| {
+            //                             let data: Vec<f32> = fr
+            //                                 .origin
+            //                                 .data
+            //                                 .iter()
+            //                                 .copied()
+            //                                 .map(|s| s.re.abs())
+            //                                 .collect();
 
-                                        Some((id, data))
-                                    })
-                                }
-                            });
+            //                             Some((id, data))
+            //                         })
+            //                     }
+            //                 });
 
-                        let tasks = frequency_responses.map(|(id, data)| {
-                            Task::perform(
-                                async move {
-                                    tokio::task::spawn_blocking(move || {
-                                        (
-                                            id,
-                                            data::frequency_response::smooth_fractional_octave(
-                                                &data, fraction,
-                                            ),
-                                        )
-                                    })
-                                    .await
-                                    .unwrap()
-                                },
-                                Message::FrequencyResponsesSmoothingComputed,
-                            )
-                        });
+            //             let tasks = frequency_responses.map(|(id, data)| {
+            //                 Task::perform(
+            //                     async move {
+            //                         tokio::task::spawn_blocking(move || {
+            //                             (
+            //                                 id,
+            //                                 data::frequency_response::smooth_fractional_octave(
+            //                                     &data, fraction,
+            //                                 ),
+            //                             )
+            //                         })
+            //                         .await
+            //                         .unwrap()
+            //                     },
+            //                     Message::FrequencyResponsesSmoothingComputed,
+            //                 )
+            //             });
 
-                        Task::batch(tasks)
-                    }
-                }
-            }
-            Message::FrequencyResponseComputed((id, frequency_response)) => {
-                self.project
-                    .measurements
-                    .get_loaded_mut(id)
-                    .map(|measurement| measurement.frequency_response_computed(frequency_response));
+            //             Task::batch(tasks)
+            //         }
+            //     }
+            // }
+            // Message::FrequencyResponseComputed((id, frequency_response)) => {
+            //     self.project
+            //         .measurements
+            //         .get_loaded_mut(id)
+            //         .map(|measurement| measurement.frequency_response_computed(frequency_response));
 
-                if let Tab::FrequencyResponses(ref tab) = self.active_tab {
-                    tab.clear_cache();
-                }
+            //     if let Tab::FrequencyResponses(ref tab) = self.active_tab {
+            //         tab.clear_cache();
+            //     }
 
-                Task::none()
-            }
-            Message::FrequencyResponsesSmoothingComputed((id, smoothed)) => {
-                let Some(measurement) = self.project.measurements.get_loaded_mut(id) else {
-                    return Task::none();
-                };
+            //     Task::none()
+            // }
+            // Message::FrequencyResponsesSmoothingComputed((id, smoothed)) => {
+            //     let Some(measurement) = self.project.measurements.get_loaded_mut(id) else {
+            //         return Task::none();
+            //     };
 
-                let Some(frequency_response) = measurement.frequency_response_mut() else {
-                    return Task::none();
-                };
+            //     let Some(frequency_response) = measurement.frequency_response_mut() else {
+            //         return Task::none();
+            //     };
 
-                frequency_response.smoothed = Some(smoothed.iter().map(Complex::from).collect());
+            //     frequency_response.smoothed = Some(smoothed.iter().map(Complex::from).collect());
 
-                if let Tab::FrequencyResponses(ref tab) = self.active_tab {
-                    tab.clear_cache();
-                }
+            //     if let Tab::FrequencyResponses(ref tab) = self.active_tab {
+            //         tab.clear_cache();
+            //     }
 
-                Task::none()
-            }
+            //     Task::none()
+            // }
         }
     }
 
@@ -283,29 +285,31 @@ impl Main {
                 Task::none(),
             ),
             TabId::FrequencyResponses => {
-                let ids: Vec<_> = self
-                    .project
-                    .measurements
-                    .iter()
-                    .enumerate()
-                    .map(|(id, _)| id)
-                    .collect();
+                // let ids: Vec<_> = self
+                //     .project
+                //     .measurements
+                //     .iter()
+                //     .enumerate()
+                //     .map(|(id, _)| id)
+                //     .collect();
 
-                let tasks = ids
-                    .clone()
-                    .into_iter()
-                    .flat_map(|id| self.project.frequency_response_computation(id))
-                    .map(|computation| {
-                        Task::sip(
-                            computation.run(),
-                            |res| Message::ImpulseResponseComputed(Ok(res)),
-                            Message::FrequencyResponseComputed,
-                        )
-                    });
+                // let tasks = ids
+                //     .clone()
+                //     .into_iter()
+                //     .flat_map(|id| self.project.frequency_response_computation(id))
+                //     .map(|computation| {
+                //         Task::sip(
+                //             computation.run(),
+                //             |res| Message::ImpulseResponseComputed(Ok(res)),
+                //             Message::FrequencyResponseComputed,
+                //         )
+                //     });
 
-                let tab = Tab::FrequencyResponses(tab::FrequencyResponses::new(ids));
+                // let tab = Tab::FrequencyResponses(tab::FrequencyResponses::new(ids));
 
-                (tab, Task::batch(tasks))
+                // (tab, Task::batch(tasks))
+                // Task::none()
+                todo!()
             }
         };
 
@@ -325,12 +329,11 @@ impl Main {
                     let loaded_measurements: Vec<_> = self.project.measurements.loaded().collect();
                     irs.view(&loaded_measurements)
                         .map(Message::ImpulseResponses)
-                }
-                Tab::FrequencyResponses(frs) => {
-                    let loaded_measurements: Vec<_> = self.project.measurements.loaded().collect();
-                    frs.view(&loaded_measurements)
-                        .map(Message::FrequencyResponses)
-                }
+                } // Tab::FrequencyResponses(frs) => {
+                  //     let loaded_measurements: Vec<_> = self.project.measurements.loaded().collect();
+                  //     frs.view(&loaded_measurements)
+                  //         .map(Message::FrequencyResponses)
+                  // }
             };
 
             container(column![header, content].spacing(10))
@@ -408,7 +411,7 @@ impl Main {
             Tab::ImpulseResponses(impulse_reponses) => impulse_reponses
                 .subscription()
                 .map(Message::ImpulseResponses),
-            Tab::FrequencyResponses(tab) => tab.subscription().map(Message::FrequencyResponses),
+            // Tab::FrequencyResponses(tab) => tab.subscription().map(Message::FrequencyResponses),
         }
     }
 }
@@ -453,7 +456,7 @@ impl From<&Tab> for TabId {
         match tab {
             Tab::Measurements(_measurements) => TabId::Measurements,
             Tab::ImpulseResponses(_impulse_reponses) => TabId::ImpulseResponses,
-            Tab::FrequencyResponses(_frequency_responses) => TabId::FrequencyResponses,
+            // Tab::FrequencyResponses(_frequency_responses) => TabId::FrequencyResponses,
         }
     }
 }
