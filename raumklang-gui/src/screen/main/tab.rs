@@ -8,7 +8,7 @@ pub use measurements::Measurements;
 
 pub enum Tab {
     Measurements(Measurements),
-    ImpulseResponses(ImpulseReponses),
+    ImpulseResponses,
     // FrequencyResponses(FrequencyResponses),
 }
 

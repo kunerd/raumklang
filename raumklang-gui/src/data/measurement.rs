@@ -4,7 +4,7 @@ pub mod loopback;
 pub use config::Config;
 pub use loopback::Loopback;
 
-use super::{frequency_response, impulse_response, FrequencyResponse, ImpulseResponse};
+use super::{frequency_response, impulse_response};
 
 use raumklang_core::WavLoadError;
 
@@ -67,11 +67,11 @@ impl List {
     //     self.loaded_mut().for_each(Measurement::reset_analysis);
     // }
 
-    pub(crate) fn get_loaded(&self, id: usize) -> Option<&Measurement> {
+    pub(crate) fn get_loaded(&self, id: Id) -> Option<&Measurement> {
         self.loaded().find(|m| m.id == id)
     }
 
-    pub(crate) fn get_loaded_mut(&mut self, id: usize) -> Option<&mut Measurement> {
+    pub(crate) fn get_loaded_mut(&mut self, id: Id) -> Option<&mut Measurement> {
         self.loaded_mut().find(|m| m.id == id)
     }
 }
@@ -84,18 +84,21 @@ pub enum State<Inner> {
 
 #[derive(Debug)]
 pub struct Measurement {
-    pub id: usize,
+    pub id: Id,
     pub details: Details,
     signal: raumklang_core::Measurement,
     // pub analysis: Analysis,
 }
 
-#[derive(Debug)]
-pub enum Analysis {
-    None,
-    ImpulseResponse(impulse_response::State),
-    FrequencyResponse(ImpulseResponse, frequency_response::State),
-}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Id(usize);
+
+// #[derive(Debug)]
+// pub enum Analysis {
+//     None,
+//     ImpulseResponse(impulse_response::State),
+//     FrequencyResponse(ImpulseResponse, frequency_response::State),
+// }
 
 #[derive(Debug, Clone)]
 pub struct Details {
@@ -141,7 +144,7 @@ impl Measurement {
         static ID: AtomicUsize = AtomicUsize::new(0);
 
         Self {
-            id: ID.fetch_add(1, atomic::Ordering::Relaxed),
+            id: Id(ID.fetch_add(1, atomic::Ordering::Relaxed)),
             details,
             signal,
             // analysis: Analysis::None,

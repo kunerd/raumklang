@@ -1,4 +1,4 @@
-use super::Error;
+use super::{measurement, Error};
 
 #[derive(Debug, Default, Clone)]
 pub enum State {
@@ -16,7 +16,7 @@ pub struct ImpulseResponse {
 }
 
 pub struct Computation {
-    id: usize,
+    measurement_id: measurement::Id,
     loopback: raumklang_core::Loopback,
     measurement: raumklang_core::Measurement,
 }
@@ -42,19 +42,19 @@ impl From<raumklang_core::ImpulseResponse> for ImpulseResponse {
 
 impl Computation {
     pub fn new(
-        measurement_id: usize,
+        measurement_id: measurement::Id,
         loopback: raumklang_core::Loopback,
         measurement: raumklang_core::Measurement,
     ) -> Self {
         Computation {
-            id: measurement_id,
+            measurement_id,
             loopback,
             measurement,
         }
     }
 
-    pub async fn run(self) -> Result<(usize, super::ImpulseResponse), Error> {
-        let id = self.id;
+    pub async fn run(self) -> Result<(measurement::Id, super::ImpulseResponse), Error> {
+        let id = self.measurement_id;
 
         let impulse_response = tokio::task::spawn_blocking(move || {
             raumklang_core::ImpulseResponse::from_signals(&self.loopback, &self.measurement)

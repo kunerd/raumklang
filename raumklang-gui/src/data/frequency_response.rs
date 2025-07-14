@@ -59,30 +59,30 @@ impl Computation {
         }
     }
 
-    pub fn run(self) -> impl Sipper<(usize, FrequencyResponse), (usize, ImpulseResponse)> {
-        iced::task::sipper(async move |mut progress| {
-            let (id, impulse_response) = match self.from {
-                CompputationType::ImpulseResponse(id, impulse_response) => (id, impulse_response),
-                CompputationType::Computation(computation) => computation.run().await.unwrap(),
-            };
+    // pub fn run(self) -> impl Sipper<(usize, FrequencyResponse), (usize, ImpulseResponse)> {
+    // iced::task::sipper(async move |mut progress| {
+    //     let (id, impulse_response) = match self.from {
+    //         CompputationType::ImpulseResponse(id, impulse_response) => (id, impulse_response),
+    //         CompputationType::Computation(computation) => computation.run().await.unwrap(),
+    //     };
 
-            progress.send((id, impulse_response.clone())).await;
+    //     progress.send((id, impulse_response.clone())).await;
 
-            let mut impulse_response = impulse_response.origin;
-            let offset = self.window.offset().into();
+    //     let mut impulse_response = impulse_response.origin;
+    //     let offset = self.window.offset().into();
 
-            impulse_response.data.rotate_right(offset);
+    //     impulse_response.data.rotate_right(offset);
 
-            let window: Vec<_> = self.window.curve().map(|(_x, y)| y).collect();
-            let frequency_response = tokio::task::spawn_blocking(move || {
-                raumklang_core::FrequencyResponse::new(impulse_response, &window)
-            })
-            .await
-            .unwrap();
+    //     let window: Vec<_> = self.window.curve().map(|(_x, y)| y).collect();
+    //     let frequency_response = tokio::task::spawn_blocking(move || {
+    //         raumklang_core::FrequencyResponse::new(impulse_response, &window)
+    //     })
+    //     .await
+    //     .unwrap();
 
-            (id, FrequencyResponse::new(frequency_response))
-        })
-    }
+    //     (id, FrequencyResponse::new(frequency_response))
+    // })
+    // }
 }
 
 //   credits to https://github.com/pyfar/pyfar

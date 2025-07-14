@@ -2,7 +2,7 @@ pub mod tab;
 
 pub use tab::Tab;
 
-use crate::data::{self};
+use crate::data::{self, measurement};
 use tab::{impulse_responses, measurements};
 
 use iced::{
@@ -13,10 +13,10 @@ use rustfft::num_complex::Complex;
 
 use std::fmt::Display;
 
-#[derive(Default)]
 pub struct Main {
     active_tab: Tab,
     project: data::Project,
+    impulse_responses: tab::ImpulseReponses,
     pending_window: Option<data::Window<data::Samples>>,
     modal: Modal,
 }
@@ -45,11 +45,12 @@ pub enum Message {
     Measurements(measurements::Message),
     ImpulseResponses(impulse_responses::Message),
     // FrequencyResponses(frequency_responses::Message),
-    ImpulseResponseComputed(Result<(usize, data::ImpulseResponse), data::Error>),
+    ImpulseResponseComputed(Result<(measurement::Id, data::ImpulseResponse), data::Error>),
     Modal(ModalAction),
     // FrequencyResponseComputed((usize, data::FrequencyResponse)),
     // FrequencyResponsesSmoothingComputed((usize, Vec<f32>)),
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TabId {
     Measurements,
@@ -61,6 +62,7 @@ impl Main {
     pub fn new(project: data::Project) -> Self {
         Self {
             active_tab: Tab::default(),
+            impulse_responses: tab::ImpulseReponses::new(project.window()),
             pending_window: None,
             modal: Modal::None,
             project,
@@ -114,26 +116,20 @@ impl Main {
                 }
             }
             Message::ImpulseResponses(message) => {
-                let Tab::ImpulseResponses(impulse_responses) = &mut self.active_tab else {
-                    return Task::none();
-                };
-
-                let action = impulse_responses.update(message);
+                let action = self.impulse_responses.update(message);
 
                 match action {
                     impulse_responses::Action::None => Task::none(),
                     impulse_responses::Action::ComputeImpulseResponse(id) => {
-                        // let computation = match self.project.impulse_response_computation(id) {
-                        //     Ok(None) => return Task::none(),
-                        //     Ok(Some(computation)) => computation,
-                        //     Err(err) => {
-                        //         dbg!(err);
-                        //         return Task::none();
-                        //     }
-                        // };
+                        let computation = match self.project.impulse_response_computation(id) {
+                            Ok(computation) => computation,
+                            Err(err) => {
+                                dbg!(err);
+                                return Task::none();
+                            }
+                        };
 
-                        // Task::perform(computation.run(), Message::ImpulseResponseComputed)
-                        todo!()
+                        Task::perform(computation.run(), Message::ImpulseResponseComputed)
                     }
 
                     impulse_responses::Action::WindowModified(modified) => {
@@ -148,13 +144,9 @@ impl Main {
                 }
             }
             Message::ImpulseResponseComputed(Ok((id, impulse_response))) => {
-                // self.project
-                //     .measurements
-                //     .get_loaded_mut(id)
-                //     .map(|measurement| measurement.impulse_response_computed(impulse_response));
+                self.impulse_responses.computed(id, impulse_response);
 
-                // Task::none()
-                todo!()
+                Task::none()
             }
 
             Message::ImpulseResponseComputed(Err(err)) => {
@@ -280,10 +272,7 @@ impl Main {
     fn goto_tab(&mut self, tab_id: TabId) -> Task<Message> {
         let (tab, task) = match tab_id {
             TabId::Measurements => (Tab::Measurements(tab::Measurements::new()), Task::none()),
-            TabId::ImpulseResponses => (
-                Tab::ImpulseResponses(tab::ImpulseReponses::new(self.project.window())),
-                Task::none(),
-            ),
+            TabId::ImpulseResponses => (Tab::ImpulseResponses, Task::none()),
             TabId::FrequencyResponses => {
                 // let ids: Vec<_> = self
                 //     .project
@@ -325,15 +314,10 @@ impl Main {
                 Tab::Measurements(measurements) => {
                     measurements.view(&self.project).map(Message::Measurements)
                 }
-                Tab::ImpulseResponses(irs) => {
-                    let loaded_measurements: Vec<_> = self.project.measurements.loaded().collect();
-                    irs.view(&loaded_measurements)
-                        .map(Message::ImpulseResponses)
-                } // Tab::FrequencyResponses(frs) => {
-                  //     let loaded_measurements: Vec<_> = self.project.measurements.loaded().collect();
-                  //     frs.view(&loaded_measurements)
-                  //         .map(Message::FrequencyResponses)
-                  // }
+                Tab::ImpulseResponses => self
+                    .impulse_responses
+                    .view(&self.project.measurements)
+                    .map(Message::ImpulseResponses),
             };
 
             container(column![header, content].spacing(10))
@@ -408,11 +392,18 @@ impl Main {
             Tab::Measurements(measurements) => {
                 measurements.subscription().map(Message::Measurements)
             }
-            Tab::ImpulseResponses(impulse_reponses) => impulse_reponses
+            Tab::ImpulseResponses => self
+                .impulse_responses
                 .subscription()
                 .map(Message::ImpulseResponses),
             // Tab::FrequencyResponses(tab) => tab.subscription().map(Message::FrequencyResponses),
         }
+    }
+}
+
+impl Default for Main {
+    fn default() -> Self {
+        Self::new(data::Project::default())
     }
 }
 
@@ -455,7 +446,7 @@ impl From<&Tab> for TabId {
     fn from(tab: &Tab) -> Self {
         match tab {
             Tab::Measurements(_measurements) => TabId::Measurements,
-            Tab::ImpulseResponses(_impulse_reponses) => TabId::ImpulseResponses,
+            Tab::ImpulseResponses => TabId::ImpulseResponses,
             // Tab::FrequencyResponses(_frequency_responses) => TabId::FrequencyResponses,
         }
     }

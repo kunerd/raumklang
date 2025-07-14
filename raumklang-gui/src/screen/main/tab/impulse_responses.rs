@@ -1,6 +1,7 @@
 use crate::data::{
     self,
     chart::{self},
+    impulse_response, measurement,
     window::{self},
     Samples,
 };
@@ -12,9 +13,9 @@ use iced::{
     mouse::ScrollDelta,
     widget::{
         button, canvas, column, container, horizontal_rule, horizontal_space, pick_list, row,
-        scrollable, text,
+        scrollable, stack, text,
     },
-    Alignment, Element, Length, Point, Subscription,
+    Alignment, Color, Element, Length, Point, Subscription,
 };
 
 use core::panic;
@@ -22,8 +23,22 @@ use std::{ops::RangeInclusive, time::Duration};
 
 pub struct ImpulseReponses {
     window_settings: WindowSettings,
-    selected: Option<usize>,
+    selected: Option<measurement::Id>,
     chart_data: ChartData,
+    items: Vec<ImpulseResponse>,
+}
+
+pub struct ImpulseResponse {
+    measurement_id: measurement::Id,
+    inner: impulse_response::State,
+}
+impl ImpulseResponse {
+    fn new(measurement_id: measurement::Id) -> Self {
+        Self {
+            measurement_id,
+            inner: impulse_response::State::default(),
+        }
+    }
 }
 
 struct WindowSettings {
@@ -34,7 +49,7 @@ struct WindowSettings {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Select(usize),
+    Select(measurement::Id),
     Chart(ChartOperation),
     Window(WindowOperation),
 }
@@ -83,7 +98,7 @@ pub enum WindowOperation {
 }
 
 pub enum Action {
-    ComputeImpulseResponse(usize),
+    ComputeImpulseResponse(measurement::Id),
     WindowModified(data::Window<data::Samples>),
     None,
 }
@@ -97,8 +112,9 @@ impl ImpulseReponses {
         };
 
         Self {
-            window_settings,
             selected: None,
+            items: vec![],
+            window_settings,
             chart_data: ChartData::default(),
         }
     }
@@ -108,7 +124,17 @@ impl ImpulseReponses {
             Message::Select(id) => {
                 self.selected = Some(id);
 
-                Action::ComputeImpulseResponse(id)
+                if self
+                    .items
+                    .iter()
+                    .find(|ir| ir.measurement_id == id)
+                    .is_none()
+                {
+                    self.items.push(ImpulseResponse::new(id));
+                    Action::ComputeImpulseResponse(id)
+                } else {
+                    Action::None
+                }
             }
             Message::Chart(operation) => {
                 self.chart_data.apply(operation);
@@ -126,7 +152,7 @@ impl ImpulseReponses {
         }
     }
 
-    pub fn view<'a>(&'a self, measurements: &[&'a data::Measurement]) -> Element<'a, Message> {
+    pub fn view<'a>(&'a self, measurements: &'a measurement::List) -> Element<'a, Message> {
         let sidebar = {
             let header = {
                 column!(text("For Measurements"), horizontal_rule(1))
@@ -134,27 +160,49 @@ impl ImpulseReponses {
                     .spacing(5)
             };
 
-            let measurements = measurements.iter().map(|entry| {
-                let id = entry.id;
-                let content = column![text(&entry.details.name).size(16),]
-                    .spacing(5)
-                    .clip(true)
-                    .spacing(3);
+            let entries = measurements
+                .loaded()
+                .map(|entry| {
+                    (
+                        entry,
+                        self.items.iter().find(|ir| ir.measurement_id == entry.id),
+                    )
+                })
+                .map(|(entry, ir)| {
+                    let id = entry.id;
 
-                let style = match self.selected.as_ref() {
-                    Some(selected) if *selected == id => button::primary,
-                    _ => button::secondary,
-                };
+                    let entry = {
+                        let content = column![text(&entry.details.name).size(16),]
+                            .spacing(5)
+                            .clip(true)
+                            .spacing(3);
 
-                button(content)
-                    .on_press_with(move || Message::Select(id))
-                    .width(Length::Fill)
-                    .style(style)
-                    .into()
-            });
+                        let style = match self.selected.as_ref() {
+                            Some(selected) if *selected == id => button::primary,
+                            _ => button::secondary,
+                        };
+
+                        button(content)
+                            .on_press_with(move || Message::Select(id))
+                            .width(Length::Fill)
+                            .style(style)
+                            .into()
+                    };
+
+                    if let Some(ir) = ir {
+                        match &ir.inner {
+                            impulse_response::State::Computing => {
+                                processing_overlay("Impulse Response", entry)
+                            }
+                            impulse_response::State::Computed(_) => entry,
+                        }
+                    } else {
+                        entry
+                    }
+                });
 
             container(scrollable(
-                column![header, column(measurements).spacing(3)]
+                column![header, column(entries).spacing(3)]
                     .spacing(10)
                     .padding(10),
             ))
@@ -162,148 +210,161 @@ impl ImpulseReponses {
         }
         .width(Length::FillPortion(1));
 
-        // let content: Element<_> = {
-        //     if let Some(id) = self.selected {
-        //         let state = measurements.get(id).and_then(|s| s.impulse_response());
+        let content: Element<_> = {
+            if let Some(id) = self.selected {
+                let state = self
+                    .items
+                    .iter()
+                    .find_map(|ir| {
+                        if ir.measurement_id == id {
+                            Some(&ir.inner)
+                        } else {
+                            None
+                        }
+                    })
+                    .and_then(|ir| match ir {
+                        impulse_response::State::Computing => None,
+                        impulse_response::State::Computed(ir) => Some(ir),
+                    });
 
-        //         match state {
-        //             Some(impulse_response) => {
-        //                 let header = row![pick_list(
-        //                     &chart::AmplitudeUnit::ALL[..],
-        //                     Some(&self.chart_data.amplitude_unit),
-        //                     |unit| Message::Chart(ChartOperation::AmplitudeUnitChanged(unit))
-        //                 ),]
-        //                 .align_y(Alignment::Center)
-        //                 .spacing(10);
+                match state {
+                    Some(impulse_response) => {
+                        let header = row![pick_list(
+                            &chart::AmplitudeUnit::ALL[..],
+                            Some(&self.chart_data.amplitude_unit),
+                            |unit| Message::Chart(ChartOperation::AmplitudeUnitChanged(unit))
+                        ),]
+                        .align_y(Alignment::Center)
+                        .spacing(10);
 
-        //                 let chart = {
-        //                     let x_scale_fn = match self.chart_data.time_unit {
-        //                         chart::TimeSeriesUnit::Samples => sample_scale,
-        //                         chart::TimeSeriesUnit::Time => time_scale,
-        //                     };
+                        let chart = {
+                            let x_scale_fn = match self.chart_data.time_unit {
+                                chart::TimeSeriesUnit::Samples => sample_scale,
+                                chart::TimeSeriesUnit::Time => time_scale,
+                            };
 
-        //                     let y_scale_fn: fn(f32, f32) -> f32 =
-        //                         match self.chart_data.amplitude_unit {
-        //                             chart::AmplitudeUnit::PercentFullScale => percent_full_scale,
-        //                             chart::AmplitudeUnit::DezibelFullScale => db_full_scale,
-        //                         };
+                            let y_scale_fn: fn(f32, f32) -> f32 =
+                                match self.chart_data.amplitude_unit {
+                                    chart::AmplitudeUnit::PercentFullScale => percent_full_scale,
+                                    chart::AmplitudeUnit::DezibelFullScale => db_full_scale,
+                                };
 
-        //                     let sample_rate = impulse_response.sample_rate as f32;
+                            let sample_rate = impulse_response.sample_rate as f32;
 
-        //                     let chart = Chart::new()
-        //                         .width(Length::Fill)
-        //                         .height(Length::Fill)
-        //                         .cache(&self.chart_data.cache)
-        //                         .x_range(
-        //                             self.chart_data
-        //                                 .x_range
-        //                                 .as_ref()
-        //                                 .map(|r| {
-        //                                     x_scale_fn(*r.start(), sample_rate)
-        //                                         ..=x_scale_fn(*r.end(), sample_rate)
-        //                                 })
-        //                                 .unwrap_or_else(|| {
-        //                                     x_scale_fn(-sample_rate / 2.0, sample_rate)
-        //                                         ..=x_scale_fn(
-        //                                             impulse_response.data.len() as f32,
-        //                                             sample_rate,
-        //                                         )
-        //                                 }),
-        //                         )
-        //                         .x_labels(Labels::default().format(&|v| format!("{v:.2}")))
-        //                         .y_labels(Labels::default().format(&|v| format!("{v:.2}")))
-        //                         .push_series(
-        //                             line_series(impulse_response.data.iter().enumerate().map(
-        //                                 move |(i, s)| {
-        //                                     (
-        //                                         x_scale_fn(i as f32, sample_rate),
-        //                                         y_scale_fn(*s, impulse_response.max),
-        //                                     )
-        //                                 },
-        //                             ))
-        //                             .color(iced::Color::from_rgb8(2, 125, 66)),
-        //                         )
-        //                         .on_scroll(|state| {
-        //                             let pos = state.get_coords();
-        //                             let delta = state.scroll_delta();
-        //                             let x_range = state.x_range();
-        //                             Message::Chart(ChartOperation::Scroll(pos, delta, x_range))
-        //                         });
+                            let chart = Chart::new()
+                                .width(Length::Fill)
+                                .height(Length::Fill)
+                                .cache(&self.chart_data.cache)
+                                .x_range(
+                                    self.chart_data
+                                        .x_range
+                                        .as_ref()
+                                        .map(|r| {
+                                            x_scale_fn(*r.start(), sample_rate)
+                                                ..=x_scale_fn(*r.end(), sample_rate)
+                                        })
+                                        .unwrap_or_else(|| {
+                                            x_scale_fn(-sample_rate / 2.0, sample_rate)
+                                                ..=x_scale_fn(
+                                                    impulse_response.data.len() as f32,
+                                                    sample_rate,
+                                                )
+                                        }),
+                                )
+                                .x_labels(Labels::default().format(&|v| format!("{v:.2}")))
+                                .y_labels(Labels::default().format(&|v| format!("{v:.2}")))
+                                .push_series(
+                                    line_series(impulse_response.data.iter().enumerate().map(
+                                        move |(i, s)| {
+                                            (
+                                                x_scale_fn(i as f32, sample_rate),
+                                                y_scale_fn(*s, impulse_response.max),
+                                            )
+                                        },
+                                    ))
+                                    .color(iced::Color::from_rgb8(2, 125, 66)),
+                                )
+                                .on_scroll(|state| {
+                                    let pos = state.get_coords();
+                                    let delta = state.scroll_delta();
+                                    let x_range = state.x_range();
+                                    Message::Chart(ChartOperation::Scroll(pos, delta, x_range))
+                                });
 
-        //                     let window_curve = self.window_settings.window.curve();
-        //                     let handles: window::Handles = Into::into(&self.window_settings.window);
-        //                     chart
-        //                         .push_series(
-        //                             line_series(window_curve.map(move |(i, s)| {
-        //                                 (x_scale_fn(i, sample_rate), y_scale_fn(s, 1.0))
-        //                             }))
-        //                             .color(iced::Color::from_rgb8(255, 0, 0)),
-        //                         )
-        //                         .push_series(
-        //                             point_series(handles.into_iter().map(move |handle| {
-        //                                 (
-        //                                     x_scale_fn(handle.x(), sample_rate),
-        //                                     y_scale_fn(handle.y().into(), 1.0),
-        //                                 )
-        //                             }))
-        //                             .with_id(SeriesId::Handles)
-        //                             .style_for_each(|index, _handle| {
-        //                                 if self.window_settings.hovered.is_some_and(|i| i == index)
-        //                                 {
-        //                                     point::Style {
-        //                                         color: Some(iced::Color::from_rgb8(220, 250, 250)),
-        //                                         radius: 10.0,
-        //                                         ..Default::default()
-        //                                     }
-        //                                 } else {
-        //                                     point::Style::default()
-        //                                 }
-        //                             })
-        //                             .color(iced::Color::from_rgb8(255, 0, 0)),
-        //                         )
-        //                         .on_press(|state| {
-        //                             let id = state.items().and_then(|l| l.first().map(|i| i.1));
-        //                             Message::Window(WindowOperation::MouseDown(
-        //                                 id,
-        //                                 state.get_offset(),
-        //                             ))
-        //                         })
-        //                         .on_move(|state| {
-        //                             let id = state.items().and_then(|l| l.first().map(|i| i.1));
-        //                             Message::Window(WindowOperation::OnMove(id, state.get_offset()))
-        //                         })
-        //                         .on_release(|state| {
-        //                             Message::Window(WindowOperation::MouseUp(state.get_offset()))
-        //                         })
-        //                 };
+                            let window_curve = self.window_settings.window.curve();
+                            let handles: window::Handles = Into::into(&self.window_settings.window);
+                            chart
+                                .push_series(
+                                    line_series(window_curve.map(move |(i, s)| {
+                                        (x_scale_fn(i, sample_rate), y_scale_fn(s, 1.0))
+                                    }))
+                                    .color(iced::Color::from_rgb8(255, 0, 0)),
+                                )
+                                .push_series(
+                                    point_series(handles.into_iter().map(move |handle| {
+                                        (
+                                            x_scale_fn(handle.x(), sample_rate),
+                                            y_scale_fn(handle.y().into(), 1.0),
+                                        )
+                                    }))
+                                    .with_id(SeriesId::Handles)
+                                    .style_for_each(|index, _handle| {
+                                        if self.window_settings.hovered.is_some_and(|i| i == index)
+                                        {
+                                            point::Style {
+                                                color: Some(iced::Color::from_rgb8(220, 250, 250)),
+                                                radius: 10.0,
+                                                ..Default::default()
+                                            }
+                                        } else {
+                                            point::Style::default()
+                                        }
+                                    })
+                                    .color(iced::Color::from_rgb8(255, 0, 0)),
+                                )
+                                .on_press(|state| {
+                                    let id = state.items().and_then(|l| l.first().map(|i| i.1));
+                                    Message::Window(WindowOperation::MouseDown(
+                                        id,
+                                        state.get_offset(),
+                                    ))
+                                })
+                                .on_move(|state| {
+                                    let id = state.items().and_then(|l| l.first().map(|i| i.1));
+                                    Message::Window(WindowOperation::OnMove(id, state.get_offset()))
+                                })
+                                .on_release(|state| {
+                                    Message::Window(WindowOperation::MouseUp(state.get_offset()))
+                                })
+                        };
 
-        //                 let footer = {
-        //                     row![
-        //                         horizontal_space(),
-        //                         pick_list(
-        //                             &chart::TimeSeriesUnit::ALL[..],
-        //                             Some(&self.chart_data.time_unit),
-        //                             |unit| {
-        //                                 Message::Chart(ChartOperation::TimeUnitChanged(unit))
-        //                             }
-        //                         ),
-        //                     ]
-        //                     .align_y(Alignment::Center)
-        //                 };
+                        let footer = {
+                            row![
+                                horizontal_space(),
+                                pick_list(
+                                    &chart::TimeSeriesUnit::ALL[..],
+                                    Some(&self.chart_data.time_unit),
+                                    |unit| {
+                                        Message::Chart(ChartOperation::TimeUnitChanged(unit))
+                                    }
+                                ),
+                            ]
+                            .align_y(Alignment::Center)
+                        };
 
-        //                 container(column![header, chart, footer]).into()
-        //             }
-        //             // TODO: add spinner
-        //             None => text("Impulse response not computed, yet.").into(),
-        //         }
-        //     } else {
-        //         text("Please select an entry to view its data.").into()
-        //     }
-        // };
+                        container(column![header, chart, footer]).into()
+                    }
+                    // TODO: add spinner
+                    None => text("Impulse response not computed, yet.").into(),
+                }
+            } else {
+                text("Please select an entry to view its data.").into()
+            }
+        };
 
         row![
             container(sidebar).width(Length::FillPortion(1)),
-            // container(content).center(Length::FillPortion(4))
+            container(content).center(Length::FillPortion(4))
         ]
         .spacing(10)
         .into()
@@ -325,6 +386,40 @@ impl ImpulseReponses {
             }),
         ])
     }
+
+    pub(crate) fn computed(
+        &mut self,
+        measurement_id: measurement::Id,
+        impulse_response: data::ImpulseResponse,
+    ) {
+        if let Some(ir) = self
+            .items
+            .iter_mut()
+            .find(|ir| ir.measurement_id == measurement_id)
+        {
+            ir.inner = impulse_response::State::Computed(impulse_response)
+        }
+    }
+}
+
+fn processing_overlay<'a>(
+    status: &'a str,
+    entry: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    stack([
+        container(entry).style(container::bordered_box).into(),
+        container(column![text("Computing..."), text(status).size(12)])
+            .center(Length::Fill)
+            .style(|theme| container::Style {
+                border: container::rounded_box(theme).border,
+                background: Some(iced::Background::Color(Color::from_rgba(
+                    0.0, 0.0, 0.0, 0.8,
+                ))),
+                ..Default::default()
+            })
+            .into(),
+    ])
+    .into()
 }
 
 impl ChartData {

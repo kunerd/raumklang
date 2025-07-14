@@ -92,26 +92,28 @@ impl Project {
         // self.measurements.clear_frequency_responses();
     }
 
-    // pub fn impulse_response_computation(
-    //     &mut self,
-    //     id: usize,
-    // ) -> Result<Option<impulse_response::Computation>, Error> {
-    //     let Some(loopback) = self.loopback.as_ref() else {
-    //         return Err(Error::ImpulseResponseComputationFailed);
-    //     };
+    pub fn impulse_response_computation(
+        &mut self,
+        measurement_id: measurement::Id,
+    ) -> Result<impulse_response::Computation, Error> {
+        let Some(loopback) = self.loopback.as_ref() else {
+            return Err(Error::ImpulseResponseComputationFailed);
+        };
 
-    //     let measurement::State::Loaded(loopback) = &loopback else {
-    //         return Err(Error::ImpulseResponseComputationFailed);
-    //     };
+        let measurement::State::Loaded(loopback) = &loopback else {
+            return Err(Error::ImpulseResponseComputationFailed);
+        };
 
-    //     let Some(measurement) = self.measurements.get_loaded_mut(id) else {
-    //         return Err(Error::ImpulseResponseComputationFailed);
-    //     };
+        let Some(measurement) = self.measurements.get_loaded_mut(measurement_id) else {
+            return Err(Error::ImpulseResponseComputationFailed);
+        };
 
-    //     let computation = measurement.impulse_response_computation(id, loopback.as_ref().clone());
-
-    //     Ok(computation)
-    // }
+        Ok(impulse_response::Computation::new(
+            measurement_id,
+            loopback.as_ref().clone(),
+            measurement.as_ref().clone(),
+        ))
+    }
 
     // pub fn frequency_response_computation(
     //     &mut self,
