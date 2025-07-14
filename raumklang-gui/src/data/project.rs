@@ -3,7 +3,7 @@ pub mod file;
 pub use file::File;
 
 use super::{
-    frequency_response, impulse_response,
+    impulse_response,
     measurement::{self, Loopback},
     Error, Samples, Window,
 };
@@ -93,7 +93,7 @@ impl Project {
     }
 
     pub fn impulse_response_computation(
-        &mut self,
+        &self,
         measurement_id: measurement::Id,
     ) -> Result<impulse_response::Computation, Error> {
         let Some(loopback) = self.loopback.as_ref() else {
@@ -104,7 +104,7 @@ impl Project {
             return Err(Error::ImpulseResponseComputationFailed);
         };
 
-        let Some(measurement) = self.measurements.get_loaded_mut(measurement_id) else {
+        let Some(measurement) = self.measurements.get_loaded(measurement_id) else {
             return Err(Error::ImpulseResponseComputationFailed);
         };
 

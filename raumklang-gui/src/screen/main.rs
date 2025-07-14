@@ -2,7 +2,7 @@ pub mod tab;
 
 pub use tab::Tab;
 
-use crate::data::{self, measurement};
+use crate::data::{self, impulse_response, measurement};
 use tab::{frequency_responses, impulse_responses, measurements};
 
 use iced::{
@@ -47,8 +47,6 @@ pub enum Message {
     FrequencyResponses(frequency_responses::Message),
     ImpulseResponseComputed(Result<(measurement::Id, data::ImpulseResponse), data::Error>),
     Modal(ModalAction),
-    // FrequencyResponseComputed((usize, data::FrequencyResponse)),
-    // FrequencyResponsesSmoothingComputed((usize, Vec<f32>)),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,7 +147,13 @@ impl Main {
                 }
             }
             Message::ImpulseResponseComputed(Ok((id, impulse_response))) => {
-                self.impulse_responses.computed(id, impulse_response);
+                let entry = self
+                    .impulse_responses
+                    .items
+                    .entry(id)
+                    .or_insert(impulse_response::State::Computing);
+
+                *entry = impulse_response::State::Computed(impulse_response);
 
                 Task::none()
             }
@@ -181,92 +185,28 @@ impl Main {
                 }
             },
             Message::FrequencyResponses(message) => {
-                match self.frequency_responses.update(message) {
+                match self.frequency_responses.update(message, &self.project) {
                     frequency_responses::Action::None => Task::none(),
-                    frequency_responses::Action::Smooth(fraction) => {
-                        // let Some(fraction) = fraction else {
-                        //     self.project
-                        //         .measurements
-                        //         .loaded_mut()
-                        //         .flat_map(|m| m.frequency_response_mut())
-                        //         .for_each(|fr| fr.smoothed = None);
+                    frequency_responses::Action::Task(task) => {
+                        task.map(Message::FrequencyResponses)
+                    }
+                    frequency_responses::Action::ImpulseResponseComputed(
+                        id,
+                        impulse_response,
+                        task,
+                    ) => {
+                        let entry = self
+                            .impulse_responses
+                            .items
+                            .entry(id)
+                            .or_insert(impulse_response::State::Computing);
 
-                        //     return Task::none();
-                        // };
+                        *entry = impulse_response::State::Computed(impulse_response);
 
-                        // let frequency_responses = self
-                        //     .project
-                        //     .measurements
-                        //     .iter()
-                        //     .enumerate()
-                        //     .filter_map(|(id, m)| match &m {
-                        //         data::measurement::State::NotLoaded(_details) => None,
-                        //         data::measurement::State::Loaded(measurement) => {
-                        //             measurement.frequency_response().as_ref().and_then(|fr| {
-                        //                 let data: Vec<f32> = fr
-                        //                     .origin
-                        //                     .data
-                        //                     .iter()
-                        //                     .copied()
-                        //                     .map(|s| s.re.abs())
-                        //                     .collect();
-
-                        //                 Some((id, data))
-                        //             })
-                        //         }
-                        //     });
-
-                        // let tasks = frequency_responses.map(|(id, data)| {
-                        //     Task::perform(
-                        //         async move {
-                        //             tokio::task::spawn_blocking(move || {
-                        //                 (
-                        //                     id,
-                        //                     data::frequency_response::smooth_fractional_octave(
-                        //                         &data, fraction,
-                        //                     ),
-                        //                 )
-                        //             })
-                        //             .await
-                        //             .unwrap()
-                        //         },
-                        //         Message::FrequencyResponsesSmoothingComputed,
-                        //     )
-                        // });
-
-                        // Task::batch(tasks)
-                        Task::none()
+                        task.map(Message::FrequencyResponses)
                     }
                 }
-            } // Message::FrequencyResponseComputed((id, frequency_response)) => {
-              //     self.project
-              //         .measurements
-              //         .get_loaded_mut(id)
-              //         .map(|measurement| measurement.frequency_response_computed(frequency_response));
-
-              //     if let Tab::FrequencyResponses(ref tab) = self.active_tab {
-              //         tab.clear_cache();
-              //     }
-
-              //     Task::none()
-              // }
-              // Message::FrequencyResponsesSmoothingComputed((id, smoothed)) => {
-              //     let Some(measurement) = self.project.measurements.get_loaded_mut(id) else {
-              //         return Task::none();
-              //     };
-
-              //     let Some(frequency_response) = measurement.frequency_response_mut() else {
-              //         return Task::none();
-              //     };
-
-              //     frequency_response.smoothed = Some(smoothed.iter().map(Complex::from).collect());
-
-              //     if let Tab::FrequencyResponses(ref tab) = self.active_tab {
-              //         tab.clear_cache();
-              //     }
-
-              //     Task::none()
-              // }
+            }
         }
     }
 
@@ -274,7 +214,14 @@ impl Main {
         let (tab, task) = match tab_id {
             TabId::Measurements => (Tab::Measurements(tab::Measurements::new()), Task::none()),
             TabId::ImpulseResponses => (Tab::ImpulseResponses, Task::none()),
-            TabId::FrequencyResponses => (Tab::FrequencyResponses, Task::none()),
+            TabId::FrequencyResponses => {
+                let frequency_response_computations = self
+                    .frequency_responses
+                    .refresh(&self.project, &self.impulse_responses.items)
+                    .map(Message::FrequencyResponses);
+
+                (Tab::FrequencyResponses, frequency_response_computations)
+            }
         };
 
         self.active_tab = tab;

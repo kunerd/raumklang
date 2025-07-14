@@ -25,7 +25,7 @@ pub struct ImpulseReponses {
     window_settings: WindowSettings,
     selected: Option<measurement::Id>,
     chart_data: ChartData,
-    items: HashMap<measurement::Id, impulse_response::State>,
+    pub items: HashMap<measurement::Id, impulse_response::State>,
 }
 
 struct WindowSettings {
@@ -144,12 +144,12 @@ impl ImpulseReponses {
 
             let entries = measurements
                 .loaded()
-                .map(|entry| (entry, self.items.get(&entry.id)))
-                .map(|(entry, ir)| {
-                    let id = entry.id;
+                .map(|measurement| (measurement, self.items.get(&measurement.id)))
+                .map(|(measurement, ir)| {
+                    let id = measurement.id;
 
                     let entry = {
-                        let content = column![text(&entry.details.name).size(16),]
+                        let content = column![text(&measurement.details.name).size(16),]
                             .spacing(5)
                             .clip(true)
                             .spacing(3);
@@ -352,16 +352,6 @@ impl ImpulseReponses {
                 _ => None,
             }),
         ])
-    }
-
-    pub(crate) fn computed(
-        &mut self,
-        measurement_id: measurement::Id,
-        impulse_response: data::ImpulseResponse,
-    ) {
-        if let Some(ir) = self.items.get_mut(&measurement_id) {
-            *ir = impulse_response::State::Computed(impulse_response)
-        }
     }
 
     pub(crate) fn remove(&mut self, id: measurement::Id) -> Option<impulse_response::State> {

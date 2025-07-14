@@ -8,13 +8,14 @@ use iced::{
     widget::{canvas, column, container, horizontal_space, pick_list, row, stack, text, toggler},
     Alignment, Color, Element,
     Length::{self, FillPortion},
-    Point, Subscription,
+    Point, Subscription, Task,
 };
 use rand::Rng;
-use rustfft::num_complex::Complex;
+use rustfft::num_complex::{Complex, Complex32};
 
 use crate::{
-    data::{self, frequency_response, measurement},
+    data::{self, frequency_response, impulse_response, measurement},
+    log,
     widgets::colored_circle,
 };
 
@@ -25,11 +26,16 @@ pub enum Message {
     ShowInGraphToggled(measurement::Id, bool),
     Chart(ChartOperation),
     SmoothingChanged(Smoothing),
+    FrequencyResponseComputed((measurement::Id, data::FrequencyResponse)),
+    ImpulseResponseComputed(Result<(measurement::Id, data::ImpulseResponse), data::Error>),
+    FrequencyResponseSmoothed((measurement::Id, Box<[Complex<f32>]>)),
+    // FrequencyResponsesSmoothingComputed((usize, Vec<f32>)),
 }
 
 pub enum Action {
     None,
-    Smooth(Option<u8>),
+    Task(Task<Message>),
+    ImpulseResponseComputed(measurement::Id, data::ImpulseResponse, Task<Message>),
 }
 
 #[derive(Debug, Default)]
@@ -43,6 +49,8 @@ pub struct FrequencyResponses {
 struct Entry {
     show: bool,
     color: iced::Color,
+    state: frequency_response::State,
+    smoothed: Option<Box<[Complex<f32>]>>,
 }
 
 #[derive(Debug, Default)]
@@ -87,7 +95,7 @@ impl FrequencyResponses {
     }
 
     #[must_use]
-    pub fn update(&mut self, message: Message) -> Action {
+    pub fn update(&mut self, message: Message, project: &data::Project) -> Action {
         match message {
             Message::ShowInGraphToggled(id, state) => {
                 if let Some(entry) = self.entries.get_mut(&id) {
@@ -103,23 +111,126 @@ impl FrequencyResponses {
             Message::SmoothingChanged(smoothing) => {
                 self.smoothing = smoothing;
 
-                Action::Smooth(smoothing.fraction())
+                if let Some(fraction) = smoothing.fraction() {
+                    let tasks = self
+                        .entries
+                        .iter()
+                        .flat_map(|(id, fr)| match &fr.state {
+                            frequency_response::State::Computing => None,
+                            frequency_response::State::Computed(frequency_response) => {
+                                Some((*id, frequency_response.clone()))
+                            }
+                        })
+                        .map(|(id, frequency_response)| {
+                            Task::perform(
+                                smooth_frequency_response(id, frequency_response, fraction),
+                                Message::FrequencyResponseSmoothed,
+                            )
+                        });
+
+                    Action::Task(Task::batch(tasks))
+                } else {
+                    self.entries
+                        .values_mut()
+                        .for_each(|entry| entry.smoothed = None);
+
+                    self.chart.cache.clear();
+
+                    Action::None
+                }
+            }
+            Message::FrequencyResponseComputed((id, frequency_response)) => {
+                if let Some(entry) = self.entries.get_mut(&id) {
+                    entry.state = frequency_response::State::Computed(frequency_response.clone());
+                    self.chart.cache.clear();
+
+                    if let Some(fraction) = self.smoothing.fraction() {
+                        Action::Task(Task::perform(
+                            smooth_frequency_response(id, frequency_response, fraction),
+                            Message::FrequencyResponseSmoothed,
+                        ))
+                    } else {
+                        Action::None
+                    }
+                } else {
+                    Action::None
+                }
+            }
+            Message::ImpulseResponseComputed(Ok((id, impulse_response))) => {
+                let computation = frequency_response::Computation::from_impulse_response(
+                    id,
+                    impulse_response.clone(),
+                    project.window().clone(),
+                );
+
+                let task = Task::perform(computation.run(), Message::FrequencyResponseComputed);
+
+                Action::ImpulseResponseComputed(id, impulse_response, task)
+            }
+            Message::ImpulseResponseComputed(Err(err)) => {
+                log::error!("{}", err);
+                Action::None
+            }
+            Message::FrequencyResponseSmoothed((id, smoothed_data)) => {
+                if let Some(frequency_response) = self.entries.get_mut(&id) {
+                    frequency_response.smoothed = Some(smoothed_data);
+                    self.chart.cache.clear();
+                }
+
+                Action::None
             }
         }
     }
 
+    pub(crate) fn refresh<'a>(
+        &mut self,
+        project: &'a data::Project,
+        impulse_response: &'a HashMap<measurement::Id, impulse_response::State>,
+    ) -> Task<Message> {
+        let mut tasks = vec![];
+
+        for measurement in project.measurements.loaded() {
+            self.entries.entry(measurement.id).or_insert(Entry::new());
+
+            if let Some(impulse_response::State::Computed(impulse_response)) =
+                impulse_response.get(&measurement.id)
+            {
+                let computation = frequency_response::Computation::from_impulse_response(
+                    measurement.id,
+                    impulse_response.clone(),
+                    project.window().clone(),
+                );
+
+                tasks.push(Task::perform(
+                    computation.run(),
+                    Message::FrequencyResponseComputed,
+                ));
+            } else {
+                let computation = project
+                    .impulse_response_computation(measurement.id)
+                    .unwrap();
+
+                tasks.push(Task::perform(
+                    computation.run(),
+                    Message::ImpulseResponseComputed,
+                ));
+            }
+        }
+
+        Task::batch(tasks)
+    }
+
     pub fn view<'a>(&'a self, measurements: &'a measurement::List) -> Element<'a, Message> {
         let sidebar = {
-            let entries = self
-                .entries
-                .iter()
-                .flat_map(|(id, entry)| -> Option<Element<Message>> {
-                    let measurement = measurements.get_loaded(*id)?;
-
+            let entries = measurements.loaded().flat_map(|measurement| {
+                if let Some(entry) = self.entries.get(&measurement.id) {
                     let name = &measurement.details.name;
 
-                    entry.view(*id, name).into()
-                });
+                    entry.view(measurement.id, name).into()
+                } else {
+                    None
+                }
+            });
 
             container(column(entries).spacing(10).padding(8)).style(container::rounded_box)
         };
@@ -133,47 +244,45 @@ impl FrequencyResponses {
         };
 
         let content: Element<_> = if self.entries.values().any(|entry| entry.show) {
-            // let series_list = self
-            //     .entries
-            //     .iter()
-            //     .flat_map(|entry| {
-            //         if entry.show {
-            //             let measurement = measurements.get(entry.measurement_id)?;
-            //             let frequency_response = measurement.frequency_response()?;
+            let series_list = self
+                .entries
+                .values()
+                .filter(|entry| entry.show)
+                .map(|entry| {
+                    let frequency_response::State::Computed(frequency_response) = &entry.state
+                    else {
+                        return [None, None];
+                    };
 
-            //             Some((frequency_response, entry.color))
-            //         } else {
-            //             None
-            //         }
-            //     })
-            //     .flat_map(|(frequency_response, color)| {
-            //         let sample_rate = frequency_response.origin.sample_rate;
-            //         let len = frequency_response.origin.data.len() * 2 + 1;
-            //         let resolution = sample_rate as f32 / len as f32;
+                    let sample_rate = frequency_response.origin.sample_rate;
+                    let len = frequency_response.origin.data.len() * 2 + 1;
+                    let resolution = sample_rate as f32 / len as f32;
 
-            //         let closure = move |(i, s): (usize, &Complex<f32>)| {
-            //             (i as f32 * resolution, dbfs(s.re.abs()))
-            //         };
-            //         [
-            //             Some(
-            //                 line_series(
-            //                     frequency_response
-            //                         .origin
-            //                         .data
-            //                         .iter()
-            //                         .enumerate()
-            //                         .skip(1)
-            //                         .map(closure),
-            //                 )
-            //                 .color(color.scale_alpha(0.1)),
-            //             ),
-            //             frequency_response.smoothed.as_ref().map(|smoothed| {
-            //                 { line_series(smoothed.iter().enumerate().skip(1).map(closure)) }
-            //                     .color(color)
-            //             }),
-            //         ]
-            //     })
-            //     .flatten();
+                    let closure = move |(i, s): (usize, &Complex<f32>)| {
+                        (i as f32 * resolution, dbfs(s.re.abs()))
+                    };
+
+                    [
+                        Some(
+                            line_series(
+                                frequency_response
+                                    .origin
+                                    .data
+                                    .iter()
+                                    .enumerate()
+                                    .skip(1)
+                                    .map(closure),
+                            )
+                            .color(entry.color.scale_alpha(0.1)),
+                        ),
+                        entry.smoothed.as_ref().map(|smoothed| {
+                            { line_series(smoothed.iter().enumerate().skip(1).map(closure)) }
+                                .color(entry.color)
+                        }),
+                    ]
+                })
+                .flatten()
+                .flatten();
 
             let chart: Chart<Message, ()> = Chart::new()
                 .x_axis(
@@ -188,7 +297,7 @@ impl FrequencyResponses {
                 )
                 .x_range(self.chart.x_range.clone().unwrap_or(20.0..=22_500.0))
                 .y_labels(Labels::default().format(&|v| format!("{v:.0}")))
-                // .extend_series(series_list)
+                .extend_series(series_list)
                 .cache(&self.chart.cache)
                 .on_scroll(|state| {
                     let pos = state.get_coords();
@@ -228,10 +337,6 @@ impl FrequencyResponses {
             }),
         ])
     }
-
-    pub(crate) fn clear_cache(&self) {
-        self.chart.cache.clear();
-    }
 }
 
 impl Entry {
@@ -239,6 +344,8 @@ impl Entry {
         Self {
             show: true,
             color: random_color(),
+            state: frequency_response::State::Computing,
+            smoothed: None,
         }
     }
 
@@ -262,19 +369,10 @@ impl Entry {
             container(content).style(container::rounded_box)
         };
 
-        // match state {
-        //     measurement::Analysis::None => panic!(),
-        //     measurement::Analysis::ImpulseResponse(_) => {
-        //         processing_overlay("Impulse Response", entry).into()
-        //     }
-        //     measurement::Analysis::FrequencyResponse(_, frequency_response::State::Computing) => {
-        //         processing_overlay("Frequency Response", entry).into()
-        //     }
-        //     measurement::Analysis::FrequencyResponse(_, frequency_response::State::Computed(_)) => {
-        //         entry.into()
-        //     }
-        // }
-        text("Not implemented, yet!").into()
+        match &self.state {
+            frequency_response::State::Computing => processing_overlay("Frequency Response", entry),
+            frequency_response::State::Computed(_frequency_response) => entry.into(),
+        }
     }
 }
 
@@ -472,4 +570,28 @@ impl fmt::Display for Smoothing {
             }
         )
     }
+}
+
+async fn smooth_frequency_response(
+    id: measurement::Id,
+    frequency_response: data::FrequencyResponse,
+    fraction: u8,
+) -> (measurement::Id, Box<[Complex<f32>]>) {
+    let data: Vec<_> = frequency_response
+        .origin
+        .data
+        .iter()
+        .map(|c| c.re.abs())
+        .collect();
+
+    let data: Vec<_> = tokio::task::spawn_blocking(move || {
+        frequency_response::smooth_fractional_octave(&data, fraction)
+    })
+    .await
+    .unwrap()
+    .into_iter()
+    .map(Complex32::from)
+    .collect();
+
+    (id, data.into_boxed_slice())
 }
