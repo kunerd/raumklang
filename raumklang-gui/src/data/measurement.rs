@@ -90,7 +90,7 @@ pub struct Measurement {
     // pub analysis: Analysis,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Id(usize);
 
 // #[derive(Debug)]

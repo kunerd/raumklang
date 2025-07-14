@@ -107,7 +107,11 @@ impl Main {
                         Task::none()
                     }
                     measurements::Action::RemoveMeasurement(id) => {
-                        self.project.measurements.remove(id);
+                        let measurement = self.project.measurements.remove(id);
+
+                        if let Some(measurement) = measurement.loaded() {
+                            self.impulse_responses.remove(measurement.id);
+                        }
 
                         Task::none()
                     }

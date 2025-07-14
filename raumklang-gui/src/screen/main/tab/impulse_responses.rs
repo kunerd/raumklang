@@ -19,26 +19,13 @@ use iced::{
 };
 
 use core::panic;
-use std::{ops::RangeInclusive, time::Duration};
+use std::{collections::HashMap, ops::RangeInclusive, time::Duration};
 
 pub struct ImpulseReponses {
     window_settings: WindowSettings,
     selected: Option<measurement::Id>,
     chart_data: ChartData,
-    items: Vec<ImpulseResponse>,
-}
-
-pub struct ImpulseResponse {
-    measurement_id: measurement::Id,
-    inner: impulse_response::State,
-}
-impl ImpulseResponse {
-    fn new(measurement_id: measurement::Id) -> Self {
-        Self {
-            measurement_id,
-            inner: impulse_response::State::default(),
-        }
-    }
+    items: HashMap<measurement::Id, impulse_response::State>,
 }
 
 struct WindowSettings {
@@ -113,7 +100,7 @@ impl ImpulseReponses {
 
         Self {
             selected: None,
-            items: vec![],
+            items: HashMap::new(),
             window_settings,
             chart_data: ChartData::default(),
         }
@@ -124,13 +111,8 @@ impl ImpulseReponses {
             Message::Select(id) => {
                 self.selected = Some(id);
 
-                if self
-                    .items
-                    .iter()
-                    .find(|ir| ir.measurement_id == id)
-                    .is_none()
-                {
-                    self.items.push(ImpulseResponse::new(id));
+                if self.items.get(&id).is_none() {
+                    self.items.insert(id, impulse_response::State::Computing);
                     Action::ComputeImpulseResponse(id)
                 } else {
                     Action::None
@@ -162,12 +144,7 @@ impl ImpulseReponses {
 
             let entries = measurements
                 .loaded()
-                .map(|entry| {
-                    (
-                        entry,
-                        self.items.iter().find(|ir| ir.measurement_id == entry.id),
-                    )
-                })
+                .map(|entry| (entry, self.items.get(&entry.id)))
                 .map(|(entry, ir)| {
                     let id = entry.id;
 
@@ -190,7 +167,7 @@ impl ImpulseReponses {
                     };
 
                     if let Some(ir) = ir {
-                        match &ir.inner {
+                        match &ir {
                             impulse_response::State::Computing => {
                                 processing_overlay("Impulse Response", entry)
                             }
@@ -212,20 +189,10 @@ impl ImpulseReponses {
 
         let content: Element<_> = {
             if let Some(id) = self.selected {
-                let state = self
-                    .items
-                    .iter()
-                    .find_map(|ir| {
-                        if ir.measurement_id == id {
-                            Some(&ir.inner)
-                        } else {
-                            None
-                        }
-                    })
-                    .and_then(|ir| match ir {
-                        impulse_response::State::Computing => None,
-                        impulse_response::State::Computed(ir) => Some(ir),
-                    });
+                let state = self.items.get(&id).and_then(|ir| match &ir {
+                    impulse_response::State::Computing => None,
+                    impulse_response::State::Computed(ir) => Some(ir),
+                });
 
                 match state {
                     Some(impulse_response) => {
@@ -392,13 +359,13 @@ impl ImpulseReponses {
         measurement_id: measurement::Id,
         impulse_response: data::ImpulseResponse,
     ) {
-        if let Some(ir) = self
-            .items
-            .iter_mut()
-            .find(|ir| ir.measurement_id == measurement_id)
-        {
-            ir.inner = impulse_response::State::Computed(impulse_response)
+        if let Some(ir) = self.items.get_mut(&measurement_id) {
+            *ir = impulse_response::State::Computed(impulse_response)
         }
+    }
+
+    pub(crate) fn remove(&mut self, id: measurement::Id) -> Option<impulse_response::State> {
+        self.items.remove(&id)
     }
 }
 
