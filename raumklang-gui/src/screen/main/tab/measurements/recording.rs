@@ -5,7 +5,7 @@ use page::{measurement, signal_setup, Component, Page};
 use crate::{
     audio,
     data::recording::{self, port, volume},
-    widgets::{meter, RmsPeakMeter},
+    widget::{meter, RmsPeakMeter},
 };
 
 use iced::{

@@ -15,8 +15,7 @@ use rustfft::num_complex::{Complex, Complex32};
 
 use crate::{
     data::{self, frequency_response, impulse_response, measurement},
-    log,
-    widgets::colored_circle,
+    icon, log,
 };
 
 use std::{collections::HashMap, fmt, ops::RangeInclusive};
@@ -361,7 +360,7 @@ impl Entry {
                         .on_toggle(move |state| Message::ShowInGraphToggled(id, state))
                         .width(Length::Shrink),
                     horizontal_space(),
-                    colored_circle(10.0, self.color),
+                    icon::record().color(self.color)
                 ]
                 .align_y(Alignment::Center)
             ]

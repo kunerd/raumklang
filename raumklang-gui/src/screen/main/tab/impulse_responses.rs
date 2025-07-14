@@ -22,8 +22,8 @@ use core::panic;
 use std::{collections::HashMap, ops::RangeInclusive, time::Duration};
 
 pub struct ImpulseReponses {
-    window_settings: WindowSettings,
     selected: Option<measurement::Id>,
+    window_settings: WindowSettings,
     chart_data: ChartData,
     pub items: HashMap<measurement::Id, impulse_response::State>,
 }

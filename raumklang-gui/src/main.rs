@@ -3,7 +3,7 @@ mod data;
 mod icon;
 mod log;
 mod screen;
-mod widgets;
+mod widget;
 
 use screen::{
     landing,

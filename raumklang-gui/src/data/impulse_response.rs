@@ -53,7 +53,7 @@ impl Computation {
         }
     }
 
-    pub async fn run(self) -> Result<(measurement::Id, super::ImpulseResponse), Error> {
+    pub async fn run(self) -> Result<(measurement::Id, ImpulseResponse), Error> {
         let id = self.measurement_id;
 
         let impulse_response = tokio::task::spawn_blocking(move || {

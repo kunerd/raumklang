@@ -3,7 +3,7 @@ use super::Component;
 use crate::{
     audio,
     data::{self, measurement},
-    widgets::RmsPeakMeter,
+    widget::RmsPeakMeter,
 };
 
 use iced::{
