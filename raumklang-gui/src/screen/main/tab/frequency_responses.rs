@@ -18,11 +18,11 @@ use crate::{
     widgets::colored_circle,
 };
 
-use std::{fmt, ops::RangeInclusive};
+use std::{collections::HashMap, fmt, ops::RangeInclusive};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    ShowInGraphToggled(usize, bool),
+    ShowInGraphToggled(measurement::Id, bool),
     Chart(ChartOperation),
     SmoothingChanged(Smoothing),
 }
@@ -32,19 +32,20 @@ pub enum Action {
     Smooth(Option<u8>),
 }
 
+#[derive(Debug, Default)]
 pub struct FrequencyResponses {
     chart: ChartData,
-    entries: Vec<Entry>,
+    entries: HashMap<measurement::Id, Entry>,
     smoothing: Smoothing,
 }
 
+#[derive(Debug)]
 struct Entry {
-    measurement_id: usize,
     show: bool,
     color: iced::Color,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct ChartData {
     x_max: Option<f32>,
     x_range: Option<RangeInclusive<f32>>,
@@ -63,8 +64,9 @@ pub enum ChartOperation {
     ShiftKeyReleased,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Smoothing {
+    #[default]
     None,
     OneOne,
     OneSecond,
@@ -76,13 +78,11 @@ pub enum Smoothing {
 }
 
 impl FrequencyResponses {
-    pub fn new(iter: impl IntoIterator<Item = usize>) -> Self {
-        let entries = iter.into_iter().map(Entry::new).collect();
-
+    pub fn new() -> Self {
         Self {
             chart: ChartData::default(),
+            entries: HashMap::new(),
             smoothing: Smoothing::None,
-            entries,
         }
     }
 
@@ -90,7 +90,7 @@ impl FrequencyResponses {
     pub fn update(&mut self, message: Message) -> Action {
         match message {
             Message::ShowInGraphToggled(id, state) => {
-                if let Some(entry) = self.entries.get_mut(id) {
+                if let Some(entry) = self.entries.get_mut(&id) {
                     entry.show = state;
                 }
 
@@ -108,85 +108,72 @@ impl FrequencyResponses {
         }
     }
 
-    pub fn view<'a>(&'a self, measurements: &[&'a data::Measurement]) -> Element<'a, Message> {
+    pub fn view<'a>(&'a self, measurements: &'a measurement::List) -> Element<'a, Message> {
         let sidebar = {
-            let entries = self.entries.iter().enumerate().flat_map(
-                |(id, entry)| -> Option<Element<Message>> {
-                    let measurement = measurements.get(entry.measurement_id)?;
+            let entries = self
+                .entries
+                .iter()
+                .flat_map(|(id, entry)| -> Option<Element<Message>> {
+                    let measurement = measurements.get_loaded(*id)?;
 
                     let name = &measurement.details.name;
-                    let state = &measurement.analysis;
 
-                    entry.view(id, name, state).into()
-                },
-            );
+                    entry.view(*id, name).into()
+                });
 
             container(column(entries).spacing(10).padding(8)).style(container::rounded_box)
         };
 
         let header = {
-            let computed_frs = self
-                .entries
-                .iter()
-                .flat_map(|entry| measurements.get(entry.measurement_id))
-                .flat_map(|m| m.frequency_response())
-                .count();
-
-            let smoothing_options = if computed_frs == self.entries.len() {
-                Some(pick_list(
-                    Smoothing::ALL,
-                    Some(&self.smoothing),
-                    Message::SmoothingChanged,
-                ))
-            } else {
-                None
-            };
-
-            row![].push_maybe(smoothing_options)
+            row![pick_list(
+                Smoothing::ALL,
+                Some(&self.smoothing),
+                Message::SmoothingChanged,
+            )]
         };
 
-        let content: Element<_> = if self.entries.iter().any(|entry| entry.show) {
-            let series_list = self
-                .entries
-                .iter()
-                .flat_map(|entry| {
-                    if entry.show {
-                        let measurement = measurements.get(entry.measurement_id)?;
-                        let frequency_response = measurement.frequency_response()?;
+        let content: Element<_> = if self.entries.values().any(|entry| entry.show) {
+            // let series_list = self
+            //     .entries
+            //     .iter()
+            //     .flat_map(|entry| {
+            //         if entry.show {
+            //             let measurement = measurements.get(entry.measurement_id)?;
+            //             let frequency_response = measurement.frequency_response()?;
 
-                        Some((frequency_response, entry.color))
-                    } else {
-                        None
-                    }
-                })
-                .flat_map(|(frequency_response, color)| {
-                    let sample_rate = frequency_response.origin.sample_rate;
-                    let len = frequency_response.origin.data.len() * 2 + 1;
-                    let resolution = sample_rate as f32 / len as f32;
+            //             Some((frequency_response, entry.color))
+            //         } else {
+            //             None
+            //         }
+            //     })
+            //     .flat_map(|(frequency_response, color)| {
+            //         let sample_rate = frequency_response.origin.sample_rate;
+            //         let len = frequency_response.origin.data.len() * 2 + 1;
+            //         let resolution = sample_rate as f32 / len as f32;
 
-                    let closure = move |(i, s): (usize, &Complex<f32>)| {
-                        (i as f32 * resolution, dbfs(s.re.abs()))
-                    };
-                    [
-                        Some(
-                            line_series(
-                                frequency_response
-                                    .origin
-                                    .data
-                                    .iter()
-                                    .enumerate()
-                                    .skip(1)
-                                    .map(closure),
-                            )
-                            .color(color.scale_alpha(0.1)),
-                        ),
-                        frequency_response.smoothed.as_ref().map(|smoothed| {
-                            { line_series(smoothed.iter().enumerate().skip(1).map(closure)) }
-                                .color(color)
-                        }),
-                    ]
-                })
-                .flatten();
+            //         let closure = move |(i, s): (usize, &Complex<f32>)| {
+            //             (i as f32 * resolution, dbfs(s.re.abs()))
+            //         };
+            //         [
+            //             Some(
+            //                 line_series(
+            //                     frequency_response
+            //                         .origin
+            //                         .data
+            //                         .iter()
+            //                         .enumerate()
+            //                         .skip(1)
+            //                         .map(closure),
+            //                 )
+            //                 .color(color.scale_alpha(0.1)),
+            //             ),
+            //             frequency_response.smoothed.as_ref().map(|smoothed| {
+            //                 { line_series(smoothed.iter().enumerate().skip(1).map(closure)) }
+            //                     .color(color)
+            //             }),
+            //         ]
+            //     })
+            //     .flatten();
 
             let chart: Chart<Message, ()> = Chart::new()
                 .x_axis(
@@ -201,7 +188,7 @@ impl FrequencyResponses {
                 )
                 .x_range(self.chart.x_range.clone().unwrap_or(20.0..=22_500.0))
                 .y_labels(Labels::default().format(&|v| format!("{v:.0}")))
-                .extend_series(series_list)
+                // .extend_series(series_list)
                 .cache(&self.chart.cache)
                 .on_scroll(|state| {
                     let pos = state.get_coords();
@@ -248,20 +235,14 @@ impl FrequencyResponses {
 }
 
 impl Entry {
-    pub fn new(id: usize) -> Self {
+    pub fn new() -> Self {
         Self {
-            measurement_id: id,
             show: true,
             color: random_color(),
         }
     }
 
-    pub fn view<'a>(
-        &'a self,
-        id: usize,
-        name: &'a str,
-        state: &'a measurement::Analysis,
-    ) -> Element<'a, Message> {
+    pub fn view<'a>(&'a self, id: measurement::Id, name: &'a str) -> Element<'a, Message> {
         let entry = {
             let content = column![
                 text(name).wrapping(text::Wrapping::Glyph),
@@ -281,18 +262,19 @@ impl Entry {
             container(content).style(container::rounded_box)
         };
 
-        match state {
-            measurement::Analysis::None => panic!(),
-            measurement::Analysis::ImpulseResponse(_) => {
-                processing_overlay("Impulse Response", entry).into()
-            }
-            measurement::Analysis::FrequencyResponse(_, frequency_response::State::Computing) => {
-                processing_overlay("Frequency Response", entry).into()
-            }
-            measurement::Analysis::FrequencyResponse(_, frequency_response::State::Computed(_)) => {
-                entry.into()
-            }
-        }
+        // match state {
+        //     measurement::Analysis::None => panic!(),
+        //     measurement::Analysis::ImpulseResponse(_) => {
+        //         processing_overlay("Impulse Response", entry).into()
+        //     }
+        //     measurement::Analysis::FrequencyResponse(_, frequency_response::State::Computing) => {
+        //         processing_overlay("Frequency Response", entry).into()
+        //     }
+        //     measurement::Analysis::FrequencyResponse(_, frequency_response::State::Computed(_)) => {
+        //         entry.into()
+        //     }
+        // }
+        text("Not implemented, yet!").into()
     }
 }
 
