@@ -25,7 +25,6 @@ pub struct ImpulseReponses {
     selected: Option<measurement::Id>,
     window_settings: WindowSettings,
     chart_data: ChartData,
-    pub items: HashMap<measurement::Id, impulse_response::State>,
 }
 
 struct WindowSettings {
@@ -100,7 +99,6 @@ impl ImpulseReponses {
 
         Self {
             selected: None,
-            items: HashMap::new(),
             window_settings,
             chart_data: ChartData::default(),
         }
@@ -111,12 +109,7 @@ impl ImpulseReponses {
             Message::Select(id) => {
                 self.selected = Some(id);
 
-                if self.items.get(&id).is_none() {
-                    self.items.insert(id, impulse_response::State::Computing);
-                    Action::ComputeImpulseResponse(id)
-                } else {
-                    Action::None
-                }
+                Action::ComputeImpulseResponse(id)
             }
             Message::Chart(operation) => {
                 self.chart_data.apply(operation);
@@ -134,7 +127,11 @@ impl ImpulseReponses {
         }
     }
 
-    pub fn view<'a>(&'a self, measurements: &'a measurement::List) -> Element<'a, Message> {
+    pub fn view<'a>(
+        &'a self,
+        measurements: &'a measurement::List,
+        impulse_responses: &'a HashMap<measurement::Id, impulse_response::State>,
+    ) -> Element<'a, Message> {
         let sidebar = {
             let header = {
                 column!(text("For Measurements"), horizontal_rule(1))
@@ -144,7 +141,7 @@ impl ImpulseReponses {
 
             let entries = measurements
                 .loaded()
-                .map(|measurement| (measurement, self.items.get(&measurement.id)))
+                .map(|measurement| (measurement, impulse_responses.get(&measurement.id)))
                 .map(|(measurement, ir)| {
                     let id = measurement.id;
 
@@ -189,7 +186,7 @@ impl ImpulseReponses {
 
         let content: Element<_> = {
             if let Some(id) = self.selected {
-                let state = self.items.get(&id).and_then(|ir| match &ir {
+                let state = impulse_responses.get(&id).and_then(|ir| match &ir {
                     impulse_response::State::Computing => None,
                     impulse_response::State::Computed(ir) => Some(ir),
                 });
@@ -352,10 +349,6 @@ impl ImpulseReponses {
                 _ => None,
             }),
         ])
-    }
-
-    pub(crate) fn remove(&mut self, id: measurement::Id) -> Option<impulse_response::State> {
-        self.items.remove(&id)
     }
 }
 

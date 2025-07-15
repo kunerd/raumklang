@@ -14,7 +14,7 @@ use rand::Rng;
 use rustfft::num_complex::{Complex, Complex32};
 
 use crate::{
-    data::{self, frequency_response, impulse_response, measurement},
+    data::{self, frequency_response, measurement, ImpulseResponse},
     icon, log,
 };
 
@@ -180,43 +180,62 @@ impl FrequencyResponses {
         }
     }
 
-    pub(crate) fn refresh<'a>(
+    pub fn compute(
         &mut self,
-        project: &'a data::Project,
-        impulse_response: &'a HashMap<measurement::Id, impulse_response::State>,
+        id: measurement::Id,
+        impulse_response: ImpulseResponse,
+        window: data::Window<data::Samples>,
     ) -> Task<Message> {
-        let mut tasks = vec![];
+        let computation =
+            frequency_response::Computation::from_impulse_response(id, impulse_response, window);
 
-        for measurement in project.measurements.loaded() {
-            self.entries.entry(measurement.id).or_insert(Entry::new());
+        self.entries
+            .entry(id)
+            .and_modify(|entry| entry.state = frequency_response::State::Computing)
+            .or_insert(Entry::new());
 
-            if let Some(impulse_response::State::Computed(impulse_response)) =
-                impulse_response.get(&measurement.id)
-            {
-                let computation = frequency_response::Computation::from_impulse_response(
-                    measurement.id,
-                    impulse_response.clone(),
-                    project.window().clone(),
-                );
-
-                tasks.push(Task::perform(
-                    computation.run(),
-                    Message::FrequencyResponseComputed,
-                ));
-            } else {
-                let computation = project
-                    .impulse_response_computation(measurement.id)
-                    .unwrap();
-
-                tasks.push(Task::perform(
-                    computation.run(),
-                    Message::ImpulseResponseComputed,
-                ));
-            }
-        }
-
-        Task::batch(tasks)
+        Task::perform(computation.run(), Message::FrequencyResponseComputed)
     }
+
+    // pub(crate) fn refresh<'a>(
+    //     &mut self,
+    //     project: &'a mut data::Project,
+    //     impulse_response: &'a HashMap<measurement::Id, impulse_response::State>,
+    // ) -> Task<Message> {
+    //     let mut tasks = vec![];
+
+    //     for measurement in project.measurements.loaded() {
+    //         self.entries.entry(measurement.id).or_insert(Entry::new());
+
+    //         if let Some(impulse_response::State::Computed(impulse_response)) =
+    //             impulse_response.get(&measurement.id)
+    //         {
+    //             let computation = frequency_response::Computation::from_impulse_response(
+    //                 measurement.id,
+    //                 impulse_response.clone(),
+    //                 project.window().clone(),
+    //             );
+
+    //             tasks.push(Task::perform(
+    //                 computation.run(),
+    //                 Message::FrequencyResponseComputed,
+    //             ));
+    //         } else {
+    //             let computation = project
+    //                 .impulse_response_computation(measurement.id)
+    //                 .unwrap();
+
+    //             if let Some(computation) = computation {
+    //                 tasks.push(Task::perform(
+    //                     computation.run(),
+    //                     Message::ImpulseResponseComputed,
+    //                 ));
+    //             }
+    //         }
+    //     }
+
+    //     Task::batch(tasks)
+    // }
 
     pub fn view<'a>(&'a self, measurements: &'a measurement::List) -> Element<'a, Message> {
         let sidebar = {

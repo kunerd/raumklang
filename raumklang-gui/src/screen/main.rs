@@ -109,7 +109,6 @@ impl Main {
                         let measurement = self.project.measurements.remove(id);
 
                         if let Some(measurement) = measurement.loaded() {
-                            self.impulse_responses.remove(measurement.id);
                             self.frequency_responses.remove(measurement.id);
                         }
 
@@ -125,15 +124,16 @@ impl Main {
                 match action {
                     impulse_responses::Action::None => Task::none(),
                     impulse_responses::Action::ComputeImpulseResponse(id) => {
-                        let computation = match self.project.impulse_response_computation(id) {
-                            Ok(computation) => computation,
+                        match self.project.impulse_response_computation(id) {
+                            Ok(Some(computation)) => {
+                                Task::perform(computation.run(), Message::ImpulseResponseComputed)
+                            }
+                            Ok(None) => Task::none(),
                             Err(err) => {
                                 dbg!(err);
-                                return Task::none();
+                                Task::none()
                             }
-                        };
-
-                        Task::perform(computation.run(), Message::ImpulseResponseComputed)
+                        }
                     }
 
                     impulse_responses::Action::WindowModified(modified) => {
@@ -149,14 +149,20 @@ impl Main {
             }
             Message::ImpulseResponseComputed(Ok((id, impulse_response))) => {
                 let entry = self
+                    .project
                     .impulse_responses
-                    .items
                     .entry(id)
                     .or_insert(impulse_response::State::Computing);
 
-                *entry = impulse_response::State::Computed(impulse_response);
+                *entry = impulse_response::State::Computed(impulse_response.clone());
 
-                Task::none()
+                if let Tab::FrequencyResponses = self.active_tab {
+                    self.frequency_responses
+                        .compute(id, impulse_response, self.project.window().clone())
+                        .map(Message::FrequencyResponses)
+                } else {
+                    Task::none()
+                }
             }
 
             Message::ImpulseResponseComputed(Err(err)) => {
@@ -197,8 +203,8 @@ impl Main {
                         task,
                     ) => {
                         let entry = self
+                            .project
                             .impulse_responses
-                            .items
                             .entry(id)
                             .or_insert(impulse_response::State::Computing);
 
@@ -216,12 +222,16 @@ impl Main {
             TabId::Measurements => (Tab::Measurements(tab::Measurements::new()), Task::none()),
             TabId::ImpulseResponses => (Tab::ImpulseResponses, Task::none()),
             TabId::FrequencyResponses => {
-                let frequency_response_computations = self
-                    .frequency_responses
-                    .refresh(&self.project, &self.impulse_responses.items)
-                    .map(Message::FrequencyResponses);
+                let loaded_ids: Vec<_> = self.project.measurements.loaded().map(|m| m.id).collect();
+                let impulse_response_tasks = loaded_ids
+                    .into_iter()
+                    .flat_map(|id| self.project.impulse_response_computation(id).ok())
+                    .flatten()
+                    .map(|computation| {
+                        Task::perform(computation.run(), Message::ImpulseResponseComputed)
+                    });
 
-                (Tab::FrequencyResponses, frequency_response_computations)
+                (Tab::FrequencyResponses, Task::batch(impulse_response_tasks))
             }
         };
 
@@ -239,7 +249,7 @@ impl Main {
                 }
                 Tab::ImpulseResponses => self
                     .impulse_responses
-                    .view(&self.project.measurements)
+                    .view(&self.project.measurements, &self.project.impulse_responses)
                     .map(Message::ImpulseResponses),
                 Tab::FrequencyResponses => self
                     .frequency_responses

@@ -6,6 +6,18 @@ pub enum State {
     Computing,
     Computed(ImpulseResponse),
 }
+impl State {
+    pub(crate) fn new(
+        measurement_id: measurement::Id,
+        loopback: raumklang_core::Loopback,
+        measurement: raumklang_core::Measurement,
+    ) -> (Self, Computation) {
+        (
+            State::Computing,
+            Computation::new(measurement_id, loopback, measurement),
+        )
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ImpulseResponse {
@@ -41,7 +53,7 @@ impl From<raumklang_core::ImpulseResponse> for ImpulseResponse {
 }
 
 impl Computation {
-    pub fn new(
+    fn new(
         measurement_id: measurement::Id,
         loopback: raumklang_core::Loopback,
         measurement: raumklang_core::Measurement,

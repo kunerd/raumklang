@@ -10,13 +10,14 @@ use super::{
 
 use iced::futures::future::join_all;
 
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 #[derive(Debug)]
 pub struct Project {
     window: Window<Samples>,
     loopback: Option<measurement::State<Loopback>>,
     pub measurements: measurement::List,
+    pub impulse_responses: HashMap<measurement::Id, impulse_response::State>,
 }
 
 impl Project {
@@ -35,6 +36,7 @@ impl Project {
             window,
             loopback,
             measurements,
+            impulse_responses: HashMap::new(),
         }
     }
 
@@ -92,10 +94,11 @@ impl Project {
         // self.measurements.clear_frequency_responses();
     }
 
+    #[must_use]
     pub fn impulse_response_computation(
-        &self,
+        &mut self,
         measurement_id: measurement::Id,
-    ) -> Result<impulse_response::Computation, Error> {
+    ) -> Result<Option<impulse_response::Computation>, Error> {
         let Some(loopback) = self.loopback.as_ref() else {
             return Err(Error::ImpulseResponseComputationFailed);
         };
@@ -108,11 +111,20 @@ impl Project {
             return Err(Error::ImpulseResponseComputationFailed);
         };
 
-        Ok(impulse_response::Computation::new(
-            measurement_id,
-            loopback.as_ref().clone(),
-            measurement.as_ref().clone(),
-        ))
+        if self.impulse_responses.get(&measurement_id).is_none() {
+            let (impulse_response, computation) = impulse_response::State::new(
+                measurement_id,
+                loopback.as_ref().clone(),
+                measurement.as_ref().clone(),
+            );
+
+            self.impulse_responses
+                .insert(measurement_id, impulse_response);
+
+            Ok(Some(computation))
+        } else {
+            Ok(None)
+        }
     }
 
     // pub fn frequency_response_computation(
