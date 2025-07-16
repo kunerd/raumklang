@@ -14,8 +14,8 @@ use std::{collections::HashMap, path::Path};
 
 #[derive(Debug)]
 pub struct Project {
-    window: Window<Samples>,
-    loopback: Option<measurement::State<Loopback>>,
+    pub window: Window<Samples>,
+    pub loopback: Option<measurement::State<Loopback>>,
     pub measurements: measurement::List,
     pub impulse_responses: HashMap<measurement::Id, impulse_response::State>,
 }

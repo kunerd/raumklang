@@ -3,6 +3,7 @@ mod data;
 mod icon;
 mod log;
 mod screen;
+mod ui;
 mod widget;
 
 use screen::{
@@ -117,10 +118,11 @@ impl Raumklang {
             }
             Message::ProjectLoaded(Ok((project, path))) => match Arc::into_inner(project) {
                 Some(project) => {
-                    self.recent_projects.insert(path);
-                    self.screen = Screen::Main(screen::Main::new(project));
+                    todo!()
+                    // self.recent_projects.insert(path);
+                    // self.screen = Screen::Main(screen::Main::new(project));
 
-                    Task::future(self.recent_projects.clone().save()).discard()
+                    // Task::future(self.recent_projects.clone().save()).discard()
                 }
                 None => Task::none(),
             },

@@ -28,6 +28,17 @@ impl List {
         self.0.iter()
     }
 
+    pub(crate) fn into_loaded(self) -> impl Iterator<Item = Measurement> {
+        self.0.into_iter().filter_map(|s| match s {
+            State::NotLoaded(_details) => None,
+            State::Loaded(measurement) => Some(measurement),
+        })
+    }
+
+    pub(crate) fn into_iter(self) -> impl Iterator<Item = State<Measurement>> {
+        self.0.into_iter()
+    }
+
     pub(crate) fn get(&self, id: usize) -> Option<&State<Measurement>> {
         self.0.get(id)
     }
@@ -50,7 +61,7 @@ impl List {
 }
 
 #[derive(Debug)]
-pub enum State<Inner> {
+pub enum State<Inner, Details = self::Details> {
     NotLoaded(Details),
     Loaded(Inner),
 }
@@ -80,6 +91,15 @@ impl<Inner> State<Inner> {
     }
 }
 
+impl<Inner, Details> State<Inner, Details> {
+    pub fn as_ref(&self) -> State<&Inner, &Details> {
+        match self {
+            State::NotLoaded(details) => State::NotLoaded(details),
+            State::Loaded(inner) => State::Loaded(inner),
+        }
+    }
+}
+
 impl State<Measurement> {
     pub fn signal(&self) -> Option<slice::Iter<f32>> {
         if let State::Loaded(measurement) = self {
@@ -91,11 +111,20 @@ impl State<Measurement> {
 
     pub fn details(&self) -> &Details {
         match self {
-            State::NotLoaded(details) => details,
-            State::Loaded(measurement) => &measurement.details,
+            State::NotLoaded(ref details) => details,
+            State::Loaded(ref measurement) => &measurement.details,
         }
     }
 }
+
+// impl State<&Measurement, &Details> {
+//     pub fn details(&self) -> &Details {
+//         match self {
+//             State::NotLoaded(ref details) => details,
+//             State::Loaded(ref measurement) => &measurement.details,
+//         }
+//     }
+// }
 
 impl Measurement {
     pub fn new(signal: raumklang_core::Measurement, details: Details) -> Self {
