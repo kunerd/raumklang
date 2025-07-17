@@ -27,6 +27,10 @@ impl<T> State<T> {
             State::Loaded(ref inner) => Some(inner),
         }
     }
+
+    pub fn is_loaded(&self) -> bool {
+        matches!(self, State::Loaded(_))
+    }
 }
 
 impl Measurement {
@@ -41,6 +45,10 @@ impl Measurement {
             path,
             inner,
         }
+    }
+
+    pub fn is_loaded(&self) -> bool {
+        self.inner.is_loaded()
     }
 
     pub async fn from_file(path: impl AsRef<Path>) -> Self {
@@ -77,6 +85,10 @@ impl Loopback {
                 State::Loaded(inner) => State::Loaded(raumklang_core::Loopback::new(inner)),
             },
         }
+    }
+
+    pub fn is_loaded(&self) -> bool {
+        self.inner.is_loaded()
     }
 
     pub async fn from_file(path: impl AsRef<Path>) -> Self {

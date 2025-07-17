@@ -1,12 +1,13 @@
-pub mod tab;
+mod measurement;
 
 use raumklang_core::WavLoadError;
 use rfd::FileHandle;
+use tracing::Instrument;
 
 use crate::{
     data::{self},
     icon,
-    ui::{self, measurement},
+    ui::{self},
 };
 
 use iced::{
@@ -18,11 +19,13 @@ use iced::{
     Alignment, Color, Element, Length, Subscription, Task, Theme,
 };
 
-use std::{fmt::Display, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc};
 
 pub struct Main {
     state: State,
-    active_tab: TabId,
+    selected: Option<measurement::Selected>,
+    loopback: Option<ui::Loopback>,
+    measurements: Vec<ui::Measurement>,
     // project: data::Project,
     // impulse_responses: tab::ImpulseReponses,
     // frequency_responses: tab::FrequencyResponses,
@@ -30,18 +33,13 @@ pub struct Main {
     // modal: Modal,
 }
 
+#[derive(Debug, Default)]
 enum State {
-    CollectingMeasuremnts {
-        selected: Option<Selected>,
-        loopback: Option<ui::Loopback>,
-        measurements: Vec<ui::Measurement>,
-    },
+    #[default]
+    CollectingMeasuremnts,
     Analysing {
-        selected: Option<Selected>,
-        window: data::Window<data::Samples>,
-        // loopback: Loopback,
-        // measurements: Vec<Measurement>,
-        // not_loaded: Vec<measurement::State<Measurement>>,
+        active_tab: Tab,
+        impulse_responses: HashMap<ui::measurement::Id, raumklang_core::ImpulseResponse>,
     },
 }
 
@@ -50,7 +48,7 @@ enum Modal {
     #[default]
     None,
     PendingWindow {
-        goto_tab: TabId,
+        goto_tab: Tab,
     },
     ReplaceLoopback {
         loopback: data::measurement::State<data::measurement::Loopback>,
@@ -65,10 +63,8 @@ pub enum ModalAction {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    TabSelected(TabId),
-    AddMeasurement(MeasurementType),
-    SignalLoaded(Arc<LoadedMeasurementType>),
-    Select(Selected),
+    TabSelected(Tab),
+    Measurements(measurement::Message),
     // Measurements(measurements::Message),
     // ImpulseResponses(impulse_responses::Message),
     // FrequencyResponses(frequency_responses::Message),
@@ -77,40 +73,20 @@ pub enum Message {
     // Select(Selected),
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum MeasurementType {
-    Loopback,
-    Normal,
-}
-
-#[derive(Debug)]
-pub enum LoadedMeasurementType {
-    Loopback(ui::Loopback),
-    Normal(ui::Measurement),
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TabId {
+pub enum Tab {
     Measurements,
     ImpulseResponses,
     FrequencyResponses,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum Selected {
-    Loopback,
-    Measurement(usize),
-}
-
 impl Main {
     pub fn new() -> Self {
         Self {
-            state: State::CollectingMeasuremnts {
-                selected: None,
-                loopback: None,
-                measurements: vec![],
-            },
-            active_tab: TabId::Measurements,
+            state: State::CollectingMeasuremnts,
+            selected: None,
+            loopback: None,
+            measurements: vec![],
         }
         // let state = if !project.has_no_measurements() {
         //     State::CollectingMeasuremnts {
@@ -153,53 +129,99 @@ impl Main {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::TabSelected(tab_id) => {
-                self.active_tab = tab_id;
+            Message::TabSelected(tab) => {
+                let State::Analysing { active_tab, .. } = &mut self.state else {
+                    return Task::none();
+                };
+
+                *active_tab = tab;
+
                 Task::none()
             }
-            Message::AddMeasurement(kind) => {
-                let dialog_caption = kind.to_string();
+            Message::Measurements(message) => {
+                let task = match message {
+                    measurement::Message::Load(kind) => {
+                        let dialog_caption = kind.to_string();
 
-                Task::perform(
-                    pick_file_and_load_signal(dialog_caption, kind),
-                    Message::SignalLoaded,
-                )
-            }
-            Message::SignalLoaded(result) => {
-                match self.state {
-                    State::CollectingMeasuremnts {
-                        ref mut loopback,
-                        ref mut measurements,
-                        ..
-                    } => match Arc::into_inner(result) {
-                        Some(LoadedMeasurementType::Loopback(new_loopback)) => {
-                            *loopback = Some(new_loopback)
+                        Task::perform(
+                            measurement::pick_file_and_load_signal(dialog_caption, kind),
+                            measurement::Message::Loaded,
+                        )
+                    }
+                    measurement::Message::Loaded(result) => {
+                        match Arc::into_inner(result) {
+                            Some(measurement::LoadedKind::Loopback(loopback)) => {
+                                self.loopback = Some(loopback)
+                            }
+                            Some(measurement::LoadedKind::Normal(measurement)) => {
+                                self.measurements.push(measurement)
+                            }
+                            None => {}
                         }
-                        Some(LoadedMeasurementType::Normal(measurement)) => {
-                            measurements.push(measurement)
-                        }
-                        None => {}
+
+                        Task::none()
+                    }
+                    measurement::Message::Remove(index) => {
+                        self.measurements.remove(index);
+                        Task::none()
+                    }
+                    measurement::Message::Select(selected) => todo!(),
+                };
+
+                let state = std::mem::take(&mut self.state);
+                self.state = match (state, self.analysing_possible()) {
+                    (State::CollectingMeasuremnts, false) => State::CollectingMeasuremnts,
+                    (State::CollectingMeasuremnts, true) => State::Analysing {
+                        active_tab: Tab::Measurements,
+                        impulse_responses: HashMap::new(),
                     },
-                    State::Analysing { .. } => todo!(),
-                }
+                    (
+                        State::Analysing {
+                            active_tab,
+                            impulse_responses,
+                        },
+                        true,
+                    ) => State::Analysing {
+                        active_tab,
+                        impulse_responses,
+                    },
+                    (State::Analysing { .. }, false) => State::CollectingMeasuremnts,
+                };
 
-                Task::none()
+                task.map(Message::Measurements)
             }
-            Message::Select(selected) => todo!(),
         }
     }
 
-    pub fn measurements_tab<'a>(
-        &'a self,
-        selected: Option<Selected>,
-        loopback: Option<&'a ui::Loopback>,
-        measurements: &'a [ui::Measurement],
-    ) -> Element<'a, Message> {
+    pub fn view(&self) -> Element<Message> {
+        let header = container(match &self.state {
+            State::CollectingMeasuremnts => Tab::Measurements.view(false),
+            State::Analysing { active_tab, .. } => active_tab.view(true),
+        })
+        .style(container::dark);
+
+        let content = match self.state {
+            State::CollectingMeasuremnts => self.measurements_tab().map(Message::Measurements),
+            State::Analysing { active_tab, .. } => match active_tab {
+                Tab::Measurements => self.measurements_tab().map(Message::Measurements),
+                Tab::ImpulseResponses => self.impulse_responses_tab(),
+                Tab::FrequencyResponses => self.frequency_responses_tab(),
+            },
+        };
+
+        container(column![header, content].spacing(10))
+            .padding(5)
+            .into()
+    }
+
+    fn measurements_tab(&self) -> Element<'_, measurement::Message> {
         let sidebar = {
             let loopback = Category::new("Loopback")
                 .push_button(
                     button("+")
-                        .on_press_maybe(Some(Message::AddMeasurement(MeasurementType::Loopback)))
+                        .on_press_maybe(Some(measurement::Message::Load(
+                            measurement::Kind::Loopback,
+                        )))
                         .style(button::secondary),
                 )
                 .push_button(
@@ -207,23 +229,27 @@ impl Main {
                         // .on_press(Message::StartRecording(recording::Kind::Loopback))
                         .style(button::secondary),
                 )
-                .push_entry_maybe(loopback.map(|loopback| loopback_list_entry(selected, loopback)));
+                .push_entry_maybe(
+                    self.loopback
+                        .as_ref()
+                        .map(|loopback| measurement::loopback_entry(self.selected, loopback)),
+                );
 
             let measurements =
                 Category::new("Measurements")
                     .push_button(
                         button("+")
                             .style(button::secondary)
-                            .on_press(Message::AddMeasurement(MeasurementType::Normal)),
+                            .on_press(measurement::Message::Load(measurement::Kind::Normal)),
                     )
                     .push_button(
                         button(icon::record())
                             // .on_press(Message::StartRecording(recording::Kind::Measurement))
                             .style(button::secondary),
                     )
-                    .extend_entries(measurements.iter().enumerate().map(|(id, measurement)| {
-                        measurement_list_entry(id, selected, measurement)
-                    }));
+                    .extend_entries(self.measurements.iter().enumerate().map(
+                        |(id, measurement)| measurement::list_entry(id, self.selected, measurement),
+                    ));
 
             container(scrollable(
                 column![loopback, measurements].spacing(20).padding(10),
@@ -236,7 +262,7 @@ impl Main {
             //     break 'content recording.view().map(Message::Recording);
             // }
 
-            let welcome_text = |base_text| -> Element<Message> {
+            let welcome_text = |base_text| -> Element<measurement::Message> {
                 column![
                     text("Welcome").size(24),
                     column![
@@ -315,69 +341,221 @@ impl Main {
         .into()
     }
 
-    pub fn view(&self) -> Element<Message> {
-        let analysing_enabled = if let State::CollectingMeasuremnts {
-            selected,
-            loopback,
-            measurements,
-        } = &self.state
-        {
-            loopback
-                .as_ref()
-                .is_some_and(|l| l.inner.loaded().is_some())
-                && measurements
-                    .iter()
-                    .any(|m| matches!(m.inner, measurement::State::Loaded(_)))
-        } else {
-            false
-        };
+    fn impulse_responses_tab(&self) -> Element<'_, Message> {
+        text("Not implemented, yet!").into()
+        // let sidebar = {
+        //     let header = {
+        //         column!(text("For Measurements"), horizontal_rule(1))
+        //             .width(Length::Fill)
+        //             .spacing(5)
+        //     };
 
-        let header = container(
-            self.active_tab
-                // .view(matches!(self.state, State::Analysing { .. })),
-                .view(analysing_enabled),
-        )
-        .style(container::dark);
+        //     let entries = measurements
+        //         .loaded()
+        //         .map(|measurement| (measurement, impulse_responses.get(&measurement.id)))
+        //         .map(|(measurement, ir)| {
+        //             let id = measurement.id;
 
-        let content = match &self.state {
-            State::CollectingMeasuremnts {
-                selected,
-                loopback,
-                measurements,
-            } => {
-                // let measurements: Vec<_> = measurements.iter().map(|s| s.as_ref()).collect();
-                self.measurements_tab(
-                    *selected,
-                    loopback.as_ref(),
-                    measurements,
-                    // selected.as_ref(),
-                )
-            }
-            State::Analysing {
-                selected,
-                // loopback,
-                // measurements,
-                ..
-            } => {
-                // let loopback = measurement::State::Loaded(loopback));
-                // let measurements: Vec<_> = measurements
-                //     .iter()
-                //     .map(measurement::State::Loaded)
-                //     .collect();
+        //             let entry = {
+        //                 let content = column![text(&measurement.details.name).size(16),]
+        //                     .spacing(5)
+        //                     .clip(true)
+        //                     .spacing(3);
 
-                // self.measurements_tab(loopback, measurements, selected.as_ref())
-                // self.measurements_tab()
-                text("Not implemented, yet!").into()
-            }
-        };
+        //                 let style = match self.selected.as_ref() {
+        //                     Some(selected) if *selected == id => button::primary,
+        //                     _ => button::secondary,
+        //                 };
 
-        container(column![header, content].spacing(10))
-            .padding(5)
-            .into()
+        //                 button(content)
+        //                     .on_press_with(move || Message::Select(id))
+        //                     .width(Length::Fill)
+        //                     .style(style)
+        //                     .into()
+        //             };
+
+        //             if let Some(ir) = ir {
+        //                 match &ir {
+        //                     impulse_response::State::Computing => {
+        //                         processing_overlay("Impulse Response", entry)
+        //                     }
+        //                     impulse_response::State::Computed(_) => entry,
+        //                 }
+        //             } else {
+        //                 entry
+        //             }
+        //         });
+
+        //     container(scrollable(
+        //         column![header, column(entries).spacing(3)]
+        //             .spacing(10)
+        //             .padding(10),
+        //     ))
+        //     .style(container::rounded_box)
+        // }
+        // .width(Length::FillPortion(1));
+
+        // let content: Element<_> = {
+        //     if let Some(id) = self.selected {
+        //         let state = impulse_responses.get(&id).and_then(|ir| match &ir {
+        //             impulse_response::State::Computing => None,
+        //             impulse_response::State::Computed(ir) => Some(ir),
+        //         });
+
+        //         match state {
+        //             Some(impulse_response) => {
+        //                 let header = row![pick_list(
+        //                     &chart::AmplitudeUnit::ALL[..],
+        //                     Some(&self.chart_data.amplitude_unit),
+        //                     |unit| Message::Chart(ChartOperation::AmplitudeUnitChanged(unit))
+        //                 ),]
+        //                 .align_y(Alignment::Center)
+        //                 .spacing(10);
+
+        //                 let chart = {
+        //                     let x_scale_fn = match self.chart_data.time_unit {
+        //                         chart::TimeSeriesUnit::Samples => sample_scale,
+        //                         chart::TimeSeriesUnit::Time => time_scale,
+        //                     };
+
+        //                     let y_scale_fn: fn(f32, f32) -> f32 =
+        //                         match self.chart_data.amplitude_unit {
+        //                             chart::AmplitudeUnit::PercentFullScale => percent_full_scale,
+        //                             chart::AmplitudeUnit::DezibelFullScale => db_full_scale,
+        //                         };
+
+        //                     let sample_rate = impulse_response.sample_rate as f32;
+
+        //                     let chart = Chart::new()
+        //                         .width(Length::Fill)
+        //                         .height(Length::Fill)
+        //                         .cache(&self.chart_data.cache)
+        //                         .x_range(
+        //                             self.chart_data
+        //                                 .x_range
+        //                                 .as_ref()
+        //                                 .map(|r| {
+        //                                     x_scale_fn(*r.start(), sample_rate)
+        //                                         ..=x_scale_fn(*r.end(), sample_rate)
+        //                                 })
+        //                                 .unwrap_or_else(|| {
+        //                                     x_scale_fn(-sample_rate / 2.0, sample_rate)
+        //                                         ..=x_scale_fn(
+        //                                             impulse_response.data.len() as f32,
+        //                                             sample_rate,
+        //                                         )
+        //                                 }),
+        //                         )
+        //                         .x_labels(Labels::default().format(&|v| format!("{v:.2}")))
+        //                         .y_labels(Labels::default().format(&|v| format!("{v:.2}")))
+        //                         .push_series(
+        //                             line_series(impulse_response.data.iter().enumerate().map(
+        //                                 move |(i, s)| {
+        //                                     (
+        //                                         x_scale_fn(i as f32, sample_rate),
+        //                                         y_scale_fn(*s, impulse_response.max),
+        //                                     )
+        //                                 },
+        //                             ))
+        //                             .color(iced::Color::from_rgb8(2, 125, 66)),
+        //                         )
+        //                         .on_scroll(|state| {
+        //                             let pos = state.get_coords();
+        //                             let delta = state.scroll_delta();
+        //                             let x_range = state.x_range();
+        //                             Message::Chart(ChartOperation::Scroll(pos, delta, x_range))
+        //                         });
+
+        //                     let window_curve = self.window_settings.window.curve();
+        //                     let handles: window::Handles = Into::into(&self.window_settings.window);
+        //                     chart
+        //                         .push_series(
+        //                             line_series(window_curve.map(move |(i, s)| {
+        //                                 (x_scale_fn(i, sample_rate), y_scale_fn(s, 1.0))
+        //                             }))
+        //                             .color(iced::Color::from_rgb8(255, 0, 0)),
+        //                         )
+        //                         .push_series(
+        //                             point_series(handles.into_iter().map(move |handle| {
+        //                                 (
+        //                                     x_scale_fn(handle.x(), sample_rate),
+        //                                     y_scale_fn(handle.y().into(), 1.0),
+        //                                 )
+        //                             }))
+        //                             .with_id(SeriesId::Handles)
+        //                             .style_for_each(|index, _handle| {
+        //                                 if self.window_settings.hovered.is_some_and(|i| i == index)
+        //                                 {
+        //                                     point::Style {
+        //                                         color: Some(iced::Color::from_rgb8(220, 250, 250)),
+        //                                         radius: 10.0,
+        //                                         ..Default::default()
+        //                                     }
+        //                                 } else {
+        //                                     point::Style::default()
+        //                                 }
+        //                             })
+        //                             .color(iced::Color::from_rgb8(255, 0, 0)),
+        //                         )
+        //                         .on_press(|state| {
+        //                             let id = state.items().and_then(|l| l.first().map(|i| i.1));
+        //                             Message::Window(WindowOperation::MouseDown(
+        //                                 id,
+        //                                 state.get_offset(),
+        //                             ))
+        //                         })
+        //                         .on_move(|state| {
+        //                             let id = state.items().and_then(|l| l.first().map(|i| i.1));
+        //                             Message::Window(WindowOperation::OnMove(id, state.get_offset()))
+        //                         })
+        //                         .on_release(|state| {
+        //                             Message::Window(WindowOperation::MouseUp(state.get_offset()))
+        //                         })
+        //                 };
+
+        //                 let footer = {
+        //                     row![
+        //                         horizontal_space(),
+        //                         pick_list(
+        //                             &chart::TimeSeriesUnit::ALL[..],
+        //                             Some(&self.chart_data.time_unit),
+        //                             |unit| {
+        //                                 Message::Chart(ChartOperation::TimeUnitChanged(unit))
+        //                             }
+        //                         ),
+        //                     ]
+        //                     .align_y(Alignment::Center)
+        //                 };
+
+        //                 container(column![header, chart, footer]).into()
+        //             }
+        //             // TODO: add spinner
+        //             None => text("Impulse response not computed, yet.").into(),
+        //         }
+        //     } else {
+        //         text("Please select an entry to view its data.").into()
+        //     }
+        // };
+
+        // row![
+        //     container(sidebar).width(Length::FillPortion(1)),
+        //     container(content).center(Length::FillPortion(4))
+        // ]
+        // .spacing(10)
+        // .into()
+    }
+
+    fn frequency_responses_tab(&self) -> Element<'_, Message> {
+        text("Not implemented, yet!").into()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
         Subscription::none()
+    }
+
+    fn analysing_possible(&self) -> bool {
+        self.loopback.as_ref().is_some_and(ui::Loopback::is_loaded)
+            && self.measurements.iter().any(ui::Measurement::is_loaded)
     }
 }
 
@@ -672,12 +850,12 @@ impl Default for Main {
     }
 }
 
-impl TabId {
+impl Tab {
     pub fn iter() -> impl Iterator<Item = Self> {
         [
-            TabId::Measurements,
-            TabId::ImpulseResponses,
-            TabId::FrequencyResponses,
+            Tab::Measurements,
+            Tab::ImpulseResponses,
+            Tab::FrequencyResponses,
         ]
         .into_iter()
     }
@@ -685,34 +863,53 @@ impl TabId {
     pub fn view<'a>(self, is_analysing: bool) -> Element<'a, Message> {
         let mut row = row![].spacing(5).align_y(Alignment::Center);
 
-        for tab in TabId::iter() {
-            let is_selected = self == tab;
+        for tab in Tab::iter() {
+            let is_active = self == tab;
 
             let is_enabled = match tab {
-                TabId::Measurements => true,
-                TabId::ImpulseResponses | TabId::FrequencyResponses => is_analysing,
+                Tab::Measurements => true,
+                Tab::ImpulseResponses | Tab::FrequencyResponses => is_analysing,
             };
+            let button = button(text(tab.to_string()))
+                .style(move |theme: &Theme, status| {
+                    if is_active {
+                        let palette = theme.extended_palette();
 
-            row = row.push(tab_button(tab, is_selected, is_enabled));
+                        button::Style {
+                            background: Some(palette.background.base.color.into()),
+                            text_color: palette.background.base.text,
+                            ..button::text(theme, status)
+                        }
+                    } else {
+                        button::text(theme, status)
+                    }
+                })
+                .on_press_maybe(if is_enabled {
+                    Some(Message::TabSelected(tab))
+                } else {
+                    None
+                });
+
+            row = row.push(button);
         }
 
         row.into()
     }
 }
 
-impl Display for TabId {
+impl Display for Tab {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let label = match self {
-            TabId::Measurements => "Measurements",
-            TabId::ImpulseResponses => "Impulse Responses",
-            TabId::FrequencyResponses => "Frequency Responses",
+            Tab::Measurements => "Measurements",
+            Tab::ImpulseResponses => "Impulse Responses",
+            Tab::FrequencyResponses => "Frequency Responses",
         };
 
         write!(f, "{}", label)
     }
 }
 
-fn tab_button<'a>(tab: TabId, is_active: bool, is_enabled: bool) -> Element<'a, Message> {
+fn tab_button<'a>(tab: Tab, is_active: bool, is_enabled: bool) -> Element<'a, Message> {
     button(text(tab.to_string()))
         .style(move |theme: &Theme, status| {
             if is_active {
@@ -758,90 +955,6 @@ where
         }))
     ]
     .into()
-}
-
-fn loopback_list_entry<'a>(
-    selected: Option<Selected>,
-    signal: &ui::Loopback,
-) -> Element<'a, Message> {
-    let info = match &signal.inner {
-        measurement::State::NotLoaded => text("Error").style(text::danger),
-        measurement::State::Loaded(_inner) => text("TODO: Some info"),
-    };
-
-    let content = column![
-        column![text("Loopback").size(16)].push(info).spacing(5),
-        horizontal_rule(3),
-        row![
-            horizontal_space(),
-            button("...").style(button::secondary),
-            button(icon::delete())
-                // .on_press(Message::RemoveLoopback)
-                .style(button::danger)
-        ]
-        .spacing(3),
-    ]
-    .clip(true)
-    .spacing(3);
-
-    let style = if let Some(Selected::Loopback) = selected {
-        button::primary
-    } else {
-        button::secondary
-    };
-
-    button(content)
-        .on_press_maybe(
-            signal
-                .inner
-                .loaded()
-                .map(|_| Message::Select(Selected::Loopback)),
-        )
-        .style(style)
-        .width(Length::Fill)
-        .into()
-}
-
-fn measurement_list_entry<'a>(
-    index: usize,
-    selected: Option<Selected>,
-    signal: &'a ui::Measurement,
-) -> Element<'a, Message> {
-    let info = match &signal.inner {
-        measurement::State::NotLoaded => text("Error").style(text::danger),
-        measurement::State::Loaded(_inner) => text("TODO: Some info"),
-    };
-
-    let content = column![
-        column![text(&signal.name).size(16),].push(info).spacing(5),
-        horizontal_rule(3),
-        row![
-            horizontal_space(),
-            button("...").style(button::secondary),
-            button(icon::delete())
-                // .on_press(Message::RemoveMeasurement(index))
-                .style(button::danger)
-        ]
-        .spacing(3),
-    ]
-    .clip(true)
-    .spacing(3);
-
-    let style = match selected {
-        Some(Selected::Measurement(selected)) if selected == index => button::primary,
-        _ => button::secondary,
-    };
-
-    button(content)
-        .on_press_maybe(
-            signal
-                .inner
-                .loaded()
-                .map(|_| Message::Select(Selected::Measurement(index))),
-        )
-        .width(Length::Fill)
-        .style(style)
-        .into()
 }
 
 // async fn pick_file_and_load_signal<T>(file_type: impl AsRef<str>) -> Result<Arc<T>, Error>
@@ -929,53 +1042,4 @@ where
     fn from(category: Category<'a, Message>) -> Self {
         category.view()
     }
-}
-
-impl Display for MeasurementType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let text = match self {
-            MeasurementType::Loopback => "Loopback",
-            MeasurementType::Normal => "Measurement",
-        };
-
-        write!(f, "{}", text)
-    }
-}
-
-async fn pick_file_and_load_signal(
-    file_type: impl AsRef<str>,
-    kind: MeasurementType,
-) -> Arc<LoadedMeasurementType> {
-    let handle = pick_file(file_type).await.unwrap();
-
-    let path = handle.path();
-
-    let measurement = match kind {
-        MeasurementType::Loopback => {
-            LoadedMeasurementType::Loopback(ui::Loopback::from_file(path).await)
-        }
-        MeasurementType::Normal => {
-            LoadedMeasurementType::Normal(ui::Measurement::from_file(path).await)
-        }
-    };
-
-    Arc::new(measurement)
-}
-
-async fn pick_file(file_type: impl AsRef<str>) -> Result<FileHandle, Error> {
-    rfd::AsyncFileDialog::new()
-        .set_title(format!("Choose {} file", file_type.as_ref()))
-        .add_filter("wav", &["wav", "wave"])
-        .add_filter("all", &["*"])
-        .pick_file()
-        .await
-        .ok_or(Error::DialogClosed)
-}
-
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum Error {
-    #[error("error while loading file: {0}")]
-    File(PathBuf, Arc<WavLoadError>),
-    #[error("dialog closed")]
-    DialogClosed,
 }
