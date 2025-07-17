@@ -1,5 +1,5 @@
 use crate::{
-    icon,
+    data, icon,
     ui::{measurement, Loopback, Measurement},
 };
 
@@ -10,13 +10,17 @@ use iced::{
 use raumklang_core::WavLoadError;
 use rfd::FileHandle;
 
-use std::{fmt::Display, path::PathBuf, sync::Arc};
+use std::{
+    fmt::Display,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Select(Selected),
     Load(Kind),
-    Loaded(Arc<LoadedKind>),
+    Loaded(Result<Arc<LoadedKind>, Arc<WavLoadError>>),
     Remove(usize),
 }
 
@@ -45,8 +49,8 @@ impl Display for Kind {
 
 #[derive(Debug)]
 pub enum LoadedKind {
-    Loopback(Loopback),
-    Normal(Measurement),
+    Loopback(data::Loopback),
+    Normal(data::Measurement),
 }
 
 pub fn loopback_entry<'a>(selected: Option<Selected>, signal: &Loopback) -> Element<'a, Message> {
@@ -130,17 +134,29 @@ pub fn list_entry<'a>(
         .into()
 }
 
-pub async fn pick_file_and_load_signal(file_type: impl AsRef<str>, kind: Kind) -> Arc<LoadedKind> {
+pub async fn load_measurement(
+    path: impl AsRef<Path>,
+    kind: Kind,
+) -> Result<Arc<LoadedKind>, Arc<WavLoadError>> {
+    match kind {
+        Kind::Loopback => data::Loopback::from_file(path)
+            .await
+            .map(LoadedKind::Loopback),
+        Kind::Normal => data::Measurement::from_file(path)
+            .await
+            .map(LoadedKind::Normal),
+    }
+    .map(Arc::new)
+    .map_err(Arc::new)
+}
+
+pub async fn pick_file_and_load_signal(
+    file_type: impl AsRef<str>,
+    kind: Kind,
+) -> Result<Arc<LoadedKind>, Arc<WavLoadError>> {
     let handle = pick_file(file_type).await.unwrap();
 
-    let path = handle.path();
-
-    let measurement = match kind {
-        Kind::Loopback => LoadedKind::Loopback(Loopback::from_file(path).await),
-        Kind::Normal => LoadedKind::Normal(Measurement::from_file(path).await),
-    };
-
-    Arc::new(measurement)
+    load_measurement(handle.path(), kind).await
 }
 
 pub async fn pick_file(file_type: impl AsRef<str>) -> Result<FileHandle, Error> {

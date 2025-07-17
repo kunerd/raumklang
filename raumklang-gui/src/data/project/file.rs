@@ -24,6 +24,7 @@ pub enum Error {
     #[error("could not parse file: {0}")]
     Json(String),
 }
+
 impl File {
     pub async fn load(path: impl AsRef<Path>) -> Result<Self, Error> {
         let path = path.as_ref();

@@ -2,8 +2,8 @@ mod frequency_response;
 mod measurement;
 
 use crate::{
-    data::{SampleRate, Samples, Window},
-    icon,
+    data::{self, SampleRate, Samples, Window},
+    icon, log,
     ui::{self, impulse_response},
 };
 
@@ -78,14 +78,28 @@ pub enum Tab {
 }
 
 impl Main {
-    pub fn new() -> Self {
-        Self {
-            state: State::CollectingMeasuremnts,
-            selected: None,
-            smoothing: frequency_response::Smoothing::default(),
-            loopback: None,
-            measurements: vec![],
-        }
+    pub fn from_project(project: data::Project) -> (Self, Task<Message>) {
+        let load_loopback = project
+            .loopback
+            .map(|loopback| {
+                Task::perform(
+                    measurement::load_measurement(loopback.0.path, measurement::Kind::Loopback),
+                    measurement::Message::Loaded,
+                )
+            })
+            .unwrap_or(Task::none());
+
+        let load_measurements = project.measurements.into_iter().map(|measurement| {
+            Task::perform(
+                measurement::load_measurement(measurement.path, measurement::Kind::Normal),
+                measurement::Message::Loaded,
+            )
+        });
+
+        (
+            Self::default(),
+            Task::batch([load_loopback, Task::batch(load_measurements)]).map(Message::Measurements),
+        )
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -159,17 +173,21 @@ impl Main {
                             measurement::Message::Loaded,
                         )
                     }
-                    measurement::Message::Loaded(result) => {
+                    measurement::Message::Loaded(Ok(result)) => {
                         match Arc::into_inner(result) {
                             Some(measurement::LoadedKind::Loopback(loopback)) => {
-                                self.loopback = Some(loopback)
+                                self.loopback = Some(ui::Loopback::from_data(loopback))
                             }
-                            Some(measurement::LoadedKind::Normal(measurement)) => {
-                                self.measurements.push(measurement)
-                            }
+                            Some(measurement::LoadedKind::Normal(measurement)) => self
+                                .measurements
+                                .push(ui::Measurement::from_data(measurement)),
                             None => {}
                         }
 
+                        Task::none()
+                    }
+                    measurement::Message::Loaded(Err(err)) => {
+                        log::error!("{err}");
                         Task::none()
                     }
                     measurement::Message::Remove(index) => {
@@ -778,7 +796,13 @@ impl Main {
 
 impl Default for Main {
     fn default() -> Self {
-        Self::new()
+        Self {
+            state: State::CollectingMeasuremnts,
+            selected: None,
+            smoothing: frequency_response::Smoothing::default(),
+            loopback: None,
+            measurements: vec![],
+        }
     }
 }
 
