@@ -54,6 +54,17 @@ impl State {
             Computation::new(measurement_id, loopback, measurement),
         )
     }
+
+    pub(crate) fn set_computed(&mut self, impulse_response: ImpulseResponse) {
+        *self = State::Computed(impulse_response)
+    }
+
+    pub fn computed(&self) -> Option<&ImpulseResponse> {
+        match self {
+            State::Computing => None,
+            State::Computed(ref impulse_response) => Some(impulse_response),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -64,14 +75,8 @@ pub struct ImpulseResponse {
     pub origin: raumklang_core::ImpulseResponse,
 }
 
-pub struct Computation {
-    measurement_id: measurement::Id,
-    loopback: raumklang_core::Loopback,
-    measurement: raumklang_core::Measurement,
-}
-
-impl From<raumklang_core::ImpulseResponse> for ImpulseResponse {
-    fn from(impulse_response: raumklang_core::ImpulseResponse) -> Self {
+impl ImpulseResponse {
+    fn from_data(impulse_response: raumklang_core::ImpulseResponse) -> Self {
         let data: Vec<_> = impulse_response
             .data
             .iter()
@@ -87,6 +92,12 @@ impl From<raumklang_core::ImpulseResponse> for ImpulseResponse {
             origin: impulse_response,
         }
     }
+}
+
+pub struct Computation {
+    measurement_id: measurement::Id,
+    loopback: raumklang_core::Loopback,
+    measurement: raumklang_core::Measurement,
 }
 
 impl Computation {
@@ -112,6 +123,6 @@ impl Computation {
         .await
         .unwrap();
 
-        (id, impulse_response.into())
+        (id, ImpulseResponse::from_data(impulse_response.into()))
     }
 }

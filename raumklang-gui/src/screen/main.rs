@@ -1,28 +1,29 @@
+mod frequency_response;
 mod measurement;
 
 use crate::{
+    data::{SampleRate, Samples, Window},
     icon,
     ui::{self, impulse_response},
 };
 
-use raumklang_core::WavLoadError;
-
 use iced::{
     alignment::{Horizontal, Vertical},
     widget::{
-        button, center, column, container, horizontal_rule, horizontal_space, opaque, row,
-        scrollable, stack, text, text::Wrapping, Button,
+        button, center, column, container, horizontal_rule, opaque, pick_list, row, scrollable,
+        stack, text, text::Wrapping, Button,
     },
-    Alignment, Color, Element, Length, Subscription, Task, Theme,
+    Alignment, Color, Element,
+    Length::{self, FillPortion},
+    Subscription, Task, Theme,
 };
-use rfd::FileHandle;
-use tracing::Instrument;
 
-use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, fmt::Display, sync::Arc};
 
 pub struct Main {
     state: State,
     selected: Option<measurement::Selected>,
+    smoothing: frequency_response::Smoothing,
     loopback: Option<ui::Loopback>,
     measurements: Vec<ui::Measurement>,
     // project: data::Project,
@@ -38,8 +39,10 @@ enum State {
     CollectingMeasuremnts,
     Analysing {
         active_tab: Tab,
+        window: Window<Samples>,
         selected_impulse_response: Option<ui::measurement::Id>,
         impulse_responses: HashMap<ui::measurement::Id, impulse_response::State>,
+        frequency_responses: HashMap<ui::measurement::Id, frequency_response::Item>,
     },
 }
 
@@ -55,11 +58,11 @@ enum State {
 //     },
 // }
 
-#[derive(Debug, Clone)]
-pub enum ModalAction {
-    Discard,
-    Apply,
-}
+// #[derive(Debug, Clone)]
+// pub enum ModalAction {
+//     Discard,
+//     Apply,
+// }
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -67,6 +70,9 @@ pub enum Message {
     Measurements(measurement::Message),
     SelectImpulseResponse(ui::measurement::Id),
     ImpulseResponseComputed((ui::measurement::Id, ui::ImpulseResponse)),
+    FrequencyResponseToggled(ui::measurement::Id, bool),
+    SmoothingChanged(frequency_response::Smoothing),
+    FrequencyResponseComputed((ui::measurement::Id, raumklang_core::FrequencyResponse)),
     // Measurements(measurements::Message),
     // ImpulseResponses(impulse_responses::Message),
     // FrequencyResponses(frequency_responses::Message),
@@ -87,6 +93,7 @@ impl Main {
         Self {
             state: State::CollectingMeasuremnts,
             selected: None,
+            smoothing: frequency_response::Smoothing::default(),
             loopback: None,
             measurements: vec![],
         }
@@ -132,13 +139,63 @@ impl Main {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::TabSelected(tab) => {
-                let State::Analysing { active_tab, .. } = &mut self.state else {
+                let State::Analysing {
+                    ref mut active_tab,
+                    ref impulse_responses,
+                    ref mut frequency_responses,
+                    ref window,
+                    ..
+                } = self.state
+                else {
                     return Task::none();
                 };
 
                 *active_tab = tab;
 
-                Task::none()
+                if let Tab::FrequencyResponses = tab {
+                    let impulse_response_tasks = impulse_responses
+                        .iter()
+                        .filter_map(|(id, state)| {
+                            let computed = state.computed()?;
+                            Some((id, computed))
+                        })
+                        .flat_map(|(id, impulse_response)| {
+                            if frequency_responses.contains_key(id) {
+                                return None;
+                            }
+
+                            let (frequency_response, computation) =
+                                ui::frequency_response::State::new(
+                                    *id,
+                                    impulse_response.clone(),
+                                    window.clone(),
+                                );
+
+                            frequency_responses.insert(
+                                *id,
+                                frequency_response::Item::from_state(frequency_response),
+                            );
+
+                            Some(computation)
+                        })
+                        .map(|computation| {
+                            Task::perform(computation.run(), Message::FrequencyResponseComputed)
+                        });
+
+                    let missing_impulse_responses_tasks = self
+                        .measurements
+                        .iter()
+                        .filter(|m| m.is_loaded())
+                        .filter(|m| impulse_responses.get(&m.id).is_none())
+                        .map(|m| Task::done(Message::SelectImpulseResponse(m.id)));
+
+                    Task::batch([
+                        Task::batch(impulse_response_tasks),
+                        Task::batch(missing_impulse_responses_tasks),
+                    ])
+                } else {
+                    Task::none()
+                }
             }
             Message::Measurements(message) => {
                 let task = match message {
@@ -175,8 +232,16 @@ impl Main {
                     (State::CollectingMeasuremnts, false) => State::CollectingMeasuremnts,
                     (State::CollectingMeasuremnts, true) => State::Analysing {
                         active_tab: Tab::Measurements,
-                        impulse_responses: HashMap::new(),
+                        window: Window::new(SampleRate::from(
+                            self.loopback
+                                .as_ref()
+                                .and_then(|l| l.inner.loaded())
+                                .map_or(44_100, |l| l.as_ref().sample_rate()),
+                        ))
+                        .into(),
                         selected_impulse_response: None,
+                        impulse_responses: HashMap::new(),
+                        frequency_responses: HashMap::new(),
                     },
                     (old_state, true) => old_state,
                     (State::Analysing { .. }, false) => State::CollectingMeasuremnts,
@@ -194,29 +259,38 @@ impl Main {
                     return Task::none();
                 };
 
-                let (impulse_response, computation) = impulse_response::State::new(
-                    id,
-                    self.loopback
-                        .as_ref()
-                        .and_then(|l| l.inner.loaded())
-                        .unwrap()
-                        .clone(),
-                    self.measurements
-                        .iter()
-                        .find(|m| m.id == id)
-                        .and_then(|m| m.inner.loaded())
-                        .unwrap()
-                        .clone(),
-                );
-
                 *selected_impulse_response = Some(id);
-                impulse_responses.insert(id, impulse_response);
 
-                Task::perform(computation.run(), Message::ImpulseResponseComputed)
+                if impulse_responses.contains_key(&id) {
+                    Task::none()
+                } else {
+                    let (impulse_response, computation) = impulse_response::State::new(
+                        id,
+                        self.loopback
+                            .as_ref()
+                            .and_then(|l| l.inner.loaded())
+                            .unwrap()
+                            .clone(),
+                        self.measurements
+                            .iter()
+                            .find(|m| m.id == id)
+                            .and_then(|m| m.inner.loaded())
+                            .unwrap()
+                            .clone(),
+                    );
+
+                    impulse_responses.insert(id, impulse_response);
+
+                    Task::perform(computation.run(), Message::ImpulseResponseComputed)
+                }
             }
             Message::ImpulseResponseComputed((id, impulse_response)) => {
                 let State::Analysing {
-                    impulse_responses, ..
+                    window,
+                    active_tab,
+                    impulse_responses,
+                    frequency_responses,
+                    ..
                 } = &mut self.state
                 else {
                     return Task::none();
@@ -224,10 +298,37 @@ impl Main {
 
                 impulse_responses
                     .entry(id)
-                    .and_modify(|ir| *ir = impulse_response::State::Computed(impulse_response));
+                    .and_modify(|ir| ir.set_computed(impulse_response.clone()));
+
+                if let Tab::FrequencyResponses = active_tab {
+                    let (frequency_response, computation) =
+                        ui::frequency_response::State::new(id, impulse_response, window.clone());
+
+                    frequency_responses
+                        .insert(id, frequency_response::Item::from_state(frequency_response));
+
+                    Task::perform(computation.run(), Message::FrequencyResponseComputed)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::FrequencyResponseComputed((id, frequency_response)) => {
+                let State::Analysing {
+                    ref mut frequency_responses,
+                    ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
+                frequency_responses.entry(id).and_modify(|entry| {
+                    *entry = frequency_response::Item::from_data(frequency_response)
+                });
 
                 Task::none()
             }
+            Message::FrequencyResponseToggled(id, _) => todo!(),
+            Message::SmoothingChanged(smoothing) => todo!(),
         }
     }
 
@@ -244,12 +345,16 @@ impl Main {
                 active_tab,
                 impulse_responses,
                 selected_impulse_response,
+                frequency_responses,
+                ..
             } => match active_tab {
                 Tab::Measurements => self.measurements_tab().map(Message::Measurements),
                 Tab::ImpulseResponses => {
                     self.impulse_responses_tab(*selected_impulse_response, impulse_responses)
                 }
-                Tab::FrequencyResponses => self.frequency_responses_tab(),
+                Tab::FrequencyResponses => {
+                    self.frequency_responses_tab(impulse_responses, frequency_responses)
+                }
             },
         };
 
@@ -595,8 +700,118 @@ impl Main {
         .into()
     }
 
-    fn frequency_responses_tab(&self) -> Element<'_, Message> {
-        text("Not implemented, yet!").into()
+    fn frequency_responses_tab<'a>(
+        &'a self,
+        impulse_responses: &'a HashMap<ui::measurement::Id, impulse_response::State>,
+        frequency_responses: &'a HashMap<ui::measurement::Id, frequency_response::Item>,
+    ) -> Element<'a, Message> {
+        let sidebar = {
+            let entries =
+                self.measurements
+                    .iter()
+                    .filter(|m| m.is_loaded())
+                    .flat_map(|measurement| {
+                        if let Some(item) = frequency_responses.get(&measurement.id) {
+                            let name = &measurement.name;
+
+                            item.view(name, |state| {
+                                Message::FrequencyResponseToggled(measurement.id, state)
+                            })
+                            .into()
+                        } else {
+                            None
+                        }
+                    });
+
+            container(column(entries).spacing(10).padding(8)).style(container::rounded_box)
+        };
+
+        let header = {
+            row![pick_list(
+                frequency_response::Smoothing::ALL,
+                Some(&self.smoothing),
+                Message::SmoothingChanged,
+            )]
+        };
+
+        let content = {
+            // let content: Element<_> = if self.entries.values().any(|entry| entry.show) {
+            //     let series_list = self
+            //         .entries
+            //         .values()
+            //         .filter(|entry| entry.show)
+            //         .map(|entry| {
+            //             let frequency_response::State::Computed(frequency_response) = &entry.state
+            //             else {
+            //                 return [None, None];
+            //             };
+
+            //             let sample_rate = frequency_response.origin.sample_rate;
+            //             let len = frequency_response.origin.data.len() * 2 + 1;
+            //             let resolution = sample_rate as f32 / len as f32;
+
+            //             let closure = move |(i, s): (usize, &Complex<f32>)| {
+            //                 (i as f32 * resolution, dbfs(s.re.abs()))
+            //             };
+
+            //             [
+            //                 Some(
+            //                     line_series(
+            //                         frequency_response
+            //                             .origin
+            //                             .data
+            //                             .iter()
+            //                             .enumerate()
+            //                             .skip(1)
+            //                             .map(closure),
+            //                     )
+            //                     .color(entry.color.scale_alpha(0.1)),
+            //                 ),
+            //                 entry.smoothed.as_ref().map(|smoothed| {
+            //                     { line_series(smoothed.iter().enumerate().skip(1).map(closure)) }
+            //                         .color(entry.color)
+            //                 }),
+            //             ]
+            //         })
+            //         .flatten()
+            //         .flatten();
+
+            //     let chart: Chart<Message, ()> = Chart::new()
+            //         .x_axis(
+            //             Axis::new(axis::Alignment::Horizontal)
+            //                 .scale(axis::Scale::Log)
+            //                 .x_tick_marks(
+            //                     [0, 20, 50, 100, 1000, 10_000, 20_000]
+            //                         .into_iter()
+            //                         .map(|v| v as f32)
+            //                         .collect(),
+            //                 ),
+            //         )
+            //         .x_range(self.chart.x_range.clone().unwrap_or(20.0..=22_500.0))
+            //         .y_labels(Labels::default().format(&|v| format!("{v:.0}")))
+            //         .extend_series(series_list)
+            //         .cache(&self.chart.cache)
+            //         .on_scroll(|state| {
+            //             let pos = state.get_coords();
+            //             let delta = state.scroll_delta();
+            //             let x_range = state.x_range();
+            //             Message::Chart(ChartOperation::Scroll(pos, delta, x_range))
+            //         });
+
+            //     chart.into()
+            // } else {
+            //     text("Please select a frequency respone.").into()
+            text("Not implemented, yet.")
+        };
+
+        row![
+            container(sidebar)
+                .width(FillPortion(1))
+                .style(container::bordered_box),
+            column![header, container(content).center(Length::FillPortion(4))].spacing(12)
+        ]
+        .spacing(10)
+        .into()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
