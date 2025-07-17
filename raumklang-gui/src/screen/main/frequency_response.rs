@@ -1,12 +1,12 @@
-use std::fmt;
+use std::fmt::{self, Display};
 
 use crate::{
     icon,
-    ui::{self, frequency_response},
+    ui::{self, frequency_response, impulse_response},
 };
 
 use iced::{
-    widget::{column, container, horizontal_space, row, stack, text, toggler},
+    widget::{column, container, horizontal_space, row, stack, text, text::IntoFragment, toggler},
     Alignment, Color, Element, Length,
 };
 use rand::Rng as _;
@@ -15,11 +15,11 @@ use rand::Rng as _;
 pub struct Item {
     color: iced::Color,
     is_shown: bool,
-    state: frequency_response::State,
+    pub state: State,
 }
 
 impl Item {
-    pub fn from_state(state: frequency_response::State) -> Self {
+    fn new(state: State) -> Self {
         let color = random_color();
 
         Self {
@@ -27,6 +27,26 @@ impl Item {
             is_shown: true,
             state,
         }
+    }
+
+    pub fn from_impulse_response_state(state: impulse_response::State) -> Self {
+        let state = match state {
+            impulse_response::State::Computing => State::ComputingImpulseResponse,
+            impulse_response::State::Computed(_) => State::ComputingFrequencyResponse,
+        };
+
+        Self::new(state)
+    }
+
+    pub fn from_state(state: frequency_response::State) -> Self {
+        let state = match state {
+            frequency_response::State::Computing => State::ComputingFrequencyResponse,
+            frequency_response::State::Computed(frequency_response) => {
+                State::Computed(frequency_response)
+            }
+        };
+
+        Self::new(state)
     }
 
     pub fn from_data(frequency_response: raumklang_core::FrequencyResponse) -> Self {
@@ -61,9 +81,28 @@ impl Item {
         };
 
         match &self.state {
-            frequency_response::State::Computing => processing_overlay("Frequency Response", item),
-            frequency_response::State::Computed(_frequency_response) => item.into(),
+            State::Computed(_) => item.into(),
+            state => processing_overlay(state.to_string(), item),
         }
+    }
+}
+
+#[derive(Debug)]
+pub enum State {
+    ComputingImpulseResponse,
+    ComputingFrequencyResponse,
+    Computed(ui::FrequencyResponse),
+}
+
+impl Display for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = match self {
+            State::ComputingImpulseResponse => "Impulse Response",
+            State::ComputingFrequencyResponse => "Frequency Response",
+            State::Computed(_) => "Computed",
+        };
+
+        write!(f, "{}", text)
     }
 }
 
@@ -137,7 +176,7 @@ fn random_color() -> iced::Color {
 }
 
 fn processing_overlay<'a, Message>(
-    status: &'a str,
+    status: impl IntoFragment<'a>,
     entry: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message>
 where

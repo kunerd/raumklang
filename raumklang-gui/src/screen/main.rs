@@ -126,9 +126,15 @@ impl Main {
                             Some((id, computed))
                         })
                         .flat_map(|(id, impulse_response)| {
-                            if frequency_responses.contains_key(id) {
-                                return None;
-                            }
+                            if let Some(entry) = frequency_responses.get(&id) {
+                                if matches!(
+                                    entry.state,
+                                    frequency_response::State::ComputingFrequencyResponse
+                                        | frequency_response::State::Computed(_)
+                                ) {
+                                    return None;
+                                }
+                            };
 
                             let (frequency_response, computation) =
                                 ui::frequency_response::State::new(
@@ -223,6 +229,7 @@ impl Main {
                 let State::Analysing {
                     selected_impulse_response,
                     impulse_responses,
+                    frequency_responses,
                     ..
                 } = &mut self.state
                 else {
@@ -249,7 +256,11 @@ impl Main {
                             .clone(),
                     );
 
-                    impulse_responses.insert(id, impulse_response);
+                    impulse_responses.insert(id, impulse_response.clone());
+                    frequency_responses.insert(
+                        id,
+                        frequency_response::Item::from_impulse_response_state(impulse_response),
+                    );
 
                     Task::perform(computation.run(), Message::ImpulseResponseComputed)
                 }
@@ -307,6 +318,7 @@ impl Main {
             State::CollectingMeasuremnts => Tab::Measurements.view(false),
             State::Analysing { active_tab, .. } => active_tab.view(true),
         })
+        .width(Length::Fill)
         .style(container::dark);
 
         let content = match &self.state {
@@ -322,9 +334,7 @@ impl Main {
                 Tab::ImpulseResponses => {
                     self.impulse_responses_tab(*selected_impulse_response, impulse_responses)
                 }
-                Tab::FrequencyResponses => {
-                    self.frequency_responses_tab(impulse_responses, frequency_responses)
-                }
+                Tab::FrequencyResponses => self.frequency_responses_tab(frequency_responses),
             },
         };
 
@@ -672,7 +682,6 @@ impl Main {
 
     fn frequency_responses_tab<'a>(
         &'a self,
-        impulse_responses: &'a HashMap<ui::measurement::Id, impulse_response::State>,
         frequency_responses: &'a HashMap<ui::measurement::Id, frequency_response::Item>,
     ) -> Element<'a, Message> {
         let sidebar = {
@@ -681,16 +690,12 @@ impl Main {
                     .iter()
                     .filter(|m| m.is_loaded())
                     .flat_map(|measurement| {
-                        if let Some(item) = frequency_responses.get(&measurement.id) {
-                            let name = &measurement.name;
-
+                        let name = &measurement.name;
+                        frequency_responses.get(&measurement.id).map(|item| {
                             item.view(name, |state| {
                                 Message::FrequencyResponseToggled(measurement.id, state)
                             })
-                            .into()
-                        } else {
-                            None
-                        }
+                        })
                     });
 
             container(column(entries).spacing(10).padding(8)).style(container::rounded_box)
