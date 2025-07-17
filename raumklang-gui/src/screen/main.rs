@@ -17,6 +17,8 @@ use iced::{
     Length::{self, FillPortion},
     Subscription, Task, Theme,
 };
+use prism::{axis, line_series, Axis, Chart, Labels};
+use raumklang_core::dbfs;
 
 use std::{collections::HashMap, fmt::Display, sync::Arc};
 
@@ -38,6 +40,7 @@ enum State {
         selected_impulse_response: Option<ui::measurement::Id>,
         impulse_responses: HashMap<ui::measurement::Id, impulse_response::State>,
         frequency_responses: HashMap<ui::measurement::Id, frequency_response::Item>,
+        chart_data: frequency_response::ChartData,
     },
 }
 
@@ -68,6 +71,7 @@ pub enum Message {
     FrequencyResponseToggled(ui::measurement::Id, bool),
     SmoothingChanged(frequency_response::Smoothing),
     FrequencyResponseComputed((ui::measurement::Id, raumklang_core::FrequencyResponse)),
+    FrequencyResponseSmoothed((ui::measurement::Id, Box<[f32]>)),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,6 +222,7 @@ impl Main {
                         selected_impulse_response: None,
                         impulse_responses: HashMap::new(),
                         frequency_responses: HashMap::new(),
+                        chart_data: frequency_response::ChartData::default(),
                     },
                     (old_state, true) => old_state,
                     (State::Analysing { .. }, false) => State::CollectingMeasuremnts,
@@ -296,6 +301,7 @@ impl Main {
             Message::FrequencyResponseComputed((id, frequency_response)) => {
                 let State::Analysing {
                     ref mut frequency_responses,
+                    ref mut chart_data,
                     ..
                 } = self.state
                 else {
@@ -303,13 +309,92 @@ impl Main {
                 };
 
                 frequency_responses.entry(id).and_modify(|entry| {
-                    *entry = frequency_response::Item::from_data(frequency_response)
+                    *entry = frequency_response::Item::from_data(frequency_response);
+
+                    chart_data.cache.clear();
                 });
 
                 Task::none()
             }
-            Message::FrequencyResponseToggled(id, _) => todo!(),
-            Message::SmoothingChanged(smoothing) => todo!(),
+            Message::FrequencyResponseToggled(id, state) => {
+                let State::Analysing {
+                    ref mut frequency_responses,
+                    ref mut chart_data,
+                    ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
+                frequency_responses
+                    .entry(id)
+                    .and_modify(|entry| entry.is_shown = state);
+                chart_data.cache.clear();
+
+                Task::none()
+            }
+            Message::SmoothingChanged(smoothing) => {
+                let State::Analysing {
+                    ref mut frequency_responses,
+                    ref mut chart_data,
+                    ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
+                self.smoothing = smoothing;
+
+                if let Some(fraction) = smoothing.fraction() {
+                    let tasks = frequency_responses
+                        .iter()
+                        .flat_map(|(id, fr)| {
+                            if let frequency_response::State::Computed(fr) = &fr.state {
+                                Some((*id, fr.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                        .map(|(id, frequency_response)| {
+                            Task::perform(
+                                frequency_response::smooth_frequency_response(
+                                    id,
+                                    frequency_response,
+                                    fraction,
+                                ),
+                                Message::FrequencyResponseSmoothed,
+                            )
+                        });
+
+                    Task::batch(tasks)
+                } else {
+                    frequency_responses
+                        .values_mut()
+                        .for_each(|entry| entry.smoothed = None);
+
+                    chart_data.cache.clear();
+
+                    Task::none()
+                }
+            }
+            Message::FrequencyResponseSmoothed((id, smoothed_data)) => {
+                let State::Analysing {
+                    ref mut frequency_responses,
+                    ref mut chart_data,
+                    ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
+                frequency_responses
+                    .entry(id)
+                    .and_modify(|entry| entry.smoothed = Some(smoothed_data));
+
+                chart_data.cache.clear();
+
+                Task::none()
+            }
         }
     }
 
@@ -328,19 +413,20 @@ impl Main {
                 impulse_responses,
                 selected_impulse_response,
                 frequency_responses,
+                chart_data,
                 ..
             } => match active_tab {
                 Tab::Measurements => self.measurements_tab().map(Message::Measurements),
                 Tab::ImpulseResponses => {
                     self.impulse_responses_tab(*selected_impulse_response, impulse_responses)
                 }
-                Tab::FrequencyResponses => self.frequency_responses_tab(frequency_responses),
+                Tab::FrequencyResponses => {
+                    self.frequency_responses_tab(frequency_responses, chart_data)
+                }
             },
         };
 
-        container(column![header, content].spacing(10))
-            .padding(5)
-            .into()
+        container(column![header, container(content).padding(5)].spacing(10)).into()
     }
 
     fn measurements_tab(&self) -> Element<'_, measurement::Message> {
@@ -496,15 +582,16 @@ impl Main {
                             .clip(true)
                             .spacing(3);
 
-                        let style = match selected {
-                            Some(selected) if selected == id => button::primary,
-                            _ => button::secondary,
-                        };
-
                         button(content)
                             .on_press_with(move || Message::SelectImpulseResponse(id))
                             .width(Length::Fill)
-                            .style(style)
+                            .style(move |theme, status| {
+                                let status = match selected {
+                                    Some(selected) if selected == id => button::Status::Hovered,
+                                    _ => status,
+                                };
+                                button::secondary(theme, status)
+                            })
                             .into()
                     };
 
@@ -683,6 +770,7 @@ impl Main {
     fn frequency_responses_tab<'a>(
         &'a self,
         frequency_responses: &'a HashMap<ui::measurement::Id, frequency_response::Item>,
+        chart_settings: &'a frequency_response::ChartData,
     ) -> Element<'a, Message> {
         let sidebar = {
             let entries =
@@ -709,74 +797,67 @@ impl Main {
             )]
         };
 
-        let content = {
-            // let content: Element<_> = if self.entries.values().any(|entry| entry.show) {
-            //     let series_list = self
-            //         .entries
-            //         .values()
-            //         .filter(|entry| entry.show)
-            //         .map(|entry| {
-            //             let frequency_response::State::Computed(frequency_response) = &entry.state
-            //             else {
-            //                 return [None, None];
-            //             };
+        let content = if frequency_responses.values().any(|item| item.is_shown) {
+            let series_list = frequency_responses
+                .values()
+                .filter(|item| item.is_shown)
+                .filter(|item| matches!(item.state, frequency_response::State::Computed(_)))
+                .flat_map(|item| {
+                    let frequency_response::State::Computed(frequency_response) = &item.state
+                    else {
+                        return [None, None];
+                    };
+                    let sample_rate = frequency_response.sample_rate;
+                    let len = frequency_response.data.len() * 2 + 1;
+                    let resolution = sample_rate as f32 / len as f32;
 
-            //             let sample_rate = frequency_response.origin.sample_rate;
-            //             let len = frequency_response.origin.data.len() * 2 + 1;
-            //             let resolution = sample_rate as f32 / len as f32;
+                    let closure = move |(i, s)| (i as f32 * resolution, dbfs(s));
 
-            //             let closure = move |(i, s): (usize, &Complex<f32>)| {
-            //                 (i as f32 * resolution, dbfs(s.re.abs()))
-            //             };
+                    [
+                        Some(
+                            line_series(
+                                frequency_response
+                                    .data
+                                    .iter()
+                                    .copied()
+                                    .enumerate()
+                                    .map(closure),
+                            )
+                            .color(item.color.scale_alpha(0.1)),
+                        ),
+                        item.smoothed.as_ref().map(|smoothed| {
+                            line_series(smoothed.iter().copied().enumerate().map(closure))
+                                .color(item.color)
+                        }),
+                    ]
+                })
+                .flatten();
 
-            //             [
-            //                 Some(
-            //                     line_series(
-            //                         frequency_response
-            //                             .origin
-            //                             .data
-            //                             .iter()
-            //                             .enumerate()
-            //                             .skip(1)
-            //                             .map(closure),
-            //                     )
-            //                     .color(entry.color.scale_alpha(0.1)),
-            //                 ),
-            //                 entry.smoothed.as_ref().map(|smoothed| {
-            //                     { line_series(smoothed.iter().enumerate().skip(1).map(closure)) }
-            //                         .color(entry.color)
-            //                 }),
-            //             ]
-            //         })
-            //         .flatten()
-            //         .flatten();
+            let chart: Chart<Message, ()> = Chart::new()
+                .x_axis(
+                    Axis::new(axis::Alignment::Horizontal)
+                        .scale(axis::Scale::Log)
+                        .x_tick_marks(
+                            [0, 20, 50, 100, 1000, 10_000, 20_000]
+                                .into_iter()
+                                .map(|v| v as f32)
+                                .collect(),
+                        ),
+                )
+                .x_range(chart_settings.x_range.clone().unwrap_or(20.0..=22_500.0))
+                .y_labels(Labels::default().format(&|v| format!("{v:.0}")))
+                .extend_series(series_list)
+                .cache(&chart_settings.cache);
+            // .on_scroll(|state| {
+            //     let pos = state.get_coords();
+            //     let delta = state.scroll_delta();
+            //     let x_range = state.x_range();
+            //     Message::Chart(ChartOperation::Scroll(pos, delta, x_range))
+            // });
 
-            //     let chart: Chart<Message, ()> = Chart::new()
-            //         .x_axis(
-            //             Axis::new(axis::Alignment::Horizontal)
-            //                 .scale(axis::Scale::Log)
-            //                 .x_tick_marks(
-            //                     [0, 20, 50, 100, 1000, 10_000, 20_000]
-            //                         .into_iter()
-            //                         .map(|v| v as f32)
-            //                         .collect(),
-            //                 ),
-            //         )
-            //         .x_range(self.chart.x_range.clone().unwrap_or(20.0..=22_500.0))
-            //         .y_labels(Labels::default().format(&|v| format!("{v:.0}")))
-            //         .extend_series(series_list)
-            //         .cache(&self.chart.cache)
-            //         .on_scroll(|state| {
-            //             let pos = state.get_coords();
-            //             let delta = state.scroll_delta();
-            //             let x_range = state.x_range();
-            //             Message::Chart(ChartOperation::Scroll(pos, delta, x_range))
-            //         });
-
-            //     chart.into()
-            // } else {
-            //     text("Please select a frequency respone.").into()
-            text("Not implemented, yet.")
+            container(chart)
+        } else {
+            container(text("Please select a frequency respone."))
         };
 
         row![
@@ -822,7 +903,7 @@ impl Tab {
     }
 
     pub fn view<'a>(self, is_analysing: bool) -> Element<'a, Message> {
-        let mut row = row![].spacing(5).align_y(Alignment::Center);
+        let mut row = row![];
 
         for tab in Tab::iter() {
             let is_active = self == tab;
@@ -831,7 +912,9 @@ impl Tab {
                 Tab::Measurements => true,
                 Tab::ImpulseResponses | Tab::FrequencyResponses => is_analysing,
             };
-            let button = button(text(tab.to_string()))
+
+            let button = button(text(tab.to_string()).size(18))
+                .padding(10)
                 .style(move |theme: &Theme, status| {
                     if is_active {
                         let palette = theme.extended_palette();
@@ -854,7 +937,7 @@ impl Tab {
             row = row.push(button);
         }
 
-        row.into()
+        row.spacing(5).align_y(Alignment::Center).into()
     }
 }
 
@@ -868,29 +951,6 @@ impl Display for Tab {
 
         write!(f, "{}", label)
     }
-}
-
-fn tab_button<'a>(tab: Tab, is_active: bool, is_enabled: bool) -> Element<'a, Message> {
-    button(text(tab.to_string()))
-        .style(move |theme: &Theme, status| {
-            if is_active {
-                let palette = theme.extended_palette();
-
-                button::Style {
-                    background: Some(palette.background.base.color.into()),
-                    text_color: palette.background.base.text,
-                    ..button::text(theme, status)
-                }
-            } else {
-                button::text(theme, status)
-            }
-        })
-        .on_press_maybe(if is_enabled {
-            Some(Message::TabSelected(tab))
-        } else {
-            None
-        })
-        .into()
 }
 
 fn modal<'a, Message>(

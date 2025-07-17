@@ -1,21 +1,27 @@
-use std::fmt::{self, Display};
+use std::{
+    fmt::{self, Display},
+    ops::RangeInclusive,
+};
 
 use crate::{
-    icon,
+    data, icon,
     ui::{self, frequency_response, impulse_response},
 };
 
 use iced::{
-    widget::{column, container, horizontal_space, row, stack, text, text::IntoFragment, toggler},
+    widget::{
+        canvas, column, container, horizontal_space, row, stack, text, text::IntoFragment, toggler,
+    },
     Alignment, Color, Element, Length,
 };
 use rand::Rng as _;
 
 #[derive(Debug)]
 pub struct Item {
-    color: iced::Color,
-    is_shown: bool,
+    pub color: iced::Color,
+    pub is_shown: bool,
     pub state: State,
+    pub smoothed: Option<Box<[f32]>>,
 }
 
 impl Item {
@@ -26,6 +32,7 @@ impl Item {
             color,
             is_shown: true,
             state,
+            smoothed: None,
         }
     }
 
@@ -106,6 +113,14 @@ impl Display for State {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct ChartData {
+    pub x_max: Option<f32>,
+    pub x_range: Option<RangeInclusive<f32>>,
+    pub cache: canvas::Cache,
+    pub shift_key_pressed: bool,
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Smoothing {
     #[default]
@@ -162,6 +177,21 @@ impl fmt::Display for Smoothing {
             }
         )
     }
+}
+
+pub async fn smooth_frequency_response(
+    id: ui::measurement::Id,
+    frequency_response: ui::FrequencyResponse,
+    fraction: u8,
+) -> (ui::measurement::Id, Box<[f32]>) {
+    let data = tokio::task::spawn_blocking(move || {
+        data::smooth_fractional_octave(&frequency_response.data.clone(), fraction)
+    })
+    .await
+    .unwrap()
+    .into_boxed_slice();
+
+    (id, data)
 }
 
 fn random_color() -> iced::Color {
