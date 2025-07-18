@@ -1,6 +1,6 @@
 use crate::data::{Samples, Window};
 
-use super::{impulse_response, measurement, ImpulseResponse};
+use super::{measurement, ImpulseResponse};
 
 #[derive(Debug, Clone)]
 pub struct FrequencyResponse {

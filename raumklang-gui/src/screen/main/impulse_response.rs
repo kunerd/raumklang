@@ -1,26 +1,13 @@
-use crate::{
-    data::{self, chart},
-    ui::{self, ImpulseResponse},
-};
+use crate::{data::chart, ui::ImpulseResponse};
 
 use iced::{
     mouse::ScrollDelta,
-    widget::{
-        button, canvas, column, container, horizontal_rule, pick_list, row, scrollable, stack, text,
-    },
+    widget::{canvas, column, container, pick_list, row, stack, text},
     Alignment, Color, Element, Length, Point,
 };
-use prism::{line_series, point_series, Labels};
+use prism::{line_series, Labels};
 
-use std::{collections::HashMap, ops::RangeInclusive};
-
-#[derive(Debug, Default)]
-pub struct Tab {
-    selected: Option<ui::measurement::Id>,
-    chart: Chart,
-}
-
-impl Tab {}
+use std::ops::RangeInclusive;
 
 #[derive(Debug, Clone)]
 pub enum ChartOperation {

@@ -3,7 +3,7 @@ mod impulse_response;
 mod measurement;
 
 use crate::{
-    data::{self, chart, SampleRate, Samples, Window},
+    data::{self, SampleRate, Samples, Window},
     icon, log, ui,
 };
 
@@ -521,7 +521,7 @@ impl Main {
             .style(container::rounded_box)
         };
 
-        let content: Element<_> = 'content: {
+        let content: Element<_> = {
             // if let Some(recording) = &self.recording {
             //     break 'content recording.view().map(Message::Recording);
             // }
