@@ -9,9 +9,7 @@ use crate::{
 };
 
 use iced::{
-    widget::{
-        canvas, column, container, horizontal_space, row, stack, text, text::IntoFragment, toggler,
-    },
+    widget::{canvas, column, container, row, stack, text, text::IntoFragment, toggler},
     Alignment, Color, Element, Length,
 };
 use rand::Rng as _;
@@ -70,19 +68,22 @@ impl Item {
     {
         let item = {
             let content = column![
-                text(measurement_name).wrapping(text::Wrapping::Glyph),
                 row![
-                    toggler(self.is_shown)
-                        .on_toggle(toggle_msg)
-                        .width(Length::Shrink),
-                    horizontal_space(),
-                    icon::record().color(self.color)
+                    icon::record().color(self.color).align_y(Alignment::Center),
+                    text(measurement_name)
+                        .align_y(Alignment::Center)
+                        .wrapping(text::Wrapping::Glyph),
                 ]
                 .align_y(Alignment::Center)
+                .spacing(8),
+                container(
+                    toggler(self.is_shown)
+                        .on_toggle(toggle_msg)
+                        .width(Length::Shrink)
+                )
+                .align_right(Length::Fill)
             ]
-            .clip(true)
-            .spacing(5)
-            .padding(5);
+            .spacing(8);
 
             container(content).style(container::rounded_box)
         };
