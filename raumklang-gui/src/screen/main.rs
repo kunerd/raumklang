@@ -16,6 +16,7 @@ use iced::{
     },
     Alignment, Color, Element, Length, Subscription, Task, Theme,
 };
+use impulse_response::WindowSettings;
 use prism::{axis, line_series, Axis, Chart, Labels};
 use raumklang_core::dbfs;
 
@@ -43,10 +44,17 @@ enum State {
     },
 }
 
+#[derive(Debug)]
+pub enum Tab {
+    Measurements,
+    ImpulseResponses { window_settings: WindowSettings },
+    FrequencyResponses,
+}
+
 #[derive(Debug, Default)]
 struct Charts {
-    impulse_response: impulse_response::Chart,
-    frequency_response: frequency_response::ChartData,
+    impulse_responses: impulse_response::Chart,
+    frequency_responses: frequency_response::ChartData,
 }
 
 // #[derive(Default)]
@@ -69,7 +77,7 @@ struct Charts {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    TabSelected(Tab),
+    TabSelected(TabId),
     Measurements(measurement::Message),
     ImpulseResponseSelected(ui::measurement::Id),
     ImpulseResponseComputed((ui::measurement::Id, ui::ImpulseResponse)),
@@ -77,13 +85,13 @@ pub enum Message {
     SmoothingChanged(frequency_response::Smoothing),
     FrequencyResponseComputed((ui::measurement::Id, raumklang_core::FrequencyResponse)),
     FrequencyResponseSmoothed((ui::measurement::Id, Box<[f32]>)),
-    ImpulseResponseChart(impulse_response::ChartOperation),
+    ImpulseResponses(impulse_response::Message),
     ShiftKeyPressed,
     ShiftKeyReleased,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Tab {
+pub enum TabId {
     Measurements,
     ImpulseResponses,
     FrequencyResponses,
@@ -116,7 +124,7 @@ impl Main {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::TabSelected(tab) => {
+            Message::TabSelected(id) => {
                 let State::Analysing {
                     ref mut active_tab,
                     ref impulse_responses,
@@ -128,58 +136,79 @@ impl Main {
                     return Task::none();
                 };
 
-                *active_tab = tab;
+                let (tab, tasks) = match (&active_tab, id) {
+                    (Tab::Measurements, TabId::Measurements)
+                    | (Tab::ImpulseResponses { .. }, TabId::ImpulseResponses)
+                    | (Tab::FrequencyResponses, TabId::FrequencyResponses) => return Task::none(),
+                    (Tab::ImpulseResponses { window_settings }, _)
+                        if window_settings.is_dirty() =>
+                    {
+                        dbg!("is dirty");
+                        return Task::none();
+                    }
+                    (_, TabId::Measurements) => (Tab::Measurements, Task::none()),
+                    (_, TabId::ImpulseResponses) => (
+                        Tab::ImpulseResponses {
+                            window_settings: WindowSettings::new(window.clone()),
+                        },
+                        Task::none(),
+                    ),
+                    (_, TabId::FrequencyResponses) => {
+                        let impulse_response_tasks = impulse_responses
+                            .iter()
+                            .filter_map(|(id, state)| {
+                                let computed = state.computed()?;
+                                Some((id, computed))
+                            })
+                            .flat_map(|(id, impulse_response)| {
+                                if let Some(entry) = frequency_responses.get(&id) {
+                                    if matches!(
+                                        entry.state,
+                                        frequency_response::State::ComputingFrequencyResponse
+                                            | frequency_response::State::Computed(_)
+                                    ) {
+                                        return None;
+                                    }
+                                };
 
-                if let Tab::FrequencyResponses = tab {
-                    let impulse_response_tasks = impulse_responses
-                        .iter()
-                        .filter_map(|(id, state)| {
-                            let computed = state.computed()?;
-                            Some((id, computed))
-                        })
-                        .flat_map(|(id, impulse_response)| {
-                            if let Some(entry) = frequency_responses.get(&id) {
-                                if matches!(
-                                    entry.state,
-                                    frequency_response::State::ComputingFrequencyResponse
-                                        | frequency_response::State::Computed(_)
-                                ) {
-                                    return None;
-                                }
-                            };
+                                let (frequency_response, computation) =
+                                    ui::frequency_response::State::new(
+                                        *id,
+                                        impulse_response.clone(),
+                                        window.clone(),
+                                    );
 
-                            let (frequency_response, computation) =
-                                ui::frequency_response::State::new(
+                                frequency_responses.insert(
                                     *id,
-                                    impulse_response.clone(),
-                                    window.clone(),
+                                    frequency_response::Item::from_state(frequency_response),
                                 );
 
-                            frequency_responses.insert(
-                                *id,
-                                frequency_response::Item::from_state(frequency_response),
-                            );
+                                Some(computation)
+                            })
+                            .map(|computation| {
+                                Task::perform(computation.run(), Message::FrequencyResponseComputed)
+                            });
 
-                            Some(computation)
-                        })
-                        .map(|computation| {
-                            Task::perform(computation.run(), Message::FrequencyResponseComputed)
-                        });
+                        let missing_impulse_responses_tasks = self
+                            .measurements
+                            .iter()
+                            .filter(|m| m.is_loaded())
+                            .filter(|m| impulse_responses.get(&m.id).is_none())
+                            .map(|m| Task::done(Message::ImpulseResponseSelected(m.id)));
 
-                    let missing_impulse_responses_tasks = self
-                        .measurements
-                        .iter()
-                        .filter(|m| m.is_loaded())
-                        .filter(|m| impulse_responses.get(&m.id).is_none())
-                        .map(|m| Task::done(Message::ImpulseResponseSelected(m.id)));
+                        (
+                            Tab::FrequencyResponses,
+                            Task::batch([
+                                Task::batch(impulse_response_tasks),
+                                Task::batch(missing_impulse_responses_tasks),
+                            ]),
+                        )
+                    }
+                };
 
-                    Task::batch([
-                        Task::batch(impulse_response_tasks),
-                        Task::batch(missing_impulse_responses_tasks),
-                    ])
-                } else {
-                    Task::none()
-                }
+                *active_tab = tab;
+
+                tasks
             }
             Message::Measurements(message) => {
                 let task = match message {
@@ -243,6 +272,7 @@ impl Main {
                     selected_impulse_response,
                     impulse_responses,
                     frequency_responses,
+                    charts,
                     ..
                 } = &mut self.state
                 else {
@@ -250,6 +280,7 @@ impl Main {
                 };
 
                 *selected_impulse_response = Some(id);
+                charts.impulse_responses.line_cache.clear();
 
                 if impulse_responses.contains_key(&id) {
                     Task::none()
@@ -284,6 +315,7 @@ impl Main {
                     active_tab,
                     impulse_responses,
                     frequency_responses,
+                    charts,
                     ..
                 } = &mut self.state
                 else {
@@ -294,7 +326,9 @@ impl Main {
                     .entry(id)
                     .and_modify(|ir| ir.set_computed(impulse_response.clone()));
 
-                if let Tab::FrequencyResponses = active_tab {
+                charts.impulse_responses.line_cache.clear();
+
+                if let Tab::FrequencyResponses { .. } = active_tab {
                     let (frequency_response, computation) =
                         ui::frequency_response::State::new(id, impulse_response, window.clone());
 
@@ -306,23 +340,50 @@ impl Main {
                     Task::none()
                 }
             }
-            Message::ImpulseResponseChart(chart_operation) => {
+            Message::ImpulseResponses(impulse_response::Message::Chart(operation)) => {
                 let State::Analysing {
-                    charts: ref mut chart_data,
+                    active_tab:
+                        Tab::ImpulseResponses {
+                            ref window_settings,
+                        },
+                    ref mut charts,
                     ..
                 } = self.state
                 else {
                     return Task::none();
                 };
 
-                chart_data.impulse_response.update(chart_operation);
+                charts.impulse_responses.update(operation);
+                window_settings.cache.clear();
+
+                Task::none()
+            }
+            Message::ImpulseResponses(impulse_response::Message::Window(operation)) => {
+                let State::Analysing {
+                    active_tab:
+                        Tab::ImpulseResponses {
+                            ref mut window_settings,
+                        },
+                    ref charts,
+                    ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
+                window_settings.apply(
+                    operation,
+                    charts.impulse_responses.time_unit,
+                    charts.impulse_responses.amplitude_unit,
+                );
+                charts.impulse_responses.cache.clear();
 
                 Task::none()
             }
             Message::FrequencyResponseComputed((id, frequency_response)) => {
                 let State::Analysing {
                     ref mut frequency_responses,
-                    charts: ref mut chart_data,
+                    ref mut charts,
                     ..
                 } = self.state
                 else {
@@ -332,7 +393,7 @@ impl Main {
                 frequency_responses.entry(id).and_modify(|entry| {
                     *entry = frequency_response::Item::from_data(frequency_response);
 
-                    chart_data.frequency_response.cache.clear();
+                    charts.frequency_responses.cache.clear();
                 });
 
                 Task::none()
@@ -340,7 +401,7 @@ impl Main {
             Message::FrequencyResponseToggled(id, state) => {
                 let State::Analysing {
                     ref mut frequency_responses,
-                    charts: ref mut chart_data,
+                    ref mut charts,
                     ..
                 } = self.state
                 else {
@@ -351,14 +412,14 @@ impl Main {
                     .entry(id)
                     .and_modify(|entry| entry.is_shown = state);
 
-                chart_data.frequency_response.cache.clear();
+                charts.frequency_responses.cache.clear();
 
                 Task::none()
             }
             Message::SmoothingChanged(smoothing) => {
                 let State::Analysing {
                     ref mut frequency_responses,
-                    charts: ref mut chart_data,
+                    ref mut charts,
                     ..
                 } = self.state
                 else {
@@ -394,7 +455,7 @@ impl Main {
                         .values_mut()
                         .for_each(|entry| entry.smoothed = None);
 
-                    chart_data.frequency_response.cache.clear();
+                    charts.frequency_responses.cache.clear();
 
                     Task::none()
                 }
@@ -402,7 +463,7 @@ impl Main {
             Message::FrequencyResponseSmoothed((id, smoothed_data)) => {
                 let State::Analysing {
                     ref mut frequency_responses,
-                    charts: ref mut chart_data,
+                    ref mut charts,
                     ..
                 } = self.state
                 else {
@@ -413,33 +474,25 @@ impl Main {
                     .entry(id)
                     .and_modify(|entry| entry.smoothed = Some(smoothed_data));
 
-                chart_data.frequency_response.cache.clear();
+                charts.frequency_responses.cache.clear();
 
                 Task::none()
             }
             Message::ShiftKeyPressed => {
-                let State::Analysing {
-                    charts: ref mut chart_data,
-                    ..
-                } = self.state
-                else {
+                let State::Analysing { ref mut charts, .. } = self.state else {
                     return Task::none();
                 };
 
-                chart_data.impulse_response.shift_key_pressed();
+                charts.impulse_responses.shift_key_pressed();
 
                 Task::none()
             }
             Message::ShiftKeyReleased => {
-                let State::Analysing {
-                    charts: ref mut chart_data,
-                    ..
-                } = self.state
-                else {
+                let State::Analysing { ref mut charts, .. } = self.state else {
                     return Task::none();
                 };
 
-                chart_data.impulse_response.shift_key_released();
+                charts.impulse_responses.shift_key_released();
 
                 Task::none()
             }
@@ -448,8 +501,8 @@ impl Main {
 
     pub fn view(&self) -> Element<Message> {
         let header = container(match &self.state {
-            State::CollectingMeasuremnts => Tab::Measurements.view(false),
-            State::Analysing { active_tab, .. } => active_tab.view(true),
+            State::CollectingMeasuremnts => TabId::Measurements.view(false),
+            State::Analysing { active_tab, .. } => TabId::from(active_tab).view(true),
         })
         .width(Length::Fill)
         .style(container::dark);
@@ -461,17 +514,19 @@ impl Main {
                 impulse_responses,
                 selected_impulse_response,
                 frequency_responses,
-                charts: chart_data,
+                charts,
                 ..
             } => match active_tab {
                 Tab::Measurements => self.measurements_tab().map(Message::Measurements),
-                Tab::ImpulseResponses => self.impulse_responses_tab(
+                Tab::ImpulseResponses { window_settings } => self.impulse_responses_tab(
                     *selected_impulse_response,
-                    &chart_data.impulse_response,
+                    &charts.impulse_responses,
                     impulse_responses,
+                    window_settings,
                 ),
-                Tab::FrequencyResponses => self
-                    .frequency_responses_tab(frequency_responses, &chart_data.frequency_response),
+                Tab::FrequencyResponses => {
+                    self.frequency_responses_tab(frequency_responses, &charts.frequency_responses)
+                }
             },
         };
 
@@ -609,6 +664,7 @@ impl Main {
         selected: Option<ui::measurement::Id>,
         chart: &'a impulse_response::Chart,
         impulse_responses: &'a HashMap<ui::measurement::Id, ui::impulse_response::State>,
+        window_settings: &'a WindowSettings,
     ) -> Element<'a, Message> {
         let sidebar = {
             let header = {
@@ -666,12 +722,13 @@ impl Main {
 
         let content = {
             if let Some(impulse_response) = selected
-                .and_then(|id| impulse_responses.get(&id))
+                .as_ref()
+                .and_then(|id| impulse_responses.get(id))
                 .and_then(|state| state.computed())
             {
                 chart
-                    .view(impulse_response)
-                    .map(Message::ImpulseResponseChart)
+                    .view(impulse_response, window_settings)
+                    .map(Message::ImpulseResponses)
             } else {
                 container(text("Impulse response not computed, yet.")).into()
             }
@@ -828,12 +885,12 @@ impl Default for Main {
     }
 }
 
-impl Tab {
+impl TabId {
     pub fn iter() -> impl Iterator<Item = Self> {
         [
-            Tab::Measurements,
-            Tab::ImpulseResponses,
-            Tab::FrequencyResponses,
+            TabId::Measurements,
+            TabId::ImpulseResponses,
+            TabId::FrequencyResponses,
         ]
         .into_iter()
     }
@@ -841,12 +898,12 @@ impl Tab {
     pub fn view<'a>(self, is_analysing: bool) -> Element<'a, Message> {
         let mut row = row![];
 
-        for tab in Tab::iter() {
+        for tab in TabId::iter() {
             let is_active = self == tab;
 
             let is_enabled = match tab {
-                Tab::Measurements => true,
-                Tab::ImpulseResponses | Tab::FrequencyResponses => is_analysing,
+                TabId::Measurements => true,
+                TabId::ImpulseResponses | TabId::FrequencyResponses => is_analysing,
             };
 
             let button = button(text(tab.to_string()).size(16))
@@ -877,15 +934,25 @@ impl Tab {
     }
 }
 
-impl Display for Tab {
+impl Display for TabId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let label = match self {
-            Tab::Measurements => "Measurements",
-            Tab::ImpulseResponses => "Impulse Responses",
-            Tab::FrequencyResponses => "Frequency Responses",
+            TabId::Measurements => "Measurements",
+            TabId::ImpulseResponses => "Impulse Responses",
+            TabId::FrequencyResponses => "Frequency Responses",
         };
 
         write!(f, "{}", label)
+    }
+}
+
+impl From<&Tab> for TabId {
+    fn from(tab: &Tab) -> Self {
+        match tab {
+            Tab::Measurements => TabId::Measurements,
+            Tab::ImpulseResponses { .. } => TabId::ImpulseResponses,
+            Tab::FrequencyResponses => TabId::FrequencyResponses,
+        }
     }
 }
 
