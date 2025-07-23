@@ -34,7 +34,7 @@ impl Item {
         }
     }
 
-    pub fn from_impulse_response_state(state: impulse_response::State) -> Self {
+    pub fn from_impulse_response_state(state: &impulse_response::State) -> Self {
         let state = match state {
             impulse_response::State::Computing => State::ComputingImpulseResponse,
             impulse_response::State::Computed(_) => State::ComputingFrequencyResponse,

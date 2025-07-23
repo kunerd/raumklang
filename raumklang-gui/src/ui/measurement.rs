@@ -14,7 +14,7 @@ pub struct Measurement {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Id(usize);
+pub struct Id(pub usize);
 
 #[derive(Debug)]
 pub enum State<T> {
