@@ -4,18 +4,6 @@ pub struct FrequencyResponse {
     pub data: Vec<f32>,
 }
 
-#[derive(Debug)]
-pub enum State {
-    Computing,
-    Computed(FrequencyResponse),
-}
-
-impl State {
-    pub(crate) fn from_data(frequency_response: raumklang_core::FrequencyResponse) -> State {
-        State::Computed(FrequencyResponse::from_data(frequency_response))
-    }
-}
-
 impl FrequencyResponse {
     pub fn from_data(frequency_response: raumklang_core::FrequencyResponse) -> Self {
         let sample_rate = frequency_response.sample_rate;

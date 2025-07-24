@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     data, icon,
-    ui::{self, frequency_response, impulse_response},
+    ui::{self},
 };
 
 use iced::{
@@ -32,30 +32,6 @@ impl Item {
             state,
             smoothed: None,
         }
-    }
-
-    pub fn from_impulse_response_state(state: &impulse_response::State) -> Self {
-        let state = match state {
-            impulse_response::State::Computing => State::ComputingImpulseResponse,
-            impulse_response::State::Computed(_) => State::ComputingFrequencyResponse,
-        };
-
-        Self::new(state)
-    }
-
-    pub fn from_state(state: frequency_response::State) -> Self {
-        let state = match state {
-            frequency_response::State::Computing => State::ComputingFrequencyResponse,
-            frequency_response::State::Computed(frequency_response) => {
-                State::Computed(frequency_response)
-            }
-        };
-
-        Self::new(state)
-    }
-
-    pub fn from_data(frequency_response: raumklang_core::FrequencyResponse) -> Self {
-        Self::from_state(frequency_response::State::from_data(frequency_response))
     }
 
     pub fn view<'a, Message>(
@@ -92,6 +68,12 @@ impl Item {
             State::Computed(_) => item.into(),
             state => processing_overlay(state.to_string(), item),
         }
+    }
+}
+
+impl Default for Item {
+    fn default() -> Self {
+        Self::new(State::ComputingImpulseResponse)
     }
 }
 

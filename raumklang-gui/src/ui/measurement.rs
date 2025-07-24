@@ -5,7 +5,7 @@ use std::{
 
 use crate::data;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Measurement {
     pub id: Id,
     pub name: String,
@@ -16,7 +16,7 @@ pub struct Measurement {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Id(pub usize);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum State<T> {
     NotLoaded,
     Loaded(T),
@@ -54,7 +54,7 @@ impl Measurement {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Loopback {
     pub name: String,
     pub path: PathBuf,
@@ -72,5 +72,9 @@ impl Loopback {
             path: loopback.path,
             inner: State::Loaded(loopback.inner),
         }
+    }
+
+    pub(crate) fn loaded(&self) -> Option<&raumklang_core::Loopback> {
+        self.inner.loaded()
     }
 }
