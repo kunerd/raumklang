@@ -98,7 +98,7 @@ impl Chart {
                 chart::AmplitudeUnit::DezibelFullScale => db_full_scale,
             };
 
-            let sample_rate = impulse_response.sample_rate as f32;
+            let sample_rate = impulse_response.sample_rate.into();
 
             let chart = prism::Chart::new()
                 .width(Length::Fill)

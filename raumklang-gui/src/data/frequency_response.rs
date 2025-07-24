@@ -5,7 +5,7 @@ use ndarray::{concatenate, Array, Array1, ArrayView, Axis};
 use ndarray_interp::interp1d::{cubic_spline::CubicSpline, Interp1DBuilder};
 use ndarray_stats::SummaryStatisticsExt;
 
-use super::{ImpulseResponse, Samples, Window};
+use super::{Samples, Window};
 
 #[derive(Debug, Clone)]
 pub struct FrequencyResponse {
@@ -29,15 +29,13 @@ impl FrequencyResponse {
     }
 }
 
-// type FrequencyResponse = Arc<raumklang_core::FrequencyResponse>;
-
 #[derive(Debug, Clone)]
 pub enum Event {
     ComputingStarted,
 }
 
 pub fn compute(
-    impulse_response: ImpulseResponse,
+    mut impulse_response: raumklang_core::ImpulseResponse,
     window: Window<Samples>,
 ) -> impl Sipper<FrequencyResponse, Event> {
     sipper(|mut output| async move {
@@ -45,7 +43,6 @@ pub fn compute(
 
         let offset = window.offset().into();
 
-        let mut impulse_response = impulse_response.0;
         impulse_response.data.rotate_right(offset);
 
         let window: Vec<_> = window.curve().map(|(_x, y)| y).collect();

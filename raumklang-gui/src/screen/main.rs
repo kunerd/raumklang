@@ -180,7 +180,11 @@ impl Main {
                                                 return Task::none();
                                             }
 
-                                            compute_frequency_response(id, impulse_response, window)
+                                            compute_frequency_response(
+                                                id,
+                                                impulse_response.clone(),
+                                                window,
+                                            )
                                         },
                                     )
                                 });
@@ -296,8 +300,7 @@ impl Main {
                     return Task::none();
                 };
 
-                let impulse_response =
-                    ui::ImpulseResponse::from_data(impulse_response.as_ref().clone());
+                let impulse_response = ui::ImpulseResponse::from_data(impulse_response);
 
                 impulse_responses
                     .entry(id)
@@ -306,7 +309,7 @@ impl Main {
                 charts.impulse_responses.line_cache.clear();
 
                 if let Tab::FrequencyResponses { .. } = active_tab {
-                    compute_frequency_response(id, &impulse_response, window)
+                    compute_frequency_response(id, impulse_response, window)
                 } else {
                     Task::none()
                 }
@@ -896,14 +899,11 @@ fn compute_impulse_response(
 
 fn compute_frequency_response(
     id: ui::measurement::Id,
-    impulse_response: &ui::ImpulseResponse,
+    impulse_response: ui::ImpulseResponse,
     window: &Window<Samples>,
 ) -> Task<Message> {
     Task::sip(
-        data::frequency_response::compute(
-            data::ImpulseResponse(impulse_response.origin.clone()),
-            window.clone(),
-        ),
+        data::frequency_response::compute(impulse_response.origin, window.clone()),
         move |event| Message::FrequencyResponseEvent(id, event),
         move |frequency_response| Message::FrequencyResponseComputed(id, frequency_response),
     )

@@ -1,3 +1,5 @@
+use crate::data::{self, SampleRate};
+
 #[derive(Debug, Default, Clone)]
 pub enum State {
     #[default]
@@ -21,14 +23,15 @@ impl State {
 #[derive(Debug, Clone)]
 pub struct ImpulseResponse {
     pub max: f32,
-    pub sample_rate: u32,
+    pub sample_rate: SampleRate,
     pub data: Vec<f32>,
     pub origin: raumklang_core::ImpulseResponse,
 }
 
 impl ImpulseResponse {
-    pub fn from_data(impulse_response: raumklang_core::ImpulseResponse) -> Self {
+    pub fn from_data(impulse_response: data::ImpulseResponse) -> Self {
         let data: Vec<_> = impulse_response
+            .origin
             .data
             .iter()
             .map(|s| s.re.powi(2).sqrt())
@@ -38,9 +41,9 @@ impl ImpulseResponse {
 
         Self {
             max,
-            sample_rate: impulse_response.sample_rate,
+            sample_rate: SampleRate::new(impulse_response.origin.sample_rate),
             data,
-            origin: impulse_response,
+            origin: impulse_response.origin,
         }
     }
 }
