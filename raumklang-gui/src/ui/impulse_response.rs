@@ -1,5 +1,3 @@
-use super::measurement;
-
 #[derive(Debug, Default, Clone)]
 pub enum State {
     #[default]
@@ -8,17 +6,6 @@ pub enum State {
 }
 
 impl State {
-    pub(crate) fn new(
-        measurement_id: measurement::Id,
-        loopback: raumklang_core::Loopback,
-        measurement: raumklang_core::Measurement,
-    ) -> (Self, Computation) {
-        (
-            State::Computing,
-            Computation::new(measurement_id, loopback, measurement),
-        )
-    }
-
     pub(crate) fn set_computed(&mut self, impulse_response: ImpulseResponse) {
         *self = State::Computed(impulse_response)
     }
@@ -40,7 +27,7 @@ pub struct ImpulseResponse {
 }
 
 impl ImpulseResponse {
-    fn from_data(impulse_response: raumklang_core::ImpulseResponse) -> Self {
+    pub fn from_data(impulse_response: raumklang_core::ImpulseResponse) -> Self {
         let data: Vec<_> = impulse_response
             .data
             .iter()
@@ -55,38 +42,5 @@ impl ImpulseResponse {
             data,
             origin: impulse_response,
         }
-    }
-}
-
-pub struct Computation {
-    measurement_id: measurement::Id,
-    loopback: raumklang_core::Loopback,
-    measurement: raumklang_core::Measurement,
-}
-
-impl Computation {
-    fn new(
-        measurement_id: measurement::Id,
-        loopback: raumklang_core::Loopback,
-        measurement: raumklang_core::Measurement,
-    ) -> Self {
-        Computation {
-            measurement_id,
-            loopback,
-            measurement,
-        }
-    }
-
-    pub async fn run(self) -> (measurement::Id, ImpulseResponse) {
-        let id = self.measurement_id;
-
-        let impulse_response = tokio::task::spawn_blocking(move || {
-            raumklang_core::ImpulseResponse::from_signals(&self.loopback, &self.measurement)
-                .unwrap()
-        })
-        .await
-        .unwrap();
-
-        (id, ImpulseResponse::from_data(impulse_response.into()))
     }
 }

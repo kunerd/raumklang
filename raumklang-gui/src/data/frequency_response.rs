@@ -1,6 +1,40 @@
+use iced::task::{sipper, Sipper};
 use ndarray::{concatenate, Array, Array1, ArrayView, Axis};
 use ndarray_interp::interp1d::{cubic_spline::CubicSpline, Interp1DBuilder};
 use ndarray_stats::SummaryStatisticsExt;
+
+use super::{ImpulseResponse, Samples, Window};
+
+#[derive(Debug, Clone)]
+pub struct FrequencyResponse(pub raumklang_core::FrequencyResponse);
+
+#[derive(Debug, Clone)]
+pub enum Event {
+    ComputingStarted,
+}
+
+pub fn compute(
+    impulse_response: ImpulseResponse,
+    window: Window<Samples>,
+) -> impl Sipper<FrequencyResponse, Event> {
+    sipper(|mut output| async move {
+        output.send(Event::ComputingStarted).await;
+
+        let offset = window.offset().into();
+
+        let mut impulse_response = impulse_response.0;
+        impulse_response.data.rotate_right(offset);
+
+        let window: Vec<_> = window.curve().map(|(_x, y)| y).collect();
+        let inner = tokio::task::spawn_blocking(move || {
+            raumklang_core::FrequencyResponse::new(impulse_response, &window)
+        })
+        .await
+        .unwrap();
+
+        FrequencyResponse(inner)
+    })
+}
 
 //   credits to https://github.com/pyfar/pyfar
 //

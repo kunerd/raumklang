@@ -1,4 +1,3 @@
-mod analyses;
 mod frequency_response;
 mod impulse_response;
 mod measurement;
@@ -6,7 +5,7 @@ mod measurement;
 use crate::{
     data::{self, SampleRate, Samples, Window},
     icon, log,
-    ui::{self, FrequencyResponse},
+    ui::{self},
 };
 
 use iced::{
@@ -82,14 +81,16 @@ pub enum Message {
     TabSelected(TabId),
     Measurements(measurement::Message),
     ImpulseResponseSelected(ui::measurement::Id),
-    ImpulseResponseComputed((ui::measurement::Id, ui::ImpulseResponse)),
     FrequencyResponseToggled(ui::measurement::Id, bool),
     SmoothingChanged(frequency_response::Smoothing),
-    FrequencyResponseComputed((ui::measurement::Id, raumklang_core::FrequencyResponse)),
     FrequencyResponseSmoothed((ui::measurement::Id, Box<[f32]>)),
     ImpulseResponses(impulse_response::Message),
     ShiftKeyPressed,
     ShiftKeyReleased,
+    ImpulseResponseEvent(ui::measurement::Id, data::impulse_response::Event),
+    ImpulseResponseComputed(ui::measurement::Id, data::ImpulseResponse),
+    FrequencyResponseEvent(ui::measurement::Id, data::frequency_response::Event),
+    FrequencyResponseComputed(ui::measurement::Id, data::FrequencyResponse),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,7 +131,6 @@ impl Main {
                 let State::Analysing {
                     ref mut active_tab,
                     ref mut impulse_responses,
-                    ref mut frequency_responses,
                     ref window,
                     ..
                 } = self.state
@@ -156,73 +156,54 @@ impl Main {
                         Task::none(),
                     ),
                     (_, TabId::FrequencyResponses) => {
-                        let tasks = self
-                            .measurements
-                            .iter()
-                            .filter(|m| m.is_loaded())
-                            // .flat_map(|m| {
-                            //     match analyses.compute_impulse_response() {
-                            //         Computing => None,
-                            //         Compute(task) => Some(task),
-                            //         Computed =>
-                            //     }
-                            // })
-                            .flat_map(|m| {
-                                let impulse_response = impulse_responses.get(&m.id)?;
+                        let tasks =
+                            self.measurements
+                                .iter()
+                                .filter(|m| m.is_loaded())
+                                .flat_map(|m| {
+                                    let id = m.id;
+                                    let impulse_response = impulse_responses.get(&id);
 
-                                if let Some(impulse_response) = impulse_response.computed() {
-                                    if let Some(entry) = frequency_responses.get(&m.id) {
-                                        if matches!(
-                                            entry.state,
-                                            frequency_response::State::ComputingFrequencyResponse
-                                                | frequency_response::State::Computed(_)
-                                        ) {
-                                            return None;
-                                        }
-                                    };
-
-                                    let (frequency_response, computation) =
-                                        ui::frequency_response::State::new(
-                                            m.id,
-                                            impulse_response.clone(),
-                                            window.clone(),
-                                        );
-
-                                    frequency_responses.insert(
-                                        m.id,
-                                        frequency_response::Item::from_state(frequency_response),
-                                    );
-
-                                    Some(Task::perform(
-                                        computation.run(),
-                                        Message::FrequencyResponseComputed,
-                                    ))
-                                } else {
-                                    let (impulse_response, computation) =
-                                        ui::impulse_response::State::new(
-                                            m.id,
-                                            self.loopback
+                                    impulse_response.and_then(|ir| ir.computed()).map_or_else(
+                                        || {
+                                            let loopback = self
+                                                .loopback
                                                 .as_ref()
                                                 .and_then(|l| l.inner.loaded())
                                                 .unwrap()
-                                                .clone(),
-                                            m.inner.loaded().unwrap().clone(),
-                                        );
+                                                .clone();
 
-                                    frequency_responses.insert(
-                                        m.id,
-                                        frequency_response::Item::from_impulse_response_state(
-                                            &impulse_response,
-                                        ),
-                                    );
-                                    impulse_responses.insert(m.id, impulse_response);
+                                            let measurement = m.inner.loaded().unwrap().clone();
 
-                                    Some(Task::perform(
-                                        computation.run(),
-                                        Message::ImpulseResponseComputed,
-                                    ))
-                                }
-                            });
+                                            Some(Task::sip(
+                                                data::impulse_response::compute(
+                                                    loopback,
+                                                    measurement,
+                                                ),
+                                                move |event| {
+                                                    Message::ImpulseResponseEvent(id, event)
+                                                },
+                                                move |ir| Message::ImpulseResponseComputed(id, ir),
+                                            ))
+                                        },
+                                        |impulse_response| {
+                                            Some(Task::sip(
+                                                data::frequency_response::compute(
+                                                    data::ImpulseResponse(
+                                                        impulse_response.origin.clone(),
+                                                    ),
+                                                    window.clone(),
+                                                ),
+                                                move |event| {
+                                                    Message::FrequencyResponseEvent(id, event)
+                                                },
+                                                move |fr| {
+                                                    Message::FrequencyResponseComputed(id, fr)
+                                                },
+                                            ))
+                                        },
+                                    )
+                                });
                         (Tab::FrequencyResponses, Task::batch(tasks))
                     }
                 };
@@ -305,38 +286,42 @@ impl Main {
                 if impulse_responses.contains_key(&id) {
                     Task::none()
                 } else {
-                    let (impulse_response, computation) = ui::impulse_response::State::new(
-                        id,
-                        self.loopback
-                            .as_ref()
-                            .and_then(|l| l.inner.loaded())
-                            .unwrap()
-                            .clone(),
-                        self.measurements
-                            .iter()
-                            .find(|m| m.id == id)
-                            .and_then(|m| m.inner.loaded())
-                            .unwrap()
-                            .clone(),
-                    );
+                    let loopback = self
+                        .loopback
+                        .as_ref()
+                        .and_then(|l| l.inner.loaded())
+                        .unwrap()
+                        .clone();
 
-                    impulse_responses.insert(id, impulse_response.clone());
+                    let measurement = self
+                        .measurements
+                        .iter()
+                        .find(|m| m.id == id)
+                        .and_then(|m| m.inner.loaded())
+                        .unwrap()
+                        .clone();
 
-                    Task::perform(computation.run(), Message::ImpulseResponseComputed)
+                    Task::sip(
+                        data::impulse_response::compute(loopback, measurement),
+                        move |event| Message::ImpulseResponseEvent(id, event),
+                        move |ir| Message::ImpulseResponseComputed(id, ir),
+                    )
                 }
             }
-            Message::ImpulseResponseComputed((id, impulse_response)) => {
+            Message::ImpulseResponseComputed(id, impulse_response) => {
                 let State::Analysing {
                     window,
                     active_tab,
                     impulse_responses,
-                    frequency_responses,
                     charts,
                     ..
                 } = &mut self.state
                 else {
                     return Task::none();
                 };
+
+                let impulse_response =
+                    ui::ImpulseResponse::from_data(impulse_response.as_ref().clone());
 
                 impulse_responses
                     .entry(id)
@@ -345,13 +330,14 @@ impl Main {
                 charts.impulse_responses.line_cache.clear();
 
                 if let Tab::FrequencyResponses { .. } = active_tab {
-                    let (frequency_response, computation) =
-                        ui::frequency_response::State::new(id, impulse_response, window.clone());
-
-                    frequency_responses
-                        .insert(id, frequency_response::Item::from_state(frequency_response));
-
-                    Task::perform(computation.run(), Message::FrequencyResponseComputed)
+                    Task::sip(
+                        data::frequency_response::compute(
+                            data::ImpulseResponse(impulse_response.origin),
+                            window.clone(),
+                        ),
+                        move |event| Message::FrequencyResponseEvent(id, event),
+                        move |fr| Message::FrequencyResponseComputed(id, fr),
+                    )
                 } else {
                     Task::none()
                 }
@@ -396,7 +382,7 @@ impl Main {
 
                 Task::none()
             }
-            Message::FrequencyResponseComputed((id, frequency_response)) => {
+            Message::FrequencyResponseComputed(id, frequency_response) => {
                 let State::Analysing {
                     ref mut frequency_responses,
                     ref mut charts,
@@ -407,7 +393,7 @@ impl Main {
                 };
 
                 frequency_responses.entry(id).and_modify(|entry| {
-                    *entry = frequency_response::Item::from_data(frequency_response);
+                    *entry = frequency_response::Item::from_data(frequency_response.0);
 
                     charts.frequency_responses.cache.clear();
                 });
@@ -509,6 +495,49 @@ impl Main {
                 };
 
                 charts.impulse_responses.shift_key_released();
+
+                Task::none()
+            }
+            Message::ImpulseResponseEvent(id, event) => {
+                let State::Analysing {
+                    ref mut frequency_responses,
+                    ref mut impulse_responses,
+                    ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
+                match event {
+                    data::impulse_response::Event::ComputationStarted => {
+                        impulse_responses.insert(id, ui::impulse_response::State::Computing);
+                        frequency_responses.insert(
+                            id,
+                            frequency_response::Item::from_impulse_response_state(
+                                &ui::impulse_response::State::Computing,
+                            ),
+                        );
+                    }
+                }
+
+                Task::none()
+            }
+            Message::FrequencyResponseEvent(id, event) => {
+                let State::Analysing {
+                    ref mut frequency_responses,
+                    ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
+                match event {
+                    data::frequency_response::Event::ComputingStarted => {
+                        frequency_responses.entry(id).and_modify(|fr| {
+                            fr.state = frequency_response::State::ComputingFrequencyResponse
+                        });
+                    }
+                }
 
                 Task::none()
             }

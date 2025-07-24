@@ -1,4 +1,6 @@
 pub mod chart;
+pub mod frequency_response;
+pub mod impulse_response;
 pub mod measurement;
 pub mod project;
 mod recent_projects;
@@ -7,6 +9,8 @@ mod sample_rate;
 mod samples;
 pub mod window;
 
+pub use frequency_response::FrequencyResponse;
+pub use impulse_response::ImpulseResponse;
 pub use measurement::{Loopback, Measurement};
 pub use project::Project;
 pub use recent_projects::RecentProjects;
