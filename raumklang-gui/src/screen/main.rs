@@ -362,9 +362,7 @@ impl Main {
                 };
 
                 frequency_responses.entry(id).and_modify(|entry| {
-                    entry.state = frequency_response::State::Computed(
-                        ui::FrequencyResponse::from_data(frequency_response.0),
-                    );
+                    entry.state = frequency_response::State::Computed(frequency_response);
 
                     charts.frequency_responses.cache.clear();
                 });
@@ -907,7 +905,7 @@ fn compute_frequency_response(
             window.clone(),
         ),
         move |event| Message::FrequencyResponseEvent(id, event),
-        move |fr| Message::FrequencyResponseComputed(id, fr),
+        move |frequency_response| Message::FrequencyResponseComputed(id, frequency_response),
     )
 }
 

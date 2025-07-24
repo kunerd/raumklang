@@ -81,7 +81,7 @@ impl Default for Item {
 pub enum State {
     ComputingImpulseResponse,
     ComputingFrequencyResponse,
-    Computed(ui::FrequencyResponse),
+    Computed(data::FrequencyResponse),
 }
 
 impl Display for State {
@@ -164,7 +164,7 @@ impl fmt::Display for Smoothing {
 
 pub async fn smooth_frequency_response(
     id: ui::measurement::Id,
-    frequency_response: ui::FrequencyResponse,
+    frequency_response: data::FrequencyResponse,
     fraction: u8,
 ) -> (ui::measurement::Id, Box<[f32]>) {
     let data = tokio::task::spawn_blocking(move || {
