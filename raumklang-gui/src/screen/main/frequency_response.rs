@@ -34,6 +34,14 @@ impl Item {
         }
     }
 
+    pub fn computed(&self) -> Option<&data::FrequencyResponse> {
+        if let State::Computed(ref frequency_response) = self.state {
+            Some(frequency_response)
+        } else {
+            None
+        }
+    }
+
     pub fn view<'a, Message>(
         &'a self,
         measurement_name: &'a str,

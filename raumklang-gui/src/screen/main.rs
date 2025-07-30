@@ -1,3 +1,4 @@
+mod chart;
 mod frequency_response;
 mod impulse_response;
 mod measurement;
@@ -91,6 +92,7 @@ pub enum Message {
     ImpulseResponseComputed(ui::measurement::Id, data::ImpulseResponse),
     FrequencyResponseEvent(ui::measurement::Id, data::frequency_response::Event),
     FrequencyResponseComputed(ui::measurement::Id, data::FrequencyResponse),
+    Chart(chart::Interaction),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,7 +178,11 @@ impl Main {
                                             )
                                         },
                                         |impulse_response| {
-                                            if frequency_responses.get(&id).is_some() {
+                                            if frequency_responses
+                                                .get(&id)
+                                                .and_then(|fr| fr.computed())
+                                                .is_some()
+                                            {
                                                 return Task::none();
                                             }
 
@@ -257,7 +263,7 @@ impl Main {
                 let State::Analysing {
                     ref mut selected_impulse_response,
                     ref mut impulse_responses,
-                    ref charts,
+                    ref mut charts,
                     ..
                 } = self.state
                 else {
@@ -293,6 +299,7 @@ impl Main {
                     window,
                     active_tab,
                     impulse_responses,
+                    selected_impulse_response,
                     charts,
                     ..
                 } = &mut self.state
@@ -306,7 +313,15 @@ impl Main {
                     .entry(id)
                     .and_modify(|ir| ir.set_computed(impulse_response.clone()));
 
-                charts.impulse_responses.line_cache.clear();
+                if selected_impulse_response.is_some_and(|selected| selected == id) {
+                    charts
+                        .impulse_responses
+                        .x_range
+                        .get_or_insert_with(|| 0.0..=impulse_response.data.len() as f32);
+
+                    charts.impulse_responses.x_max = Some(impulse_response.max);
+                    charts.impulse_responses.line_cache.clear();
+                }
 
                 if let Tab::FrequencyResponses { .. } = active_tab {
                     compute_frequency_response(id, impulse_response, window)
@@ -738,9 +753,18 @@ impl Main {
                 .and_then(|id| impulse_responses.get(id))
                 .and_then(|state| state.computed())
             {
-                chart
-                    .view(impulse_response, window_settings)
-                    .map(Message::ImpulseResponses)
+                container(
+                    chart::impulse_response(
+                        impulse_response,
+                        chart.x_range.as_ref().unwrap(),
+                        &chart.line_cache,
+                    )
+                    .map(Message::Chart),
+                )
+                .style(container::rounded_box)
+                // chart
+                //     .view(impulse_response, window_settings)
+                //     .map(Message::ImpulseResponses)
             } else {
                 container(text("Impulse response not computed, yet.")).into()
             }

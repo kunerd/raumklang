@@ -31,8 +31,8 @@ pub enum ChartOperation {
 
 #[derive(Debug, Default)]
 pub struct Chart {
-    x_max: Option<f32>,
-    x_range: Option<RangeInclusive<f32>>,
+    pub x_max: Option<f32>,
+    pub x_range: Option<RangeInclusive<f32>>,
     shift_key_pressed: bool,
     pub amplitude_unit: chart::AmplitudeUnit,
     pub time_unit: chart::TimeSeriesUnit,
@@ -57,7 +57,6 @@ impl Chart {
                 };
 
                 if self.x_range.is_none() {
-                    self.x_max = x_range.as_ref().map(|r| *r.end());
                     self.x_range = x_range;
                 }
 
