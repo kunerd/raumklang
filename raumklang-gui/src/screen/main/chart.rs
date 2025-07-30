@@ -7,14 +7,14 @@ use iced::{
     },
     alignment, mouse,
     widget::{
-        canvas::{self, Frame, Stroke},
+        canvas::{self, Frame},
+        container,
         text::{Fragment, IntoFragment},
     },
     Element, Event, Font,
     Length::Fill,
-    Pixels, Point, Rectangle, Renderer, Theme,
+    Pixels, Point, Rectangle, Renderer, Theme, Vector,
 };
-use prism::cartesian;
 
 use crate::ui;
 
@@ -23,27 +23,30 @@ pub fn impulse_response<'a>(
     x_range: &'a RangeInclusive<f32>,
     cache: &'a canvas::Cache,
 ) -> Element<'a, Interaction, iced::Theme> {
-    canvas::Canvas::new(BarChart {
-        datapoints: impulse_response
-            .data
-            .iter()
-            .copied()
-            .map(|s| db_full_scale(s, impulse_response.max))
-            .enumerate(),
-        cache,
-        cmp: |a, b| a.total_cmp(b),
-        to_float: |s| s,
-        // to_float: Box::new(|s| percent_full_scale(s, impulse_response.max) as f64),
-        to_string: |s| format!("{s}:0."),
-        x_range,
-        // y_range: N,
-        // x_range: 0..impulse_response.data.len(),
-        // average: |duration, n| duration / n,
-        // average_to_float: |duration| duration.as_secs_f64(),
-        // average_to_string: |duration| format!("{duration:?}"),
-    })
-    .width(Fill)
-    .height(Fill)
+    container(
+        canvas::Canvas::new(BarChart {
+            datapoints: impulse_response
+                .data
+                .iter()
+                .copied()
+                .map(|s| db_full_scale(s, impulse_response.max))
+                .enumerate(),
+            cache,
+            cmp: |a, b| a.total_cmp(b),
+            to_float: |s| s,
+            // to_float: Box::new(|s| percent_full_scale(s, impulse_response.max) as f64),
+            to_string: |s| format!("{s}:0."),
+            x_range,
+            // y_range: N,
+            // x_range: 0..impulse_response.data.len(),
+            // average: |duration, n| duration / n,
+            // average_to_float: |duration| duration.as_secs_f64(),
+            // average_to_string: |duration| format!("{duration:?}"),
+        })
+        .width(Fill)
+        .height(Fill),
+    )
+    .padding(5)
     .into()
 }
 
@@ -175,12 +178,12 @@ where
             let min_value = (self.to_float)(min) as f32;
             let max_value = (self.to_float)(max) as f32;
 
+            let x_range = 0.0..=datapoints.clone().count() as f32;
+
             let max_value = 20.0;
             let y_range = min_value..=max_value;
-            let y_axis = VerticalAxis::new(y_range, 10, bounds.height - 12.0);
-
-            let x_range = 0.0..=datapoints.clone().count() as f32;
-            let x_axis = HorizontalAxis::new(x_range, bounds.width, f32::from(y_axis.width), 10);
+            let x_axis = HorizontalAxis::new(x_range, 10);
+            let y_axis = VerticalAxis::new(y_range, bounds.height - x_axis.height, 10);
 
             let pixels_per_unit = y_axis.gauge_length / (y_axis.range.end() - y_axis.range.start());
 
@@ -245,7 +248,11 @@ where
                 frame.fill_rectangle(bar.position(), bar.size(), palette.secondary.weak.color);
             }
 
-            x_axis.draw(frame);
+            frame.with_save(|frame| {
+                frame.translate(Vector::new(f32::from(y_axis.width), 0.0));
+
+                x_axis.draw(frame, bounds.width - f32::from(y_axis.width));
+            });
             y_axis.draw(frame);
         });
 
@@ -254,20 +261,13 @@ where
 }
 
 struct HorizontalAxis<'a> {
-    width: f32,
     height: f32,
-    offset: f32,
     tick_amount: usize,
     labels: Vec<Label<'a>>,
 }
 
 impl<'a> HorizontalAxis<'a> {
-    pub fn new(
-        range: RangeInclusive<f32>,
-        target_length: f32,
-        offset: f32,
-        tick_amount: usize,
-    ) -> Self {
+    pub fn new(range: RangeInclusive<f32>, tick_amount: usize) -> Self {
         let length = range.end() - range.start();
         let tick_distance = length / tick_amount as f32;
 
@@ -280,19 +280,17 @@ impl<'a> HorizontalAxis<'a> {
         let min_label_height = labels.clone().next().map(|l| l.min_height()).unwrap();
 
         Self {
-            width: target_length - offset,
             height: min_label_height,
-            offset,
             tick_amount,
             labels: labels.collect(),
         }
     }
 
-    pub fn draw(&self, frame: &mut Frame) {
-        let tick_distance = self.width / self.tick_amount as f32;
+    pub fn draw(&self, frame: &mut Frame, target_length: f32) {
+        let tick_distance = target_length / self.tick_amount as f32;
 
         for (i, label) in self.labels.iter().enumerate() {
-            let x = i as f32 * tick_distance + self.offset;
+            let x = i as f32 * tick_distance;
             let y = frame.height() - self.height;
 
             let position = Point::new(x, y);
@@ -322,7 +320,7 @@ struct VerticalAxis<'a> {
 }
 
 impl<'a> VerticalAxis<'a> {
-    pub fn new(range: RangeInclusive<f32>, tick_amount: usize, target_length: f32) -> Self {
+    pub fn new(range: RangeInclusive<f32>, target_length: f32, tick_amount: usize) -> Self {
         let length = range.end() - range.start();
         let pixels_per_unit = target_length / length;
 
