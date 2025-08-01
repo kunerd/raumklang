@@ -7,7 +7,7 @@ use iced::{
     },
     alignment, mouse,
     widget::{
-        canvas::{self, Frame},
+        canvas::{self, Frame, Path, Stroke},
         container,
         text::{Fragment, IntoFragment},
     },
@@ -16,15 +16,20 @@ use iced::{
     Pixels, Point, Rectangle, Renderer, Theme, Vector,
 };
 
-use crate::ui;
+use crate::{
+    data::{Samples, Window},
+    ui,
+};
 
 pub fn impulse_response<'a>(
+    window: &'a Window<Samples>,
     impulse_response: &'a ui::ImpulseResponse,
     x_range: &'a RangeInclusive<f32>,
     cache: &'a canvas::Cache,
 ) -> Element<'a, Interaction, iced::Theme> {
     container(
         canvas::Canvas::new(BarChart {
+            window,
             datapoints: impulse_response
                 .data
                 .iter()
@@ -46,7 +51,7 @@ pub fn impulse_response<'a>(
         .width(Fill)
         .height(Fill),
     )
-    .padding(5)
+    // .padding(5)
     .into()
 }
 
@@ -63,6 +68,7 @@ struct BarChart<'a, I, T>
 where
     I: Iterator<Item = (usize, T)>,
 {
+    window: &'a Window<Samples>,
     datapoints: I,
     cache: &'a canvas::Cache,
     cmp: fn(&T, &T) -> Ordering,
@@ -163,7 +169,9 @@ where
             let bounds = frame.size();
             let palette = theme.extended_palette();
 
-            let datapoints = self.datapoints.clone().take(22050);
+            let x_max = 0.6 * 44_100 as f32;
+            let datapoints = self.datapoints.clone().take(x_max.ceil() as usize);
+            // let datapoints = self.datapoints.clone();
 
             let datapoints = datapoints.clone().map(|(_i, datapoint)| datapoint);
 
@@ -176,22 +184,20 @@ where
             };
 
             let min_value = (self.to_float)(min) as f32;
-            let max_value = (self.to_float)(max) as f32;
+            // let max_value = (self.to_float)(max) as f32;
+            let max_value = 10.0;
 
-            let x_range = 0.0..=datapoints.clone().count() as f32;
-
-            let max_value = 20.0;
-            let y_range = min_value..=max_value;
+            let x_min = (0.250 * 44_100 as f32) as f32;
+            let x_range = -x_min..=datapoints.clone().count() as f32;
             let x_axis = HorizontalAxis::new(x_range, 10);
-            let y_axis = VerticalAxis::new(y_range, bounds.height - x_axis.height, 10);
 
-            let pixels_per_unit = y_axis.gauge_length / (y_axis.range.end() - y_axis.range.start());
+            let y_range = min_value..=max_value;
+            let y_axis = VerticalAxis::new(y_range, 10);
 
-            let width = bounds.width - f32::from(y_axis.width);
-            let max_length = datapoints.clone().count();
-            let pixels_per_unit_x = width / max_length as f32;
+            let width = bounds.width - y_axis.width;
+            let pixels_per_unit_x = width / x_axis.length;
             let window_size = if pixels_per_unit_x < 1.0 {
-                Some((max_length as f32 / width).floor() as usize)
+                Some((x_axis.length / width).floor() as usize)
             } else {
                 None
             };
@@ -207,22 +213,24 @@ where
                 pos: usize,
             }
 
-            let mut window = window_size.map(|_| Window {
+            let mut cur_window = window_size.map(|_| Window {
                 value: min_value,
                 pos: 0,
             });
 
+            let y_target_length = bounds.height - x_axis.height - y_axis.min_label_height * 0.5;
+            let pixels_per_unit = y_target_length / y_axis.length;
             for (i, datapoint) in datapoints.enumerate() {
-                let value = if let Some(ref mut window) = window {
-                    if window.pos < window_size.unwrap() {
+                let value = if let Some(ref mut cur_window) = cur_window {
+                    if cur_window.pos < window_size.unwrap() {
                         // window.value += (self.to_float)(datapoint);
-                        window.value = window.value.max((self.to_float)(datapoint));
-                        window.pos += 1;
+                        cur_window.value = cur_window.value.max((self.to_float)(datapoint));
+                        cur_window.pos += 1;
                         continue;
                     } else {
                         // let datapoint = window.value / window.pos as f32;
-                        let datapoint = window.value;
-                        *window = Window {
+                        let datapoint = cur_window.value;
+                        *cur_window = Window {
                             value: min_value,
                             pos: 0,
                         };
@@ -232,15 +240,14 @@ where
                     (self.to_float)(datapoint)
                 };
 
-                let bar_height = ((value - min_value) * pixels_per_unit) as f32;
+                let bar_height = (value - min_value) * pixels_per_unit;
 
                 let divider = window_size.unwrap_or(1);
                 let bar = Rectangle {
-                    x: f32::from(y_axis.width) + bar_width * (i / divider) as f32,
-                    y: f32::from(y_axis.height)
-                        - x_axis.height
-                        - y_axis.min_label_height * 0.5
-                        - bar_height,
+                    x: y_axis.width
+                        + (x_min * pixels_per_unit_x)
+                        + bar_width * (i / divider) as f32,
+                    y: bounds.height - x_axis.height - bar_height,
                     width: bar_width,
                     height: bar_height,
                 };
@@ -248,12 +255,38 @@ where
                 frame.fill_rectangle(bar.position(), bar.size(), palette.secondary.weak.color);
             }
 
-            frame.with_save(|frame| {
-                frame.translate(Vector::new(f32::from(y_axis.width), 0.0));
+            let mut window_curve = self.window.curve().map(|(x, y)| (x, db_full_scale(y, 1.0)));
 
-                x_axis.draw(frame, bounds.width - f32::from(y_axis.width));
+            let path = Path::new(|b| {
+                if let Some((x, y)) = window_curve.next() {
+                    b.move_to(Point {
+                        x: y_axis.width + x_min * pixels_per_unit_x + x * pixels_per_unit_x,
+                        y: bounds.height - x_axis.height - (y - min_value) * pixels_per_unit,
+                    });
+                    window_curve.fold(b, |acc, (x, y)| {
+                        acc.line_to(Point {
+                            x: y_axis.width + x_min * pixels_per_unit_x + x * pixels_per_unit_x,
+                            y: bounds.height - x_axis.height - (y - min_value) * pixels_per_unit,
+                        });
+                        acc
+                    });
+                }
             });
-            y_axis.draw(frame);
+
+            frame.stroke(
+                &path, //.transform(&Transform2D::new(1.0, 0.0, 0.0, -1.0, 0.0, 0.0)),
+                Stroke::default()
+                    .with_width(2.0)
+                    .with_color(palette.success.weak.color),
+            );
+
+            frame.with_save(|frame| {
+                frame.translate(Vector::new(y_axis.width, 0.0));
+
+                x_axis.draw(frame, bounds.width - y_axis.width);
+            });
+
+            y_axis.draw(frame, y_target_length);
         });
 
         vec![geometry]
@@ -261,6 +294,8 @@ where
 }
 
 struct HorizontalAxis<'a> {
+    min: f32,
+    length: f32,
     height: f32,
     tick_amount: usize,
     labels: Vec<Label<'a>>,
@@ -272,14 +307,17 @@ impl<'a> HorizontalAxis<'a> {
         let tick_distance = length / tick_amount as f32;
 
         let min = *range.start();
+        let offset = -min % tick_distance;
         let labels = (0..=tick_amount)
             .into_iter()
-            .map(|t| min + t as f32 * tick_distance)
-            .map(|l| Label::new(format!("{:.0}", l), 12.0));
+            .map(|t| offset + min + t as f32 * tick_distance)
+            .map(|l| Label::new(l, format!("{:.0}", l), 12.0));
 
         let min_label_height = labels.clone().next().map(|l| l.min_height()).unwrap();
 
         Self {
+            min: *range.start(),
+            length,
             height: min_label_height,
             tick_amount,
             labels: labels.collect(),
@@ -287,10 +325,12 @@ impl<'a> HorizontalAxis<'a> {
     }
 
     pub fn draw(&self, frame: &mut Frame, target_length: f32) {
-        let tick_distance = target_length / self.tick_amount as f32;
+        // let tick_distance = target_length / self.tick_amount as f32;
+        let pixels_per_unit = target_length / self.length;
 
-        for (i, label) in self.labels.iter().enumerate() {
-            let x = i as f32 * tick_distance;
+        for label in self.labels.iter() {
+            // let x = i as f32 * tick_distance;
+            let x = (label.value - self.min) * pixels_per_unit;
             let y = frame.height() - self.height;
 
             let position = Point::new(x, y);
@@ -310,27 +350,26 @@ impl<'a> HorizontalAxis<'a> {
 }
 
 struct VerticalAxis<'a> {
-    range: RangeInclusive<f32>,
-    width: Pixels,
-    height: Pixels,
+    min: f32,
+    width: f32,
+    length: f32,
     min_label_height: f32,
-    gauge_length: f32,
     tick_amount: usize,
     labels: Vec<Label<'a>>,
 }
 
 impl<'a> VerticalAxis<'a> {
-    pub fn new(range: RangeInclusive<f32>, target_length: f32, tick_amount: usize) -> Self {
+    pub fn new(range: RangeInclusive<f32>, tick_amount: usize) -> Self {
         let length = range.end() - range.start();
-        let pixels_per_unit = target_length / length;
 
         let tick_distance = length / tick_amount as f32;
 
         let min = *range.start();
+        let offset = -min % tick_distance;
         let labels = (0..=tick_amount)
             .into_iter()
-            .map(|t| min + t as f32 * tick_distance)
-            .map(|l| Label::new(format!("{:.0}", l), 12.0));
+            .map(|t| offset + min + t as f32 * tick_distance)
+            .map(|l| Label::new(l, format!("{:.0}", l), 12.0));
 
         let min_label_width = labels
             .clone()
@@ -341,26 +380,26 @@ impl<'a> VerticalAxis<'a> {
         let min_label_height = labels.clone().next().map(|l| l.min_height()).unwrap();
 
         Self {
-            range,
-            width: Pixels(min_label_width), // + padding + thickness
-            height: Pixels(length * pixels_per_unit + min_label_height), // + padding
-            gauge_length: length * pixels_per_unit - min_label_height,
+            min: *range.start(),
+            width: min_label_width, // + padding + thickness
+            length,
             min_label_height,
             tick_amount,
             labels: labels.collect(),
         }
     }
 
-    pub fn draw(&self, frame: &mut Frame) {
-        let tick_distance = self.gauge_length / self.tick_amount as f32;
-        for (i, label) in self.labels.iter().enumerate() {
-            let y = i as f32 * f32::from(tick_distance);
+    pub fn draw(&self, frame: &mut Frame, target_length: f32) {
+        let pixels_per_unit = target_length / self.length;
+
+        for label in self.labels.iter() {
+            let y = (label.value - self.min) * pixels_per_unit;
 
             frame.fill_text(canvas::Text {
                 content: label.content.to_string(),
                 position: Point::new(
                     f32::from(self.width),
-                    f32::from(self.gauge_length) + self.min_label_height * 0.5 - y,
+                    target_length + self.min_label_height * 0.5 - y,
                 ),
                 size: Pixels(12.0),
                 color: iced::Color::WHITE,
@@ -374,16 +413,21 @@ impl<'a> VerticalAxis<'a> {
 }
 
 pub struct Label<'a> {
+    value: f32,
     content: Fragment<'a>,
     bounds: iced::Size,
 }
 
 impl<'a> Label<'a> {
-    pub fn new(content: impl IntoFragment<'a>, font_size: impl Into<Pixels>) -> Self {
+    pub fn new(value: f32, content: impl IntoFragment<'a>, font_size: impl Into<Pixels>) -> Self {
         let content = content.into_fragment();
         let bounds = min_bounds(content.as_ref(), font_size.into());
 
-        Self { content, bounds }
+        Self {
+            value,
+            content,
+            bounds,
+        }
     }
 
     pub fn min_width(&self) -> f32 {

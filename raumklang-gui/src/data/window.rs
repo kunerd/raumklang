@@ -82,6 +82,7 @@ impl Window<Samples> {
             let x = i as f32 + position - left_width;
 
             (x, s)
+            // (i as f32, s)
         })
     }
 

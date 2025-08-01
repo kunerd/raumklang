@@ -287,7 +287,7 @@ impl Chart {
 
 #[derive(Debug)]
 pub struct WindowSettings {
-    window: data::Window<data::Samples>,
+    pub window: data::Window<data::Samples>,
     hovered: Option<usize>,
     dragging: Dragging,
     items: prism::Items,

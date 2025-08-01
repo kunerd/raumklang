@@ -755,6 +755,7 @@ impl Main {
             {
                 container(
                     chart::impulse_response(
+                        &window_settings.window,
                         impulse_response,
                         chart.x_range.as_ref().unwrap(),
                         &chart.line_cache,
