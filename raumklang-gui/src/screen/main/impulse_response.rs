@@ -1,5 +1,7 @@
+use super::chart;
+
 use crate::{
-    data::{self, chart, window},
+    data::{self, window},
     ui::ImpulseResponse,
 };
 
@@ -15,18 +17,20 @@ use std::{ops::RangeInclusive, time::Duration};
 #[derive(Debug, Clone)]
 pub enum Message {
     Chart(ChartOperation),
+    // Chart(chart::Interaction),
     Window(WindowOperation),
 }
 
 #[derive(Debug, Clone)]
 pub enum ChartOperation {
-    TimeUnitChanged(chart::TimeSeriesUnit),
-    AmplitudeUnitChanged(chart::AmplitudeUnit),
+    TimeUnitChanged(data::chart::TimeSeriesUnit),
+    AmplitudeUnitChanged(data::chart::AmplitudeUnit),
     Scroll(
         Option<Point>,
         Option<ScrollDelta>,
         Option<RangeInclusive<f32>>,
     ),
+    Interaction(chart::Interaction),
 }
 
 #[derive(Debug, Default)]
@@ -34,8 +38,8 @@ pub struct Chart {
     pub x_max: Option<f32>,
     pub x_range: Option<RangeInclusive<f32>>,
     shift_key_pressed: bool,
-    pub amplitude_unit: chart::AmplitudeUnit,
-    pub time_unit: chart::TimeSeriesUnit,
+    pub amplitude_unit: data::chart::AmplitudeUnit,
+    pub time_unit: data::chart::TimeSeriesUnit,
     pub cache: canvas::Cache,
     pub line_cache: canvas::Cache,
 }
@@ -80,108 +84,123 @@ impl Chart {
     ) -> Element<'a, Message> {
         let header = {
             pick_list(
-                &chart::AmplitudeUnit::ALL[..],
+                &data::chart::AmplitudeUnit::ALL[..],
                 Some(&self.amplitude_unit),
                 |unit| Message::Chart(ChartOperation::AmplitudeUnitChanged(unit)),
             )
         };
 
         let chart = {
-            let x_scale_fn = match self.time_unit {
-                chart::TimeSeriesUnit::Samples => sample_scale,
-                chart::TimeSeriesUnit::Time => time_scale,
-            };
-
-            let y_scale_fn: fn(f32, f32) -> f32 = match self.amplitude_unit {
-                chart::AmplitudeUnit::PercentFullScale => percent_full_scale,
-                chart::AmplitudeUnit::DezibelFullScale => db_full_scale,
-            };
-
-            let sample_rate = impulse_response.sample_rate.into();
-
-            let chart = prism::Chart::new()
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .cache(&self.cache)
-                .x_range(
-                    self.x_range
-                        .as_ref()
-                        .map(|r| {
-                            x_scale_fn(*r.start(), sample_rate)..=x_scale_fn(*r.end(), sample_rate)
-                        })
-                        .unwrap_or_else(|| {
-                            x_scale_fn(-sample_rate / 2.0, sample_rate)
-                                ..=x_scale_fn(impulse_response.data.len() as f32, sample_rate)
-                        }),
+            container(
+                chart::impulse_response(
+                    &window_settings.window,
+                    impulse_response,
+                    &self.time_unit,
+                    &self.amplitude_unit,
+                    &self.x_range.as_ref().unwrap(),
+                    &self.line_cache,
                 )
-                .x_labels(Labels::default().format(&|v| format!("{v:.2}")))
-                .y_labels(Labels::default().format(&|v| format!("{v:.2}")))
-                .push_series(
-                    line_series(impulse_response.data.iter().enumerate().map(move |(i, s)| {
-                        (
-                            x_scale_fn(i as f32, sample_rate),
-                            y_scale_fn(*s, impulse_response.max),
-                        )
-                    }))
-                    .cache(&self.line_cache)
-                    .color(iced::Color::from_rgb8(2, 125, 66)),
-                )
-                .on_scroll(|state| {
-                    let pos = state.get_coords();
-                    let delta = state.scroll_delta();
-                    let x_range = state.x_range();
-                    Message::Chart(ChartOperation::Scroll(pos, delta, x_range))
-                });
-
-            // chart
-            let window_curve = window_settings.window.curve();
-            let handles: window::Handles = (&window_settings.window).into();
-
-            chart
-                .push_series(
-                    line_series(
-                        window_curve
-                            .map(move |(i, s)| (x_scale_fn(i, sample_rate), y_scale_fn(s, 1.0))),
-                    )
-                    // .cache(&window_settings.cache)
-                    .color(iced::Color::from_rgb8(255, 0, 0)),
-                )
-                .push_series(
-                    point_series(handles.into_iter().map(move |handle| {
-                        (
-                            x_scale_fn(handle.x(), sample_rate),
-                            y_scale_fn(handle.y().into(), 1.0),
-                        )
-                    }))
-                    .style_for_each(|index, _handle| {
-                        if window_settings.hovered.is_some_and(|i| i == index) {
-                            point::Style {
-                                color: Some(iced::Color::from_rgb8(220, 250, 250)),
-                                radius: 10.0,
-                                ..Default::default()
-                            }
-                        } else {
-                            point::Style::default()
-                        }
-                    })
-                    .cache(&window_settings.cache)
-                    .color(iced::Color::from_rgb8(255, 0, 0)),
-                )
-                .items(&window_settings.items)
-                .on_press(|state| {
-                    let id = state.items().and_then(|l| l.first().copied());
-                    Message::Window(WindowOperation::MouseDown(id, state.get_offset()))
-                })
-                .on_move(|state| {
-                    let id = state.items().and_then(|l| l.first().copied());
-                    Message::Window(WindowOperation::OnMove(id, state.get_offset()))
-                })
-                .on_release(|state| Message::Window(WindowOperation::MouseUp(state.get_offset())))
+                .map(ChartOperation::Interaction)
+                .map(Message::Chart),
+            )
+            .style(container::rounded_box)
         };
+        // let chart = {
+        //     let x_scale_fn = match self.time_unit {
+        //         chart::TimeSeriesUnit::Samples => sample_scale,
+        //         chart::TimeSeriesUnit::Time => time_scale,
+        //     };
+
+        //     let y_scale_fn: fn(f32, f32) -> f32 = match self.amplitude_unit {
+        //         chart::AmplitudeUnit::PercentFullScale => percent_full_scale,
+        //         chart::AmplitudeUnit::DezibelFullScale => db_full_scale,
+        //     };
+
+        //     let sample_rate = impulse_response.sample_rate.into();
+
+        //     let chart = prism::Chart::new()
+        //         .width(Length::Fill)
+        //         .height(Length::Fill)
+        //         .cache(&self.cache)
+        //         .x_range(
+        //             self.x_range
+        //                 .as_ref()
+        //                 .map(|r| {
+        //                     x_scale_fn(*r.start(), sample_rate)..=x_scale_fn(*r.end(), sample_rate)
+        //                 })
+        //                 .unwrap_or_else(|| {
+        //                     x_scale_fn(-sample_rate / 2.0, sample_rate)
+        //                         ..=x_scale_fn(impulse_response.data.len() as f32, sample_rate)
+        //                 }),
+        //         )
+        //         .x_labels(Labels::default().format(&|v| format!("{v:.2}")))
+        //         .y_labels(Labels::default().format(&|v| format!("{v:.2}")))
+        //         .push_series(
+        //             line_series(impulse_response.data.iter().enumerate().map(move |(i, s)| {
+        //                 (
+        //                     x_scale_fn(i as f32, sample_rate),
+        //                     y_scale_fn(*s, impulse_response.max),
+        //                 )
+        //             }))
+        //             .cache(&self.line_cache)
+        //             .color(iced::Color::from_rgb8(2, 125, 66)),
+        //         )
+        //         .on_scroll(|state| {
+        //             let pos = state.get_coords();
+        //             let delta = state.scroll_delta();
+        //             let x_range = state.x_range();
+        //             Message::Chart(ChartOperation::Scroll(pos, delta, x_range))
+        //         });
+
+        //     // chart
+        //     let window_curve = window_settings.window.curve();
+        //     let handles: window::Handles = (&window_settings.window).into();
+
+        //     chart
+        //         .push_series(
+        //             line_series(
+        //                 window_curve
+        //                     .map(move |(i, s)| (x_scale_fn(i, sample_rate), y_scale_fn(s, 1.0))),
+        //             )
+        //             // .cache(&window_settings.cache)
+        //             .color(iced::Color::from_rgb8(255, 0, 0)),
+        //         )
+        //         .push_series(
+        //             point_series(handles.into_iter().map(move |handle| {
+        //                 (
+        //                     x_scale_fn(handle.x(), sample_rate),
+        //                     y_scale_fn(handle.y().into(), 1.0),
+        //                 )
+        //             }))
+        //             .style_for_each(|index, _handle| {
+        //                 if window_settings.hovered.is_some_and(|i| i == index) {
+        //                     point::Style {
+        //                         color: Some(iced::Color::from_rgb8(220, 250, 250)),
+        //                         radius: 10.0,
+        //                         ..Default::default()
+        //                     }
+        //                 } else {
+        //                     point::Style::default()
+        //                 }
+        //             })
+        //             .cache(&window_settings.cache)
+        //             .color(iced::Color::from_rgb8(255, 0, 0)),
+        //         )
+        //         .items(&window_settings.items)
+        //         .on_press(|state| {
+        //             let id = state.items().and_then(|l| l.first().copied());
+        //             Message::Window(WindowOperation::MouseDown(id, state.get_offset()))
+        //         })
+        //         .on_move(|state| {
+        //             let id = state.items().and_then(|l| l.first().copied());
+        //             Message::Window(WindowOperation::OnMove(id, state.get_offset()))
+        //         })
+        //         .on_release(|state| Message::Window(WindowOperation::MouseUp(state.get_offset())))
+        // };
 
         let footer = {
             row![container(pick_list(
-                &chart::TimeSeriesUnit::ALL[..],
+                &data::chart::TimeSeriesUnit::ALL[..],
                 Some(&self.time_unit),
                 |unit| Message::Chart(ChartOperation::TimeUnitChanged(unit))
             ))
@@ -312,16 +331,16 @@ pub enum WindowOperation {
 
 impl WindowSettings {
     pub(crate) fn new(window: data::Window<data::Samples>) -> Self {
-        let time_unit = chart::TimeSeriesUnit::default();
+        let time_unit = data::chart::TimeSeriesUnit::default();
         let x_scale_fn = match time_unit {
-            chart::TimeSeriesUnit::Samples => sample_scale,
-            chart::TimeSeriesUnit::Time => time_scale,
+            data::chart::TimeSeriesUnit::Samples => sample_scale,
+            data::chart::TimeSeriesUnit::Time => time_scale,
         };
 
-        let amplitude_unit = chart::AmplitudeUnit::default();
+        let amplitude_unit = data::chart::AmplitudeUnit::default();
         let y_scale_fn: fn(f32, f32) -> f32 = match amplitude_unit {
-            chart::AmplitudeUnit::PercentFullScale => percent_full_scale,
-            chart::AmplitudeUnit::DezibelFullScale => db_full_scale,
+            data::chart::AmplitudeUnit::PercentFullScale => percent_full_scale,
+            data::chart::AmplitudeUnit::DezibelFullScale => db_full_scale,
         };
 
         let sample_rate = window.sample_rate();
@@ -351,14 +370,14 @@ impl WindowSettings {
     pub fn apply(
         &mut self,
         operation: WindowOperation,
-        time_unit: chart::TimeSeriesUnit,
-        amplitude_unit: chart::AmplitudeUnit,
+        time_unit: data::chart::TimeSeriesUnit,
+        amplitude_unit: data::chart::AmplitudeUnit,
     ) {
         let mut update_handle = |id, prev_pos: iced::Point, pos: iced::Point| {
             let offset = pos.x - prev_pos.x;
 
             match time_unit {
-                chart::TimeSeriesUnit::Time => {
+                data::chart::TimeSeriesUnit::Time => {
                     let mut window: data::Window<Duration> = self.window.clone().into();
 
                     let mut handles: window::Handles = Into::into(&window);
@@ -373,7 +392,7 @@ impl WindowSettings {
                     self.window = window.into();
                 }
 
-                chart::TimeSeriesUnit::Samples => {
+                data::chart::TimeSeriesUnit::Samples => {
                     let mut handles: window::Handles = Into::into(&self.window);
                     match id {
                         0 => handles.move_left(offset),
@@ -387,13 +406,13 @@ impl WindowSettings {
             }
 
             let x_scale_fn = match time_unit {
-                chart::TimeSeriesUnit::Samples => sample_scale,
-                chart::TimeSeriesUnit::Time => time_scale,
+                data::chart::TimeSeriesUnit::Samples => sample_scale,
+                data::chart::TimeSeriesUnit::Time => time_scale,
             };
 
             let y_scale_fn: fn(f32, f32) -> f32 = match amplitude_unit {
-                chart::AmplitudeUnit::PercentFullScale => percent_full_scale,
-                chart::AmplitudeUnit::DezibelFullScale => db_full_scale,
+                data::chart::AmplitudeUnit::PercentFullScale => percent_full_scale,
+                data::chart::AmplitudeUnit::DezibelFullScale => db_full_scale,
             };
 
             let sample_rate = self.window.sample_rate();

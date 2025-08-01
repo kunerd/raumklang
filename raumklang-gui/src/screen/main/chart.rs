@@ -11,19 +11,21 @@ use iced::{
         container,
         text::{Fragment, IntoFragment},
     },
-    Element, Event, Font,
+    window, Element, Event, Font,
     Length::Fill,
     Pixels, Point, Rectangle, Renderer, Theme, Vector,
 };
 
 use crate::{
-    data::{Samples, Window},
+    data::{chart, Samples, Window},
     ui,
 };
 
 pub fn impulse_response<'a>(
     window: &'a Window<Samples>,
     impulse_response: &'a ui::ImpulseResponse,
+    time_unit: &'a chart::TimeSeriesUnit,
+    amplitude_unit: &'a chart::AmplitudeUnit,
     x_range: &'a RangeInclusive<f32>,
     cache: &'a canvas::Cache,
 ) -> Element<'a, Interaction, iced::Theme> {
@@ -34,46 +36,43 @@ pub fn impulse_response<'a>(
                 .data
                 .iter()
                 .copied()
-                .map(|s| db_full_scale(s, impulse_response.max))
+                .map(f32::abs)
                 .enumerate(),
             cache,
             cmp: |a, b| a.total_cmp(b),
-            to_float: |s| s,
-            // to_float: Box::new(|s| percent_full_scale(s, impulse_response.max) as f64),
+            x_to_float: |i| i as f32,
+            to_x_scale: move |i| match time_unit {
+                chart::TimeSeriesUnit::Time => time_scale(i, impulse_response.sample_rate.into()),
+                chart::TimeSeriesUnit::Samples => i as f32,
+            },
+            y_to_float: |s| s,
+            to_y_scale: move |s| match amplitude_unit {
+                chart::AmplitudeUnit::PercentFullScale => percent_full_scale(s),
+                chart::AmplitudeUnit::DezibelFullScale => db_full_scale(s),
+            },
             to_string: |s| format!("{s}:0."),
             x_range,
-            // y_range: N,
-            // x_range: 0..impulse_response.data.len(),
-            // average: |duration, n| duration / n,
-            // average_to_float: |duration| duration.as_secs_f64(),
-            // average_to_string: |duration| format!("{duration:?}"),
         })
         .width(Fill)
         .height(Fill),
     )
-    // .padding(5)
     .into()
 }
 
-fn percent_full_scale(s: f32, max: f32) -> f32 {
-    (s / max * 100f32).clamp(0.0, 100.0)
-}
-
-fn db_full_scale(s: f32, max: f32) -> f32 {
-    let y = 20f32 * f32::log10(s.abs() / max);
-    y.clamp(-80.0, max)
-}
-
-struct BarChart<'a, I, T>
+struct BarChart<'a, I, X, Y, ScaleX, ScaleY>
 where
-    I: Iterator<Item = (usize, T)>,
+    I: Iterator<Item = (X, Y)>,
+    // ToFloat: Fn(Y) -> f32,
 {
     window: &'a Window<Samples>,
     datapoints: I,
     cache: &'a canvas::Cache,
-    cmp: fn(&T, &T) -> Ordering,
-    to_float: fn(T) -> f32,
-    to_string: fn(T) -> String,
+    cmp: fn(&Y, &Y) -> Ordering,
+    x_to_float: fn(X) -> f32,
+    to_x_scale: ScaleX,
+    y_to_float: fn(Y) -> f32,
+    to_y_scale: ScaleY,
+    to_string: fn(Y) -> String,
     x_range: &'a RangeInclusive<f32>,
     // y_range: &'a RangeInclusive<f32>,
     // average: fn(T, u32) -> A,
@@ -85,56 +84,46 @@ where
 #[derive(Debug, Clone)]
 pub enum Interaction {}
 
-impl<'a, I, T> canvas::Program<Interaction, iced::Theme> for BarChart<'a, I, T>
+impl<'a, I, X, Y, ScaleX, ScaleY> canvas::Program<Interaction, iced::Theme>
+    for BarChart<'a, I, X, Y, ScaleX, ScaleY>
 where
-    I: Iterator<Item = (usize, T)> + Clone + 'a,
-    T: Copy + std::iter::Sum,
+    I: Iterator<Item = (X, Y)> + Clone + 'a,
+    Y: Copy + std::iter::Sum,
+    ScaleX: Fn(f32) -> f32,
+    ScaleY: Fn(f32) -> f32,
 {
-    type State = ();
+    type State = Option<Point>;
 
     fn update(
         &self,
         // bar_hovered: &mut Option<timeline::Index>,
-        _state: &mut Self::State,
+        // _state: &mut Self::State,
+        last_pos: &mut Option<Point>,
         event: &Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<canvas::Action<Interaction>> {
         match event {
-            // Event::Mouse(mouse::Event::CursorMoved { .. })
-            // | Event::Window(window::Event::RedrawRequested(_)) => {
-            //     let Some(position) = cursor.position_in(bounds) else {
-            //         // if bar_hovered.is_some() {
-            //         //     *bar_hovered = None;
+            Event::Mouse(mouse::Event::CursorMoved { .. })
+            | Event::Window(window::Event::RedrawRequested(_)) => {
+                if let Some(ref mut pos) = last_pos {
+                    if let Some(cursor) = cursor.position_in(bounds) {
+                        if f32::abs(cursor.x - pos.x) >= 1.0 {
+                            *pos = cursor;
+                            self.cache.clear();
+                            return Some(canvas::Action::request_redraw());
+                        }
+                    } else {
+                        *last_pos = None;
+                        self.cache.clear();
+                        return Some(canvas::Action::request_redraw());
+                    }
+                } else {
+                    *last_pos = cursor.position()
+                }
 
-            //         //     return Some(canvas::Action::publish(Interaction::Unhovered));
-            //         // } else {
-            //         return None;
-            //         // }
-            //     };
-
-            //     let bar = ((bounds.width - position.x) / self.zoom.0 as f32) as usize;
-
-            //     let (index, _datapoint) = self
-            //         .datapoints
-            //         .clone()
-            //         .nth(bar)
-            //         .or_else(|| self.datapoints.clone().last())?;
-
-            //     if Some(index) == *bar_hovered {
-            //         if matches!(event, Event::Mouse(mouse::Event::CursorMoved { .. })) {
-            //             self.cache.clear();
-            //             return Some(canvas::Action::request_redraw());
-            //         } else {
-            //             return None;
-            //         }
-            //     }
-
-            //     *bar_hovered = Some(index);
-            //     self.cache.clear();
-
-            //     Some(canvas::Action::publish(Interaction::Hovered(index)))
-            // }
+                None
+            }
             Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor.is_over(bounds) => {
                 match delta {
                     mouse::ScrollDelta::Lines { y, .. } | mouse::ScrollDelta::Pixels { y, .. } => {
@@ -159,13 +148,15 @@ where
 
     fn draw(
         &self,
-        _state: &Self::State,
+        _last_pos: &Option<Point>,
         renderer: &Renderer,
         theme: &Theme,
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
+            let cursor = cursor.position_in(bounds);
+
             let bounds = frame.size();
             let palette = theme.extended_palette();
 
@@ -173,6 +164,7 @@ where
             let datapoints = self.datapoints.clone().take(x_max.ceil() as usize);
             // let datapoints = self.datapoints.clone();
 
+            // let datapoints = datapoints.clone().map(|(_i, datapoint)| datapoint);
             let datapoints = datapoints.clone().map(|(_i, datapoint)| datapoint);
 
             let Some(min) = datapoints.clone().min_by(self.cmp) else {
@@ -183,13 +175,16 @@ where
                 return;
             };
 
-            let min_value = (self.to_float)(min) as f32;
-            // let max_value = (self.to_float)(max) as f32;
-            let max_value = 10.0;
+            let min_value = (self.to_y_scale)((self.y_to_float)(min));
+            let max_value = (self.to_y_scale)((self.y_to_float)(max)) + 10.0;
 
-            let x_min = (0.250 * 44_100 as f32) as f32;
-            let x_range = -x_min..=datapoints.clone().count() as f32;
-            let x_axis = HorizontalAxis::new(x_range, 10);
+            let x_min = 0.250 * 44_100 as f32;
+            let x_max = datapoints.clone().count() as f32;
+            // let x_min = (self.to_x_scale)(x_min);
+            // let x_max = (self.to_x_scale)(datapoints.clone().count());
+
+            let x_range = -x_min..=x_max;
+            let x_axis = HorizontalAxis::new(x_range, &self.to_x_scale, 10);
 
             let y_range = min_value..=max_value;
             let y_axis = VerticalAxis::new(y_range, 10);
@@ -213,10 +208,7 @@ where
                 pos: usize,
             }
 
-            let mut cur_window = window_size.map(|_| Window {
-                value: min_value,
-                pos: 0,
-            });
+            let mut cur_window = window_size.map(|_| Window { value: min, pos: 0 });
 
             let y_target_length = bounds.height - x_axis.height - y_axis.min_label_height * 0.5;
             let pixels_per_unit = y_target_length / y_axis.length;
@@ -224,21 +216,25 @@ where
                 let value = if let Some(ref mut cur_window) = cur_window {
                     if cur_window.pos < window_size.unwrap() {
                         // window.value += (self.to_float)(datapoint);
-                        cur_window.value = cur_window.value.max((self.to_float)(datapoint));
+                        cur_window.value = match (self.cmp)(&cur_window.value, &datapoint) {
+                            Ordering::Less => datapoint,
+                            Ordering::Equal => datapoint,
+                            Ordering::Greater => cur_window.value,
+                        };
                         cur_window.pos += 1;
                         continue;
                     } else {
                         // let datapoint = window.value / window.pos as f32;
                         let datapoint = cur_window.value;
-                        *cur_window = Window {
-                            value: min_value,
-                            pos: 0,
-                        };
+                        *cur_window = Window { value: min, pos: 0 };
                         datapoint
                     }
                 } else {
-                    (self.to_float)(datapoint)
+                    datapoint
                 };
+
+                let value = (self.y_to_float)(value);
+                let value = (self.to_y_scale)(value);
 
                 let bar_height = (value - min_value) * pixels_per_unit;
 
@@ -255,7 +251,7 @@ where
                 frame.fill_rectangle(bar.position(), bar.size(), palette.secondary.weak.color);
             }
 
-            let mut window_curve = self.window.curve().map(|(x, y)| (x, db_full_scale(y, 1.0)));
+            let mut window_curve = self.window.curve().map(|(x, y)| (x, (self.to_y_scale)(y)));
 
             let path = Path::new(|b| {
                 if let Some((x, y)) = window_curve.next() {
@@ -280,6 +276,26 @@ where
                     .with_color(palette.success.weak.color),
             );
 
+            if let Some(cursor) = cursor {
+                let path = Path::line(
+                    Point {
+                        x: cursor.x,
+                        y: 0.0,
+                    },
+                    Point {
+                        x: cursor.x,
+                        y: bounds.height - x_axis.height,
+                    },
+                );
+
+                frame.stroke(
+                    &path,
+                    Stroke::default()
+                        .with_width(2.0)
+                        .with_color(palette.background.weakest.color),
+                );
+            }
+
             frame.with_save(|frame| {
                 frame.translate(Vector::new(y_axis.width, 0.0));
 
@@ -302,7 +318,11 @@ struct HorizontalAxis<'a> {
 }
 
 impl<'a> HorizontalAxis<'a> {
-    pub fn new(range: RangeInclusive<f32>, tick_amount: usize) -> Self {
+    pub fn new<F: Fn(f32) -> f32>(
+        range: RangeInclusive<f32>,
+        to_scale: F,
+        tick_amount: usize,
+    ) -> Self {
         let length = range.end() - range.start();
         let tick_distance = length / tick_amount as f32;
 
@@ -311,7 +331,10 @@ impl<'a> HorizontalAxis<'a> {
         let labels = (0..=tick_amount)
             .into_iter()
             .map(|t| offset + min + t as f32 * tick_distance)
-            .map(|l| Label::new(l, format!("{:.0}", l), 12.0));
+            .map(|t| {
+                let l = (to_scale)(t);
+                Label::new(t, format!("{:.0}", l), 12.0)
+            });
 
         let min_label_height = labels.clone().next().map(|l| l.min_height()).unwrap();
 
@@ -478,4 +501,21 @@ fn min_bounds(content: &str, font_size: Pixels) -> iced::Size {
 
     let paragraph = Paragraph::with_text(text);
     paragraph.min_bounds()
+}
+
+fn sample_scale(index: f32, _sample_rate: f32) -> f32 {
+    index
+}
+
+fn time_scale(index: f32, sample_rate: f32) -> f32 {
+    index / sample_rate * 1000.0
+}
+
+fn percent_full_scale(s: f32) -> f32 {
+    (s.abs() * 100f32).clamp(0.0, 100.0)
+}
+
+fn db_full_scale(s: f32) -> f32 {
+    let y = 20f32 * f32::log10(s.abs());
+    y.clamp(-80.0, 0.0)
 }

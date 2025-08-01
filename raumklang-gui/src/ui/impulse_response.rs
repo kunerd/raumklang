@@ -22,7 +22,6 @@ impl State {
 
 #[derive(Debug, Clone)]
 pub struct ImpulseResponse {
-    pub max: f32,
     pub sample_rate: SampleRate,
     pub data: Vec<f32>,
     pub origin: raumklang_core::ImpulseResponse,
@@ -30,19 +29,25 @@ pub struct ImpulseResponse {
 
 impl ImpulseResponse {
     pub fn from_data(impulse_response: data::ImpulseResponse) -> Self {
-        let data: Vec<_> = impulse_response
+        let max = impulse_response
             .origin
             .data
             .iter()
-            .map(|s| s.re.powi(2).sqrt())
+            .map(|s| s.re.abs())
+            .max_by(f32::total_cmp)
+            .unwrap();
+
+        let normalized = impulse_response
+            .origin
+            .data
+            .iter()
+            .map(|s| s.re)
+            .map(|s| s / max.abs())
             .collect();
 
-        let max = data.iter().fold(f32::NEG_INFINITY, |a, b| a.max(*b));
-
         Self {
-            max,
             sample_rate: SampleRate::new(impulse_response.origin.sample_rate),
-            data,
+            data: normalized,
             origin: impulse_response.origin,
         }
     }

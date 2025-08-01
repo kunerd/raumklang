@@ -319,7 +319,6 @@ impl Main {
                         .x_range
                         .get_or_insert_with(|| 0.0..=impulse_response.data.len() as f32);
 
-                    charts.impulse_responses.x_max = Some(impulse_response.max);
                     charts.impulse_responses.line_cache.clear();
                 }
 
@@ -753,19 +752,9 @@ impl Main {
                 .and_then(|id| impulse_responses.get(id))
                 .and_then(|state| state.computed())
             {
-                container(
-                    chart::impulse_response(
-                        &window_settings.window,
-                        impulse_response,
-                        chart.x_range.as_ref().unwrap(),
-                        &chart.line_cache,
-                    )
-                    .map(Message::Chart),
-                )
-                .style(container::rounded_box)
-                // chart
-                //     .view(impulse_response, window_settings)
-                //     .map(Message::ImpulseResponses)
+                chart
+                    .view(impulse_response, window_settings)
+                    .map(Message::ImpulseResponses)
             } else {
                 container(text("Impulse response not computed, yet.")).into()
             }
