@@ -92,7 +92,6 @@ pub enum Message {
     ImpulseResponseComputed(ui::measurement::Id, data::ImpulseResponse),
     FrequencyResponseEvent(ui::measurement::Id, data::frequency_response::Event),
     FrequencyResponseComputed(ui::measurement::Id, data::FrequencyResponse),
-    Chart(chart::Interaction),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -332,7 +331,7 @@ impl Main {
                 let State::Analysing {
                     active_tab:
                         Tab::ImpulseResponses {
-                            ref window_settings,
+                            ref mut window_settings,
                         },
                     ref mut charts,
                     ..
@@ -341,7 +340,7 @@ impl Main {
                     return Task::none();
                 };
 
-                charts.impulse_responses.update(operation);
+                charts.impulse_responses.update(operation, window_settings);
                 window_settings.cache.clear();
 
                 Task::none()

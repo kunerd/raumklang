@@ -1,4 +1,7 @@
-use std::{cmp::Ordering, ops::RangeInclusive};
+use crate::{
+    data::{chart, window::Handles, SampleRate, Samples, Window},
+    ui,
+};
 
 use iced::{
     advanced::{
@@ -15,18 +18,15 @@ use iced::{
     Length::Fill,
     Pixels, Point, Rectangle, Renderer, Theme, Vector,
 };
+use ringbuf::traits::Consumer;
 
-use crate::{
-    data::{chart, Samples, Window},
-    ui,
-};
+use std::{cmp::Ordering, ops::RangeInclusive};
 
 pub fn impulse_response<'a>(
     window: &'a Window<Samples>,
     impulse_response: &'a ui::ImpulseResponse,
     time_unit: &'a chart::TimeSeriesUnit,
     amplitude_unit: &'a chart::AmplitudeUnit,
-    x_range: &'a RangeInclusive<f32>,
     cache: &'a canvas::Cache,
 ) -> Element<'a, Interaction, iced::Theme> {
     container(
@@ -40,7 +40,6 @@ pub fn impulse_response<'a>(
                 .enumerate(),
             cache,
             cmp: |a, b| a.total_cmp(b),
-            x_to_float: |i| i as f32,
             to_x_scale: move |i| match time_unit {
                 chart::TimeSeriesUnit::Time => time_scale(i, impulse_response.sample_rate.into()),
                 chart::TimeSeriesUnit::Samples => i as f32,
@@ -50,8 +49,6 @@ pub fn impulse_response<'a>(
                 chart::AmplitudeUnit::PercentFullScale => percent_full_scale(s),
                 chart::AmplitudeUnit::DezibelFullScale => db_full_scale(s),
             },
-            to_string: |s| format!("{s}:0."),
-            x_range,
         })
         .width(Fill)
         .height(Fill),
@@ -68,21 +65,36 @@ where
     datapoints: I,
     cache: &'a canvas::Cache,
     cmp: fn(&Y, &Y) -> Ordering,
-    x_to_float: fn(X) -> f32,
     to_x_scale: ScaleX,
     y_to_float: fn(Y) -> f32,
     to_y_scale: ScaleY,
-    to_string: fn(Y) -> String,
-    x_range: &'a RangeInclusive<f32>,
-    // y_range: &'a RangeInclusive<f32>,
-    // average: fn(T, u32) -> A,
-    // average_to_float: fn(A) -> f64,
-    // average_to_string: fn(A) -> String,
-    // zoom: Zoom,
 }
 
 #[derive(Debug, Clone)]
-pub enum Interaction {}
+pub enum Interaction {
+    HandleMoved(usize, f32),
+}
+
+#[derive(Default)]
+enum State<'a> {
+    #[default]
+    Initalizing,
+    Initialized {
+        bounds: Rectangle,
+        x_axis: HorizontalAxis<'a>,
+        y_axis: VerticalAxis<'a>,
+        hovered_handle: Option<usize>,
+        dragging: Dragging,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+enum Dragging {
+    CouldStillBeClick(usize, iced::Point),
+    ForSure(usize, iced::Point),
+    #[default]
+    None,
+}
 
 impl<'a, I, X, Y, ScaleX, ScaleY> canvas::Program<Interaction, iced::Theme>
     for BarChart<'a, I, X, Y, ScaleX, ScaleY>
@@ -92,87 +104,26 @@ where
     ScaleX: Fn(f32) -> f32,
     ScaleY: Fn(f32) -> f32,
 {
-    type State = Option<Point>;
+    type State = State<'static>;
 
     fn update(
         &self,
-        // bar_hovered: &mut Option<timeline::Index>,
-        // _state: &mut Self::State,
-        last_pos: &mut Option<Point>,
+        state: &mut State,
         event: &Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<canvas::Action<Interaction>> {
-        match event {
-            Event::Mouse(mouse::Event::CursorMoved { .. })
-            | Event::Window(window::Event::RedrawRequested(_)) => {
-                if let Some(ref mut pos) = last_pos {
-                    if let Some(cursor) = cursor.position_in(bounds) {
-                        if f32::abs(cursor.x - pos.x) >= 1.0 {
-                            *pos = cursor;
-                            self.cache.clear();
-                            return Some(canvas::Action::request_redraw());
-                        }
-                    } else {
-                        *last_pos = None;
-                        self.cache.clear();
-                        return Some(canvas::Action::request_redraw());
-                    }
-                } else {
-                    *last_pos = cursor.position()
-                }
-
-                None
-            }
-            Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor.is_over(bounds) => {
-                match delta {
-                    mouse::ScrollDelta::Lines { y, .. } | mouse::ScrollDelta::Pixels { y, .. } => {
-                        // let new_zoom = if y.is_sign_positive() {
-                        //     self.zoom.increment()
-                        // } else {
-                        //     self.zoom.decrement()
-                        // };
-
-                        // if new_zoom == self.zoom {
-                        //     return None;
-                        // }
-
-                        // Some(canvas::Action::publish(Interaction::ZoomChanged(new_zoom)))
-                        None
-                    }
-                }
-            }
-            _ => None,
-        }
-    }
-
-    fn draw(
-        &self,
-        _last_pos: &Option<Point>,
-        renderer: &Renderer,
-        theme: &Theme,
-        bounds: Rectangle,
-        cursor: mouse::Cursor,
-    ) -> Vec<canvas::Geometry> {
-        let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
-            let cursor = cursor.position_in(bounds);
-
-            let bounds = frame.size();
-            let palette = theme.extended_palette();
-
+        if let Event::Window(window::Event::RedrawRequested(_)) = event {
             let x_max = 0.6 * 44_100 as f32;
             let datapoints = self.datapoints.clone().take(x_max.ceil() as usize);
-            // let datapoints = self.datapoints.clone();
-
-            // let datapoints = datapoints.clone().map(|(_i, datapoint)| datapoint);
             let datapoints = datapoints.clone().map(|(_i, datapoint)| datapoint);
 
             let Some(min) = datapoints.clone().min_by(self.cmp) else {
-                return;
+                return None;
             };
 
             let Some(max) = datapoints.clone().max_by(self.cmp) else {
-                return;
+                return None;
             };
 
             let min_value = (self.to_y_scale)((self.y_to_float)(min));
@@ -188,6 +139,229 @@ where
 
             let y_range = min_value..=max_value;
             let y_axis = VerticalAxis::new(y_range, 10);
+
+            *state = match state {
+                State::Initalizing => State::Initialized {
+                    bounds,
+                    x_axis,
+                    y_axis,
+                    hovered_handle: None,
+                    dragging: Dragging::None,
+                },
+
+                State::Initialized {
+                    hovered_handle,
+                    dragging,
+                    ..
+                } => State::Initialized {
+                    bounds,
+                    x_axis,
+                    y_axis,
+                    hovered_handle: *hovered_handle,
+                    dragging: *dragging,
+                },
+            }
+        }
+
+        match event {
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                let State::Initialized {
+                    // bounds,
+                    x_axis,
+                    y_axis,
+                    ref mut hovered_handle,
+                    ref mut dragging,
+                    ..
+                } = state
+                else {
+                    return None;
+                };
+
+                let Some(cursor) = cursor.position_in(bounds) else {
+                    return None;
+                };
+
+                let width = bounds.width - y_axis.width;
+                let pixels_per_unit_x = width / x_axis.length;
+
+                match dragging {
+                    Dragging::CouldStillBeClick(id, prev_pos) => {
+                        if *prev_pos != cursor {
+                            // TODO: window changed
+                            let distance = (cursor.x - prev_pos.x) / pixels_per_unit_x;
+
+                            let action = Some(canvas::Action::publish(Interaction::HandleMoved(
+                                *id, distance,
+                            )));
+
+                            *dragging = Dragging::ForSure(*id, cursor);
+
+                            action
+                        } else {
+                            None
+                        }
+                    }
+                    Dragging::ForSure(id, prev_pos) => {
+                        // TODO: window changed
+                        let distance = (cursor.x - prev_pos.x) / pixels_per_unit_x;
+
+                        let action = Some(canvas::Action::publish(Interaction::HandleMoved(
+                            *id, distance,
+                        )));
+
+                        *dragging = Dragging::ForSure(*id, cursor);
+
+                        action
+                    }
+                    Dragging::None => {
+                        let radius = 5.0;
+                        let handles = Handles::from(self.window);
+
+                        let width = bounds.width - y_axis.width;
+                        let pixels_per_unit_x = width / x_axis.length;
+
+                        let y_target_length =
+                            bounds.height - x_axis.height - y_axis.min_label_height * 0.5;
+                        let pixels_per_unit = y_target_length / y_axis.length;
+
+                        let x_min = -x_axis.min;
+                        let hovered = handles.iter().enumerate().find_map(|(i, handle)| {
+                            let y = match handle.y() {
+                                crate::data::window::handle::Alignment::Bottom => 0.0,
+                                crate::data::window::handle::Alignment::Center => 0.5,
+                                crate::data::window::handle::Alignment::Top => 1.0,
+                            };
+
+                            let y = (self.to_y_scale)(y);
+
+                            let bounding_box = Rectangle::new(
+                                Point {
+                                    x: y_axis.width
+                                        + x_min * pixels_per_unit_x
+                                        + handle.x() * pixels_per_unit_x
+                                        - radius,
+                                    y: bounds.height
+                                        - x_axis.height
+                                        - (y - y_axis.min) * pixels_per_unit
+                                        - radius,
+                                },
+                                iced::Size {
+                                    width: 2.0 * radius,
+                                    height: 2.0 * radius,
+                                },
+                            );
+
+                            if bounding_box.contains(cursor) {
+                                Some(i)
+                            } else {
+                                None
+                            }
+                        });
+
+                        if *hovered_handle != hovered {
+                            *hovered_handle = hovered;
+                            self.cache.clear();
+
+                            Some(canvas::Action::request_redraw())
+                        } else {
+                            None
+                        }
+                    }
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                let State::Initialized {
+                    hovered_handle,
+                    ref mut dragging,
+                    ..
+                } = state
+                else {
+                    return None;
+                };
+
+                let Dragging::None = dragging else {
+                    return None;
+                };
+
+                let Some(pos) = cursor.position_in(bounds) else {
+                    return None;
+                };
+
+                let Some(hovered) = hovered_handle else {
+                    return None;
+                };
+
+                *dragging = Dragging::CouldStillBeClick(*hovered, pos);
+
+                None
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                let State::Initialized {
+                    x_axis,
+                    y_axis,
+                    ref mut hovered_handle,
+                    ref mut dragging,
+                    ..
+                } = state
+                else {
+                    return None;
+                };
+                let Some(cursor) = cursor.position_in(bounds) else {
+                    return None;
+                };
+
+                *hovered_handle = None;
+
+                match dragging {
+                    Dragging::CouldStillBeClick(_id, _point) => {
+                        *dragging = Dragging::None;
+
+                        None
+                    }
+                    Dragging::ForSure(id, prev_pos) => {
+                        let width = bounds.width - y_axis.width;
+                        let pixels_per_unit_x = width / x_axis.length;
+                        let distance = (cursor.x - prev_pos.x) / pixels_per_unit_x;
+
+                        let action = Some(canvas::Action::publish(Interaction::HandleMoved(
+                            *id, distance,
+                        )));
+
+                        *dragging = Dragging::None;
+
+                        action
+                    }
+                    Dragging::None => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn draw(
+        &self,
+        state: &State,
+        renderer: &Renderer,
+        theme: &Theme,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
+            // let cursor = cursor.position_in(bounds);
+
+            // let bounds = frame.size();
+            let palette = theme.extended_palette();
+
+            let State::Initialized {
+                bounds,
+                x_axis,
+                y_axis,
+                hovered_handle,
+                ..
+            } = state
+            else {
+                return;
+            };
 
             let width = bounds.width - y_axis.width;
             let pixels_per_unit_x = width / x_axis.length;
@@ -208,35 +382,47 @@ where
                 pos: usize,
             }
 
-            let mut cur_window = window_size.map(|_| Window { value: min, pos: 0 });
+            // let mut cur_window = window_size.map(|_| Window { value: min, pos: 0 });
 
             let y_target_length = bounds.height - x_axis.height - y_axis.min_label_height * 0.5;
             let pixels_per_unit = y_target_length / y_axis.length;
+
+            let x_max = 0.6 * 44_100 as f32;
+            let datapoints = self
+                .datapoints
+                .clone()
+                .take(x_max.ceil() as usize)
+                .map(|(_i, datapoint)| datapoint);
+
+            let x_min = -x_axis.min;
+            let min_value = y_axis.min;
             for (i, datapoint) in datapoints.enumerate() {
-                let value = if let Some(ref mut cur_window) = cur_window {
-                    if cur_window.pos < window_size.unwrap() {
-                        // window.value += (self.to_float)(datapoint);
-                        cur_window.value = match (self.cmp)(&cur_window.value, &datapoint) {
-                            Ordering::Less => datapoint,
-                            Ordering::Equal => datapoint,
-                            Ordering::Greater => cur_window.value,
-                        };
-                        cur_window.pos += 1;
-                        continue;
-                    } else {
-                        // let datapoint = window.value / window.pos as f32;
-                        let datapoint = cur_window.value;
-                        *cur_window = Window { value: min, pos: 0 };
-                        datapoint
-                    }
-                } else {
-                    datapoint
-                };
+                // let value = if let Some(ref mut cur_window) = cur_window {
+                //     if cur_window.pos < window_size.unwrap() {
+                //         // window.value += (self.to_float)(datapoint);
+                //         cur_window.value = match (self.cmp)(&cur_window.value, &datapoint) {
+                //             Ordering::Less => datapoint,
+                //             Ordering::Equal => datapoint,
+                //             Ordering::Greater => cur_window.value,
+                //         };
+                //         cur_window.pos += 1;
+                //         continue;
+                //     } else {
+                //         // let datapoint = window.value / window.pos as f32;
+                //         let datapoint = cur_window.value;
+                //         *cur_window = Window { value: min, pos: 0 };
+                //         datapoint
+                //     }
+                // } else {
+                //     datapoint
+                // };
+                //
+                let value = datapoint;
 
                 let value = (self.y_to_float)(value);
                 let value = (self.to_y_scale)(value);
 
-                let bar_height = (value - min_value) * pixels_per_unit;
+                let bar_height = (value - y_axis.min) * pixels_per_unit;
 
                 let divider = window_size.unwrap_or(1);
                 let bar = Rectangle {
@@ -269,32 +455,61 @@ where
                 }
             });
 
+            let radius = 5.0;
+            let handles = Handles::from(self.window);
+            for (i, handle) in handles.iter().enumerate() {
+                let y = match handle.y() {
+                    crate::data::window::handle::Alignment::Bottom => 0.0,
+                    crate::data::window::handle::Alignment::Center => 0.5,
+                    crate::data::window::handle::Alignment::Top => 1.0,
+                };
+
+                let y = (self.to_y_scale)(y);
+
+                let center = Point {
+                    x: y_axis.width + x_min * pixels_per_unit_x + handle.x() * pixels_per_unit_x,
+                    y: bounds.height - x_axis.height - (y - min_value) * pixels_per_unit,
+                };
+
+                let path = Path::circle(center, radius);
+                frame.stroke(
+                    &path,
+                    Stroke::default()
+                        .with_color(if hovered_handle.is_some_and(|selected| i == selected) {
+                            palette.primary.strong.color
+                        } else {
+                            palette.secondary.strong.color
+                        })
+                        .with_width(2.0),
+                );
+            }
+
             frame.stroke(
-                &path, //.transform(&Transform2D::new(1.0, 0.0, 0.0, -1.0, 0.0, 0.0)),
+                &path,
                 Stroke::default()
                     .with_width(2.0)
                     .with_color(palette.success.weak.color),
             );
 
-            if let Some(cursor) = cursor {
-                let path = Path::line(
-                    Point {
-                        x: cursor.x,
-                        y: 0.0,
-                    },
-                    Point {
-                        x: cursor.x,
-                        y: bounds.height - x_axis.height,
-                    },
-                );
+            // if let Some(cursor) = cursor {
+            //     let path = Path::line(
+            //         Point {
+            //             x: cursor.x,
+            //             y: 0.0,
+            //         },
+            //         Point {
+            //             x: cursor.x,
+            //             y: bounds.height - x_axis.height,
+            //         },
+            //     );
 
-                frame.stroke(
-                    &path,
-                    Stroke::default()
-                        .with_width(2.0)
-                        .with_color(palette.background.weakest.color),
-                );
-            }
+            //     frame.stroke(
+            //         &path,
+            //         Stroke::default()
+            //             .with_width(2.0)
+            //             .with_color(palette.background.weakest.color),
+            //     );
+            // }
 
             frame.with_save(|frame| {
                 frame.translate(Vector::new(y_axis.width, 0.0));
@@ -307,13 +522,21 @@ where
 
         vec![geometry]
     }
+
+    fn mouse_interaction(
+        &self,
+        _state: &Self::State,
+        _bounds: Rectangle,
+        _cursor: iced::advanced::mouse::Cursor,
+    ) -> iced::advanced::mouse::Interaction {
+        iced::advanced::mouse::Interaction::default()
+    }
 }
 
 struct HorizontalAxis<'a> {
     min: f32,
     length: f32,
     height: f32,
-    tick_amount: usize,
     labels: Vec<Label<'a>>,
 }
 
@@ -342,7 +565,6 @@ impl<'a> HorizontalAxis<'a> {
             min: *range.start(),
             length,
             height: min_label_height,
-            tick_amount,
             labels: labels.collect(),
         }
     }
@@ -377,7 +599,6 @@ struct VerticalAxis<'a> {
     width: f32,
     length: f32,
     min_label_height: f32,
-    tick_amount: usize,
     labels: Vec<Label<'a>>,
 }
 
@@ -407,7 +628,6 @@ impl<'a> VerticalAxis<'a> {
             width: min_label_width, // + padding + thickness
             length,
             min_label_height,
-            tick_amount,
             labels: labels.collect(),
         }
     }
