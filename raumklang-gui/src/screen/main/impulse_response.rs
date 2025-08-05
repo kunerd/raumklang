@@ -45,11 +45,7 @@ pub struct Chart {
 }
 
 impl Chart {
-    pub(crate) fn update(
-        &mut self,
-        chart_operation: ChartOperation,
-        window_settings: &mut WindowSettings,
-    ) {
+    pub(crate) fn update(&mut self, chart_operation: ChartOperation) {
         match chart_operation {
             ChartOperation::TimeUnitChanged(time_unit) => self.time_unit = time_unit,
             ChartOperation::AmplitudeUnitChanged(amplitude_unit) => {
@@ -75,18 +71,7 @@ impl Chart {
                     (false, false) => self.zoom_out(pos),
                 }
             }
-            ChartOperation::Interaction(chart::Interaction::HandleMoved(index, distance)) => {
-                let mut handles: window::Handles = Into::into(&window_settings.window);
-
-                match index {
-                    0 => handles.move_left(distance),
-                    1 => handles.move_center(distance),
-                    2 => handles.move_right(distance),
-                    n => panic!("there should be no handles with index: {n}"),
-                }
-
-                window_settings.window.update(handles);
-            }
+            ChartOperation::Interaction(chart::Interaction::HandleMoved(index, distance)) => {}
         }
 
         self.cache.clear();

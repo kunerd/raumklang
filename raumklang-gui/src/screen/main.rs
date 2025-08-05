@@ -4,7 +4,7 @@ mod impulse_response;
 mod measurement;
 
 use crate::{
-    data::{self, SampleRate, Samples, Window},
+    data::{self, window, SampleRate, Samples, Window},
     icon, log,
     ui::{self},
 };
@@ -18,7 +18,7 @@ use iced::{
     },
     Alignment, Color, Element, Length, Subscription, Task, Theme,
 };
-use impulse_response::WindowSettings;
+use impulse_response::{ChartOperation, WindowSettings};
 use prism::{axis, line_series, Axis, Chart, Labels};
 use raumklang_core::dbfs;
 
@@ -49,8 +49,20 @@ enum State {
 #[derive(Debug)]
 pub enum Tab {
     Measurements,
-    ImpulseResponses { window_settings: WindowSettings },
+    ImpulseResponses {
+        window_settings: WindowSettings,
+        hovered: Option<usize>,
+        dragging: Dragging,
+    },
     FrequencyResponses,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+enum Dragging {
+    CouldStillBeClick(usize, iced::Point),
+    ForSure(usize, iced::Point),
+    #[default]
+    None,
 }
 
 #[derive(Debug, Default)]
@@ -148,6 +160,8 @@ impl Main {
                     (_, TabId::ImpulseResponses) => (
                         Tab::ImpulseResponses {
                             window_settings: WindowSettings::new(window.clone()),
+                            hovered: None,
+                            dragging: Dragging::None,
                         },
                         Task::none(),
                     ),
@@ -332,6 +346,7 @@ impl Main {
                     active_tab:
                         Tab::ImpulseResponses {
                             ref mut window_settings,
+                            ..
                         },
                     ref mut charts,
                     ..
@@ -340,7 +355,17 @@ impl Main {
                     return Task::none();
                 };
 
-                charts.impulse_responses.update(operation, window_settings);
+                if let ChartOperation::Interaction(ref interaction) = operation {
+                    match interaction {
+                        chart::Interaction::HandleMoved(index, new_pos) => {
+                            let mut handles: window::Handles = Into::into(&window_settings.window);
+                            handles.update(*index, *new_pos);
+                            window_settings.window.update(handles);
+                        }
+                    }
+                }
+
+                charts.impulse_responses.update(operation);
                 window_settings.cache.clear();
 
                 Task::none()
@@ -350,6 +375,7 @@ impl Main {
                     active_tab:
                         Tab::ImpulseResponses {
                             ref mut window_settings,
+                            ..
                         },
                     ref charts,
                     ..
@@ -543,7 +569,9 @@ impl Main {
                 ..
             } => match active_tab {
                 Tab::Measurements => self.measurements_tab().map(Message::Measurements),
-                Tab::ImpulseResponses { window_settings } => self.impulse_responses_tab(
+                Tab::ImpulseResponses {
+                    window_settings, ..
+                } => self.impulse_responses_tab(
                     *selected_impulse_response,
                     &charts.impulse_responses,
                     impulse_responses,

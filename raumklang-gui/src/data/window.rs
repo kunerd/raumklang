@@ -116,6 +116,15 @@ impl From<Window<Samples>> for Window<Duration> {
 }
 
 impl Handles {
+    pub fn get(&self, id: usize) -> &Handle {
+        match id {
+            0 => &self.left,
+            1 => &self.center,
+            2 => &self.right,
+            _ => panic!("not a valid ID"),
+        }
+    }
+
     pub fn iter(&self) -> std::array::IntoIter<&Handle, 3> {
         [&self.left, &self.center, &self.right].into_iter()
     }
@@ -132,6 +141,19 @@ impl Handles {
 
     pub fn move_right(&mut self, offset: f32) {
         self.right += offset;
+    }
+
+    pub fn update(&mut self, index: usize, new_pos: f32) {
+        match index {
+            0 => self.left.x = new_pos,
+            1 => {
+                self.left.x = new_pos - (self.center.x - self.left.x);
+                self.right.x = new_pos + (self.right.x - self.center.x);
+                self.center.x = new_pos;
+            }
+            2 => self.right.x = new_pos,
+            n => panic!("there should be no handles with index: {n}"),
+        };
     }
 }
 

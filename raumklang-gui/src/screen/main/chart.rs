@@ -16,7 +16,7 @@ use iced::{
     },
     window, Element, Event, Font,
     Length::Fill,
-    Pixels, Point, Rectangle, Renderer, Theme, Vector,
+    Pixels, Point, Rectangle, Renderer, Size, Theme, Vector,
 };
 use ringbuf::traits::Consumer;
 
@@ -177,21 +177,23 @@ where
                     return None;
                 };
 
+                let width = bounds.width - y_axis.width;
+                let pixels_per_unit_x = width / x_axis.length;
+
                 let Some(cursor) = cursor.position_in(bounds) else {
                     return None;
                 };
 
-                let width = bounds.width - y_axis.width;
-                let pixels_per_unit_x = width / x_axis.length;
-
                 match dragging {
                     Dragging::CouldStillBeClick(id, prev_pos) => {
                         if *prev_pos != cursor {
-                            // TODO: window changed
                             let distance = (cursor.x - prev_pos.x) / pixels_per_unit_x;
+                            let new_pos = ((prev_pos.x - y_axis.width) / pixels_per_unit_x)
+                                + distance
+                                + x_axis.min;
 
                             let action = Some(canvas::Action::publish(Interaction::HandleMoved(
-                                *id, distance,
+                                *id, new_pos,
                             )));
 
                             *dragging = Dragging::ForSure(*id, cursor);
@@ -202,11 +204,13 @@ where
                         }
                     }
                     Dragging::ForSure(id, prev_pos) => {
-                        // TODO: window changed
                         let distance = (cursor.x - prev_pos.x) / pixels_per_unit_x;
+                        let new_pos = ((prev_pos.x - y_axis.width) / pixels_per_unit_x)
+                            + distance
+                            + x_axis.min;
 
                         let action = Some(canvas::Action::publish(Interaction::HandleMoved(
-                            *id, distance,
+                            *id, new_pos,
                         )));
 
                         *dragging = Dragging::ForSure(*id, cursor);
@@ -322,9 +326,12 @@ where
                         let width = bounds.width - y_axis.width;
                         let pixels_per_unit_x = width / x_axis.length;
                         let distance = (cursor.x - prev_pos.x) / pixels_per_unit_x;
+                        let new_pos = ((prev_pos.x - y_axis.width) / pixels_per_unit_x)
+                            + distance
+                            + x_axis.min;
 
                         let action = Some(canvas::Action::publish(Interaction::HandleMoved(
-                            *id, distance,
+                            *id, new_pos,
                         )));
 
                         *dragging = Dragging::None;
