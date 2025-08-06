@@ -1,5 +1,5 @@
 use crate::{
-    data::{chart, window::Handles, SampleRate, Samples, Window},
+    data::{chart, window::Handles, Samples, Window},
     ui,
 };
 
@@ -18,7 +18,6 @@ use iced::{
     Length::Fill,
     Pixels, Point, Rectangle, Renderer, Size, Theme, Vector,
 };
-use ringbuf::traits::Consumer;
 
 use std::{cmp::Ordering, ops::RangeInclusive};
 
@@ -81,6 +80,7 @@ enum State<'a> {
     Initalizing,
     Initialized {
         bounds: Rectangle,
+        plane: Rectangle,
         x_axis: HorizontalAxis<'a>,
         y_axis: VerticalAxis<'a>,
         hovered_handle: Option<usize>,
@@ -140,9 +140,15 @@ where
             let y_range = min_value..=max_value;
             let y_axis = VerticalAxis::new(y_range, 10);
 
+            let plane = Rectangle::new(
+                Point::new(bounds.x + y_axis.width, bounds.y),
+                Size::new(bounds.width - y_axis.width, bounds.height - x_axis.height),
+            );
+
             *state = match state {
                 State::Initalizing => State::Initialized {
                     bounds,
+                    plane,
                     x_axis,
                     y_axis,
                     hovered_handle: None,
@@ -155,6 +161,7 @@ where
                     ..
                 } => State::Initialized {
                     bounds,
+                    plane,
                     x_axis,
                     y_axis,
                     hovered_handle: *hovered_handle,
@@ -169,6 +176,7 @@ where
                     // bounds,
                     x_axis,
                     y_axis,
+                    plane,
                     ref mut hovered_handle,
                     ref mut dragging,
                     ..
@@ -177,20 +185,14 @@ where
                     return None;
                 };
 
-                let width = bounds.width - y_axis.width;
-                let pixels_per_unit_x = width / x_axis.length;
-
-                let Some(cursor) = cursor.position_in(bounds) else {
-                    return None;
-                };
+                let cursor = cursor.position_in(*plane)?;
+                let pixels_per_unit_x = plane.width / x_axis.length;
 
                 match dragging {
                     Dragging::CouldStillBeClick(id, prev_pos) => {
                         if *prev_pos != cursor {
                             let distance = (cursor.x - prev_pos.x) / pixels_per_unit_x;
-                            let new_pos = ((prev_pos.x - y_axis.width) / pixels_per_unit_x)
-                                + distance
-                                + x_axis.min;
+                            let new_pos = (prev_pos.x / pixels_per_unit_x) + distance + x_axis.min;
 
                             let action = Some(canvas::Action::publish(Interaction::HandleMoved(
                                 *id, new_pos,
@@ -205,9 +207,7 @@ where
                     }
                     Dragging::ForSure(id, prev_pos) => {
                         let distance = (cursor.x - prev_pos.x) / pixels_per_unit_x;
-                        let new_pos = ((prev_pos.x - y_axis.width) / pixels_per_unit_x)
-                            + distance
-                            + x_axis.min;
+                        let new_pos = (prev_pos.x / pixels_per_unit_x) + distance + x_axis.min;
 
                         let action = Some(canvas::Action::publish(Interaction::HandleMoved(
                             *id, new_pos,
@@ -221,11 +221,7 @@ where
                         let radius = 5.0;
                         let handles = Handles::from(self.window);
 
-                        let width = bounds.width - y_axis.width;
-                        let pixels_per_unit_x = width / x_axis.length;
-
-                        let y_target_length =
-                            bounds.height - x_axis.height - y_axis.min_label_height * 0.5;
+                        let y_target_length = plane.height - y_axis.min_label_height * 0.5;
                         let pixels_per_unit = y_target_length / y_axis.length;
 
                         let x_min = -x_axis.min;
@@ -240,14 +236,9 @@ where
 
                             let bounding_box = Rectangle::new(
                                 Point {
-                                    x: y_axis.width
-                                        + x_min * pixels_per_unit_x
-                                        + handle.x() * pixels_per_unit_x
+                                    x: x_min * pixels_per_unit_x + handle.x() * pixels_per_unit_x
                                         - radius,
-                                    y: bounds.height
-                                        - x_axis.height
-                                        - (y - y_axis.min) * pixels_per_unit
-                                        - radius,
+                                    y: plane.height - (y - y_axis.min) * pixels_per_unit - radius,
                                 },
                                 iced::Size {
                                     width: 2.0 * radius,
@@ -276,6 +267,7 @@ where
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let State::Initialized {
                     hovered_handle,
+                    plane,
                     ref mut dragging,
                     ..
                 } = state
@@ -287,15 +279,10 @@ where
                     return None;
                 };
 
-                let Some(pos) = cursor.position_in(bounds) else {
-                    return None;
-                };
+                let cursor = cursor.position_in(*plane)?;
+                let hovered = (*hovered_handle)?;
 
-                let Some(hovered) = hovered_handle else {
-                    return None;
-                };
-
-                *dragging = Dragging::CouldStillBeClick(*hovered, pos);
+                *dragging = Dragging::CouldStillBeClick(hovered, cursor);
 
                 None
             }
@@ -303,6 +290,7 @@ where
                 let State::Initialized {
                     x_axis,
                     y_axis,
+                    plane,
                     ref mut hovered_handle,
                     ref mut dragging,
                     ..
@@ -310,9 +298,8 @@ where
                 else {
                     return None;
                 };
-                let Some(cursor) = cursor.position_in(bounds) else {
-                    return None;
-                };
+
+                let cursor = cursor.position_in(*plane)?;
 
                 *hovered_handle = None;
 
@@ -323,12 +310,10 @@ where
                         None
                     }
                     Dragging::ForSure(id, prev_pos) => {
-                        let width = bounds.width - y_axis.width;
-                        let pixels_per_unit_x = width / x_axis.length;
+                        let pixels_per_unit_x = plane.width / x_axis.length;
+
                         let distance = (cursor.x - prev_pos.x) / pixels_per_unit_x;
-                        let new_pos = ((prev_pos.x - y_axis.width) / pixels_per_unit_x)
-                            + distance
-                            + x_axis.min;
+                        let new_pos = (prev_pos.x / pixels_per_unit_x) + distance + x_axis.min;
 
                         let action = Some(canvas::Action::publish(Interaction::HandleMoved(
                             *id, new_pos,
@@ -364,16 +349,16 @@ where
                 x_axis,
                 y_axis,
                 hovered_handle,
+                plane,
                 ..
             } = state
             else {
                 return;
             };
 
-            let width = bounds.width - y_axis.width;
-            let pixels_per_unit_x = width / x_axis.length;
+            let pixels_per_unit_x = plane.width / x_axis.length;
             let window_size = if pixels_per_unit_x < 1.0 {
-                Some((x_axis.length / width).floor() as usize)
+                Some((x_axis.length / plane.width).floor() as usize)
             } else {
                 None
             };
@@ -391,7 +376,7 @@ where
 
             // let mut cur_window = window_size.map(|_| Window { value: min, pos: 0 });
 
-            let y_target_length = bounds.height - x_axis.height - y_axis.min_label_height * 0.5;
+            let y_target_length = plane.height - y_axis.min_label_height * 0.5;
             let pixels_per_unit = y_target_length / y_axis.length;
 
             let x_max = 0.6 * 44_100 as f32;
@@ -436,7 +421,7 @@ where
                     x: y_axis.width
                         + (x_min * pixels_per_unit_x)
                         + bar_width * (i / divider) as f32,
-                    y: bounds.height - x_axis.height - bar_height,
+                    y: plane.height - bar_height,
                     width: bar_width,
                     height: bar_height,
                 };
@@ -450,12 +435,12 @@ where
                 if let Some((x, y)) = window_curve.next() {
                     b.move_to(Point {
                         x: y_axis.width + x_min * pixels_per_unit_x + x * pixels_per_unit_x,
-                        y: bounds.height - x_axis.height - (y - min_value) * pixels_per_unit,
+                        y: plane.height - (y - min_value) * pixels_per_unit,
                     });
                     window_curve.fold(b, |acc, (x, y)| {
                         acc.line_to(Point {
                             x: y_axis.width + x_min * pixels_per_unit_x + x * pixels_per_unit_x,
-                            y: bounds.height - x_axis.height - (y - min_value) * pixels_per_unit,
+                            y: plane.height - (y - min_value) * pixels_per_unit,
                         });
                         acc
                     });
@@ -475,7 +460,7 @@ where
 
                 let center = Point {
                     x: y_axis.width + x_min * pixels_per_unit_x + handle.x() * pixels_per_unit_x,
-                    y: bounds.height - x_axis.height - (y - min_value) * pixels_per_unit,
+                    y: plane.height - (y - min_value) * pixels_per_unit,
                 };
 
                 let path = Path::circle(center, radius);
@@ -521,7 +506,7 @@ where
             frame.with_save(|frame| {
                 frame.translate(Vector::new(y_axis.width, 0.0));
 
-                x_axis.draw(frame, bounds.width - y_axis.width);
+                x_axis.draw(frame, plane.width);
             });
 
             y_axis.draw(frame, y_target_length);
