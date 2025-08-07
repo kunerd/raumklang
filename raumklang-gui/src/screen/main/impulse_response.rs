@@ -42,6 +42,7 @@ pub struct Chart {
     pub time_unit: data::chart::TimeSeriesUnit,
     pub cache: canvas::Cache,
     pub line_cache: canvas::Cache,
+    pub zoom: chart::Zoom,
 }
 
 impl Chart {
@@ -71,7 +72,7 @@ impl Chart {
                     (false, false) => self.zoom_out(pos),
                 }
             }
-            ChartOperation::Interaction(chart::Interaction::HandleMoved(index, distance)) => {}
+            ChartOperation::Interaction(_) => {}
         }
 
         self.cache.clear();
@@ -98,6 +99,7 @@ impl Chart {
                     impulse_response,
                     &self.time_unit,
                     &self.amplitude_unit,
+                    self.zoom,
                     &self.line_cache,
                 )
                 .map(ChartOperation::Interaction)

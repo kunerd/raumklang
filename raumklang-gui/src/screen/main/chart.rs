@@ -8,7 +8,8 @@ use iced::{
         graphics::text::Paragraph,
         text::{self, Paragraph as _},
     },
-    alignment, mouse,
+    alignment,
+    mouse::{self, ScrollDelta},
     widget::{
         canvas::{self, Frame, Path, Stroke},
         container,
@@ -19,13 +20,17 @@ use iced::{
     Pixels, Point, Rectangle, Renderer, Size, Theme, Vector,
 };
 
-use std::{cmp::Ordering, ops::RangeInclusive};
+use std::{
+    cmp::Ordering,
+    ops::{Add, RangeInclusive, Sub},
+};
 
 pub fn impulse_response<'a>(
     window: &'a Window<Samples>,
     impulse_response: &'a ui::ImpulseResponse,
     time_unit: &'a chart::TimeSeriesUnit,
     amplitude_unit: &'a chart::AmplitudeUnit,
+    zoom: Zoom,
     cache: &'a canvas::Cache,
 ) -> Element<'a, Interaction, iced::Theme> {
     container(
@@ -48,11 +53,43 @@ pub fn impulse_response<'a>(
                 chart::AmplitudeUnit::PercentFullScale => percent_full_scale(s),
                 chart::AmplitudeUnit::DezibelFullScale => db_full_scale(s),
             },
+            zoom,
         })
         .width(Fill)
         .height(Fill),
     )
     .into()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Zoom(f32);
+
+impl Default for Zoom {
+    fn default() -> Self {
+        Zoom(1.0)
+    }
+}
+
+impl Add<f32> for Zoom {
+    type Output = Zoom;
+
+    fn add(self, rhs: f32) -> Self::Output {
+        Zoom(self.0 + rhs)
+    }
+}
+
+impl Sub<f32> for Zoom {
+    type Output = Zoom;
+
+    fn sub(self, rhs: f32) -> Self::Output {
+        Zoom(self.0 - rhs)
+    }
+}
+
+impl From<Zoom> for f32 {
+    fn from(zoom: Zoom) -> Self {
+        zoom.0
+    }
 }
 
 struct BarChart<'a, I, X, Y, ScaleX, ScaleY>
@@ -67,11 +104,13 @@ where
     to_x_scale: ScaleX,
     y_to_float: fn(Y) -> f32,
     to_y_scale: ScaleY,
+    zoom: Zoom,
 }
 
 #[derive(Debug, Clone)]
 pub enum Interaction {
     HandleMoved(usize, f32),
+    ZoomChanged(Zoom),
 }
 
 #[derive(Default)]
@@ -114,7 +153,7 @@ where
         cursor: mouse::Cursor,
     ) -> Option<canvas::Action<Interaction>> {
         if let Event::Window(window::Event::RedrawRequested(_)) = event {
-            let x_max = 0.6 * 44_100 as f32;
+            let x_max = 0.6 * 44_100 as f32 * f32::from(self.zoom);
             let datapoints = self.datapoints.clone().take(x_max.ceil() as usize);
             let datapoints = datapoints.clone().map(|(_i, datapoint)| datapoint);
 
@@ -129,7 +168,7 @@ where
             let min_value = (self.to_y_scale)((self.y_to_float)(min));
             let max_value = (self.to_y_scale)((self.y_to_float)(max)) + 10.0;
 
-            let x_min = 0.250 * 44_100 as f32;
+            let x_min = 0.250 * 44_100 as f32 * f32::from(self.zoom);
             let x_max = datapoints.clone().count() as f32;
             // let x_min = (self.to_x_scale)(x_min);
             // let x_max = (self.to_x_scale)(datapoints.clone().count());
@@ -326,6 +365,19 @@ where
                     Dragging::None => None,
                 }
             }
+            Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+                let ScrollDelta::Lines { y, .. } = delta else {
+                    return None;
+                };
+
+                let new_zoom = if y.is_sign_positive() {
+                    self.zoom - (self.zoom.0 * 0.1)
+                } else {
+                    self.zoom + (self.zoom.0 * 0.1)
+                };
+
+                Some(canvas::Action::publish(Interaction::ZoomChanged(new_zoom)))
+            }
             _ => None,
         }
     }
@@ -387,7 +439,6 @@ where
                 .map(|(_i, datapoint)| datapoint);
 
             let x_min = -x_axis.min;
-            let min_value = y_axis.min;
             for (i, datapoint) in datapoints.enumerate() {
                 // let value = if let Some(ref mut cur_window) = cur_window {
                 //     if cur_window.pos < window_size.unwrap() {
@@ -435,12 +486,12 @@ where
                 if let Some((x, y)) = window_curve.next() {
                     b.move_to(Point {
                         x: y_axis.width + x_min * pixels_per_unit_x + x * pixels_per_unit_x,
-                        y: plane.height - (y - min_value) * pixels_per_unit,
+                        y: plane.height - (y - y_axis.min) * pixels_per_unit,
                     });
                     window_curve.fold(b, |acc, (x, y)| {
                         acc.line_to(Point {
                             x: y_axis.width + x_min * pixels_per_unit_x + x * pixels_per_unit_x,
-                            y: plane.height - (y - min_value) * pixels_per_unit,
+                            y: plane.height - (y - y_axis.min) * pixels_per_unit,
                         });
                         acc
                     });
@@ -460,7 +511,7 @@ where
 
                 let center = Point {
                     x: y_axis.width + x_min * pixels_per_unit_x + handle.x() * pixels_per_unit_x,
-                    y: plane.height - (y - min_value) * pixels_per_unit,
+                    y: plane.height - (y - y_axis.min) * pixels_per_unit,
                 };
 
                 let path = Path::circle(center, radius);

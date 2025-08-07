@@ -362,6 +362,9 @@ impl Main {
                             handles.update(*index, *new_pos);
                             window_settings.window.update(handles);
                         }
+                        chart::Interaction::ZoomChanged(zoom) => {
+                            charts.impulse_responses.zoom = *zoom;
+                        }
                     }
                 }
 
