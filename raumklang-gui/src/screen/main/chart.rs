@@ -158,14 +158,17 @@ where
         cursor: mouse::Cursor,
     ) -> Option<canvas::Action<Interaction>> {
         if let Event::Window(window::Event::RedrawRequested(_)) = event {
+            let x_min = 0.250 * 44_100 as f32 * f32::from(self.zoom);
+            let x_min = -x_min + self.offset as f32;
+
             let x_max = 0.6 * 44_100 as f32 * f32::from(self.zoom);
             let x_max = x_max.ceil() as u64;
 
             let datapoints = self
                 .datapoints
                 .clone()
-                .skip(if self.offset.is_positive() {
-                    self.offset as usize
+                .skip(if x_min > 0.0 {
+                    x_min.ceil() as usize
                 } else {
                     0
                 })
@@ -184,12 +187,11 @@ where
             let min_value = (self.to_y_scale)((self.y_to_float)(min));
             let max_value = (self.to_y_scale)((self.y_to_float)(max)) + 10.0;
 
-            let x_min = 0.250 * 44_100 as f32 * f32::from(self.zoom);
             let x_max = datapoints.clone().count() as f32;
             // let x_min = (self.to_x_scale)(x_min);
             // let x_max = (self.to_x_scale)(datapoints.clone().count());
 
-            let x_range = -x_min + self.offset as f32..=x_max;
+            let x_range = x_min..=x_max;
             let x_axis = HorizontalAxis::new(x_range, &self.to_x_scale, 10);
 
             let y_range = min_value..=max_value;
@@ -492,13 +494,17 @@ where
             let y_target_length = plane.height - y_axis.min_label_height * 0.5;
             let pixels_per_unit = y_target_length / y_axis.length;
 
+            let x_min = 0.250 * 44_100 as f32 * f32::from(self.zoom);
+            let x_min = -x_min + self.offset as f32;
+
             let x_max = 0.6 * 44_100 as f32 * f32::from(self.zoom);
             let x_max = x_max.ceil() as u64;
+
             let datapoints = self
                 .datapoints
                 .clone()
-                .skip(if self.offset.is_positive() {
-                    self.offset as usize
+                .skip(if x_min > 0.0 {
+                    x_min.ceil() as usize
                 } else {
                     0
                 })
@@ -534,11 +540,8 @@ where
 
                 let bar_height = (value - y_axis.min) * pixels_per_unit;
 
-                let divider = window_size.unwrap_or(1);
                 let bar = Rectangle {
-                    x: y_axis.width
-                        + (x_min * pixels_per_unit_x)
-                        + bar_width * (i / divider) as f32,
+                    x: y_axis.width + (x_min * pixels_per_unit_x) + (i as f32 * pixels_per_unit_x),
                     y: plane.height - bar_height,
                     width: bar_width,
                     height: bar_height,
