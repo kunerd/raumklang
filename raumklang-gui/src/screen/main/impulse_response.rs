@@ -10,7 +10,7 @@ use iced::{
     widget::{canvas, column, container, pick_list, row, stack, text},
     Alignment, Color, Element, Length, Point,
 };
-use prism::{items, line_series, point_series, series::point, Items, Labels};
+use prism::{items, Items};
 
 use std::{ops::RangeInclusive, time::Duration};
 
@@ -43,6 +43,7 @@ pub struct Chart {
     pub cache: canvas::Cache,
     pub line_cache: canvas::Cache,
     pub zoom: chart::Zoom,
+    pub offset: i64,
 }
 
 impl Chart {
@@ -100,6 +101,7 @@ impl Chart {
                     &self.time_unit,
                     &self.amplitude_unit,
                     self.zoom,
+                    self.offset,
                     &self.line_cache,
                 )
                 .map(ChartOperation::Interaction)

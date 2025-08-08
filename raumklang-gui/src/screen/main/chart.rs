@@ -22,7 +22,7 @@ use iced::{
 
 use std::{
     cmp::Ordering,
-    ops::{Add, RangeInclusive, Sub},
+    ops::{Add, RangeInclusive, ShrAssign, Sub},
 };
 
 pub fn impulse_response<'a>(
@@ -31,6 +31,7 @@ pub fn impulse_response<'a>(
     time_unit: &'a chart::TimeSeriesUnit,
     amplitude_unit: &'a chart::AmplitudeUnit,
     zoom: Zoom,
+    offset: i64,
     cache: &'a canvas::Cache,
 ) -> Element<'a, Interaction, iced::Theme> {
     container(
@@ -54,6 +55,7 @@ pub fn impulse_response<'a>(
                 chart::AmplitudeUnit::DezibelFullScale => db_full_scale(s),
             },
             zoom,
+            offset,
         })
         .width(Fill)
         .height(Fill),
@@ -105,12 +107,14 @@ where
     y_to_float: fn(Y) -> f32,
     to_y_scale: ScaleY,
     zoom: Zoom,
+    offset: i64,
 }
 
 #[derive(Debug, Clone)]
 pub enum Interaction {
     HandleMoved(usize, f32),
     ZoomChanged(Zoom),
+    OffsetChanged(i64),
 }
 
 #[derive(Default)]
@@ -124,6 +128,7 @@ enum State<'a> {
         y_axis: VerticalAxis<'a>,
         hovered_handle: Option<usize>,
         dragging: Dragging,
+        shift_pressed: bool,
     },
 }
 
@@ -154,7 +159,18 @@ where
     ) -> Option<canvas::Action<Interaction>> {
         if let Event::Window(window::Event::RedrawRequested(_)) = event {
             let x_max = 0.6 * 44_100 as f32 * f32::from(self.zoom);
-            let datapoints = self.datapoints.clone().take(x_max.ceil() as usize);
+            let x_max = x_max.ceil() as u64;
+
+            let datapoints = self
+                .datapoints
+                .clone()
+                .skip(if self.offset.is_positive() {
+                    self.offset as usize
+                } else {
+                    0
+                })
+                .take(x_max.saturating_add_signed(self.offset) as usize);
+
             let datapoints = datapoints.clone().map(|(_i, datapoint)| datapoint);
 
             let Some(min) = datapoints.clone().min_by(self.cmp) else {
@@ -173,7 +189,7 @@ where
             // let x_min = (self.to_x_scale)(x_min);
             // let x_max = (self.to_x_scale)(datapoints.clone().count());
 
-            let x_range = -x_min..=x_max;
+            let x_range = -x_min + self.offset as f32..=x_max;
             let x_axis = HorizontalAxis::new(x_range, &self.to_x_scale, 10);
 
             let y_range = min_value..=max_value;
@@ -192,11 +208,13 @@ where
                     y_axis,
                     hovered_handle: None,
                     dragging: Dragging::None,
+                    shift_pressed: false,
                 },
 
                 State::Initialized {
                     hovered_handle,
                     dragging,
+                    shift_pressed,
                     ..
                 } => State::Initialized {
                     bounds,
@@ -205,6 +223,7 @@ where
                     y_axis,
                     hovered_handle: *hovered_handle,
                     dragging: *dragging,
+                    shift_pressed: *shift_pressed,
                 },
             }
         }
@@ -330,8 +349,8 @@ where
                     x_axis,
                     y_axis,
                     plane,
-                    ref mut hovered_handle,
-                    ref mut dragging,
+                    hovered_handle,
+                    dragging,
                     ..
                 } = state
                 else {
@@ -365,18 +384,60 @@ where
                     Dragging::None => None,
                 }
             }
+            Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) => {
+                let State::Initialized { shift_pressed, .. } = state else {
+                    return None;
+                };
+
+                if let iced::keyboard::Key::Named(iced::keyboard::key::Named::Shift) = key {
+                    *shift_pressed = true;
+                }
+
+                None
+            }
+            Event::Keyboard(iced::keyboard::Event::KeyReleased { key, .. }) => {
+                let State::Initialized { shift_pressed, .. } = state else {
+                    return None;
+                };
+
+                if let iced::keyboard::Key::Named(iced::keyboard::key::Named::Shift) = key {
+                    *shift_pressed = false;
+                }
+
+                None
+            }
             Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+                let State::Initialized { shift_pressed, .. } = state else {
+                    return None;
+                };
+
                 let ScrollDelta::Lines { y, .. } = delta else {
                     return None;
                 };
 
-                let new_zoom = if y.is_sign_positive() {
-                    self.zoom - (self.zoom.0 * 0.1)
-                } else {
-                    self.zoom + (self.zoom.0 * 0.1)
-                };
+                if *shift_pressed {
+                    let new_offset = if y.is_sign_positive() {
+                        self.offset + (0.05 * f32::from(self.zoom) * 44_100_f32).ceil() as i64
+                    } else {
+                        self.offset - (0.05 * f32::from(self.zoom) * 44_100_f32).ceil() as i64
+                    };
 
-                Some(canvas::Action::publish(Interaction::ZoomChanged(new_zoom)))
+                    if self.offset != new_offset {
+                        Some(canvas::Action::publish(Interaction::OffsetChanged(
+                            new_offset,
+                        )))
+                    } else {
+                        None
+                    }
+                } else {
+                    let new_zoom = if y.is_sign_positive() {
+                        self.zoom - (self.zoom.0 * 0.1)
+                    } else {
+                        self.zoom + (self.zoom.0 * 0.1)
+                    };
+
+                    Some(canvas::Action::publish(Interaction::ZoomChanged(new_zoom)))
+                }
             }
             _ => None,
         }
@@ -431,11 +492,17 @@ where
             let y_target_length = plane.height - y_axis.min_label_height * 0.5;
             let pixels_per_unit = y_target_length / y_axis.length;
 
-            let x_max = 0.6 * 44_100 as f32;
+            let x_max = 0.6 * 44_100 as f32 * f32::from(self.zoom);
+            let x_max = x_max.ceil() as u64;
             let datapoints = self
                 .datapoints
                 .clone()
-                .take(x_max.ceil() as usize)
+                .skip(if self.offset.is_positive() {
+                    self.offset as usize
+                } else {
+                    0
+                })
+                .take(x_max.saturating_add_signed(self.offset) as usize)
                 .map(|(_i, datapoint)| datapoint);
 
             let x_min = -x_axis.min;

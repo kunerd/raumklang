@@ -365,6 +365,9 @@ impl Main {
                         chart::Interaction::ZoomChanged(zoom) => {
                             charts.impulse_responses.zoom = *zoom;
                         }
+                        chart::Interaction::OffsetChanged(offset) => {
+                            charts.impulse_responses.offset = *offset
+                        }
                     }
                 }
 
