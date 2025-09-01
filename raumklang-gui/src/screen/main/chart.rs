@@ -22,7 +22,7 @@ use iced::{
 
 use std::{
     cmp::Ordering,
-    ops::{Add, RangeInclusive, ShrAssign, Sub},
+    ops::{Add, RangeInclusive, Sub},
 };
 
 pub fn impulse_response<'a>(
@@ -122,7 +122,6 @@ enum State<'a> {
     #[default]
     Initalizing,
     Initialized {
-        bounds: Rectangle,
         plane: Rectangle,
         x_axis: HorizontalAxis<'a>,
         y_axis: VerticalAxis<'a>,
@@ -188,8 +187,6 @@ where
             let max_value = (self.to_y_scale)((self.y_to_float)(max)) + 10.0;
 
             let x_max = datapoints.clone().count() as f32;
-            // let x_min = (self.to_x_scale)(x_min);
-            // let x_max = (self.to_x_scale)(datapoints.clone().count());
 
             let x_range = x_min..=x_max;
             let x_axis = HorizontalAxis::new(x_range, &self.to_x_scale, 10);
@@ -204,7 +201,6 @@ where
 
             *state = match state {
                 State::Initalizing => State::Initialized {
-                    bounds,
                     plane,
                     x_axis,
                     y_axis,
@@ -219,7 +215,6 @@ where
                     shift_pressed,
                     ..
                 } => State::Initialized {
-                    bounds,
                     plane,
                     x_axis,
                     y_axis,
@@ -349,7 +344,6 @@ where
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 let State::Initialized {
                     x_axis,
-                    y_axis,
                     plane,
                     hovered_handle,
                     dragging,
@@ -451,7 +445,7 @@ where
         renderer: &Renderer,
         theme: &Theme,
         bounds: Rectangle,
-        cursor: mouse::Cursor,
+        _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
             // let cursor = cursor.position_in(bounds);
@@ -460,7 +454,6 @@ where
             let palette = theme.extended_palette();
 
             let State::Initialized {
-                bounds,
                 x_axis,
                 y_axis,
                 hovered_handle,
@@ -484,10 +477,10 @@ where
                 pixels_per_unit_x
             };
 
-            struct Window<T> {
-                value: T,
-                pos: usize,
-            }
+            // struct Window<T> {
+            //     value: T,
+            //     pos: usize,
+            // }
 
             // let mut cur_window = window_size.map(|_| Window { value: min, pos: 0 });
 
@@ -604,7 +597,7 @@ where
                     .with_color(palette.success.weak.color),
             );
 
-            // if let Some(cursor) = cursor {
+            // if let Some(cursor) = cursor.position() {
             //     let path = Path::line(
             //         Point {
             //             x: cursor.x,
@@ -834,10 +827,6 @@ fn min_bounds(content: &str, font_size: Pixels) -> iced::Size {
 
     let paragraph = Paragraph::with_text(text);
     paragraph.min_bounds()
-}
-
-fn sample_scale(index: f32, _sample_rate: f32) -> f32 {
-    index
 }
 
 fn time_scale(index: f32, sample_rate: f32) -> f32 {

@@ -13,8 +13,8 @@ use iced::{
     alignment::{Horizontal, Vertical},
     keyboard,
     widget::{
-        button, center, column, container, horizontal_rule, opaque, pick_list, row, scrollable,
-        stack, text, text::Wrapping, Button,
+        button, center, column, container, horizontal_rule, horizontal_space, opaque, pick_list,
+        row, scrollable, stack, text, text::Wrapping, Button,
     },
     Alignment, Color, Element, Length, Subscription, Task, Theme,
 };
@@ -30,6 +30,7 @@ pub struct Main {
     smoothing: frequency_response::Smoothing,
     loopback: Option<ui::Loopback>,
     measurements: Vec<ui::Measurement>,
+    modal: Modal,
 }
 
 #[derive(Debug, Default)]
@@ -71,23 +72,23 @@ struct Charts {
     frequency_responses: frequency_response::ChartData,
 }
 
-// #[derive(Default)]
-// enum Modal {
-//     #[default]
-//     None,
-//     PendingWindow {
-//         goto_tab: Tab,
-//     },
-//     ReplaceLoopback {
-//         loopback: data::measurement::State<data::measurement::Loopback>,
-//     },
-// }
+#[derive(Default, Debug)]
+enum Modal {
+    #[default]
+    None,
+    PendingWindow {
+        goto_tab: TabId,
+    },
+    // ReplaceLoopback {
+    //     loopback: data::measurement::State<data::measurement::Loopback>,
+    // },
+}
 
-// #[derive(Debug, Clone)]
-// pub enum ModalAction {
-//     Discard,
-//     Apply,
-// }
+#[derive(Debug, Clone)]
+pub enum ModalAction {
+    Discard,
+    Apply,
+}
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -104,6 +105,7 @@ pub enum Message {
     ImpulseResponseComputed(ui::measurement::Id, data::ImpulseResponse),
     FrequencyResponseEvent(ui::measurement::Id, data::frequency_response::Event),
     FrequencyResponseComputed(ui::measurement::Id, data::FrequencyResponse),
+    Modal(ModalAction),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,6 +158,16 @@ impl Main {
                     (Tab::Measurements, TabId::Measurements)
                     | (Tab::ImpulseResponses { .. }, TabId::ImpulseResponses)
                     | (Tab::FrequencyResponses, TabId::FrequencyResponses) => return Task::none(),
+                    (
+                        Tab::ImpulseResponses {
+                            ref window_settings,
+                            ..
+                        },
+                        tab_id,
+                    ) if window_settings.window != *window => {
+                        self.modal = Modal::PendingWindow { goto_tab: tab_id };
+                        return Task::none();
+                    }
                     (_, TabId::Measurements) => (Tab::Measurements, Task::none()),
                     (_, TabId::ImpulseResponses) => (
                         Tab::ImpulseResponses {
@@ -545,13 +557,49 @@ impl Main {
 
                 match event {
                     data::frequency_response::Event::ComputingStarted => {
-                        frequency_responses.entry(id).and_modify(|fr| {
-                            fr.state = frequency_response::State::ComputingFrequencyResponse
-                        });
+                        frequency_responses
+                            .entry(id)
+                            .and_modify(|fr| {
+                                fr.state = frequency_response::State::ComputingFrequencyResponse
+                            })
+                            .or_default();
                     }
                 }
 
                 Task::none()
+            }
+            Message::Modal(action) => {
+                let Modal::PendingWindow { goto_tab } = std::mem::take(&mut self.modal) else {
+                    return Task::none();
+                };
+
+                let State::Analysing {
+                    ref mut active_tab,
+                    ref mut frequency_responses,
+                    ref mut window,
+                    ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
+                if let Tab::ImpulseResponses {
+                    ref mut window_settings,
+                    ..
+                } = active_tab
+                {
+                    match action {
+                        ModalAction::Discard => {
+                            *window_settings = WindowSettings::new(window.clone());
+                        }
+                        ModalAction::Apply => {
+                            frequency_responses.clear();
+                            *window = window_settings.window.clone();
+                        }
+                    }
+                };
+
+                Task::done(Message::TabSelected(goto_tab))
             }
         }
     }
@@ -589,7 +637,38 @@ impl Main {
             },
         };
 
-        container(column![header, container(content).padding(5)].spacing(10)).into()
+        let content = container(column![header, container(content).padding(5)].spacing(10));
+
+        if let Modal::PendingWindow { .. } = self.modal {
+            let pending_window = {
+                container(
+                    column![
+                        text("Window pending!").size(18),
+                        column![
+                            text("You have modified the window used for frequency response computations."),
+                            text("You need to discard or apply your changes before proceeding."),
+                        ].spacing(5),
+                        row![
+                            horizontal_space(),
+                            button("Discard")
+                                .style(button::danger)
+                                .on_press(Message::Modal(ModalAction::Discard)),
+                            button("Apply")
+                                .style(button::success)
+                                .on_press(Message::Modal(ModalAction::Apply))
+                        ]
+                        .spacing(5)
+                    ]
+                    .spacing(10))
+                    .padding(20)
+                    .width(400)
+                    .style(container::bordered_box)
+            };
+
+            modal(content, pending_window).into()
+        } else {
+            content.into()
+        }
     }
 
     fn measurements_tab(&self) -> Element<'_, measurement::Message> {
@@ -964,6 +1043,7 @@ impl Default for Main {
             smoothing: frequency_response::Smoothing::default(),
             loopback: None,
             measurements: vec![],
+            modal: Modal::None,
         }
     }
 }
