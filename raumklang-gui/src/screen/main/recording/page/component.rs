@@ -46,7 +46,7 @@ where
                     text!("Recording - {subsection}").size(20),
                     horizontal_space(),
                 ]
-                .push_maybe(
+                .push(
                     self.sample_rate
                         .map(|sample_rate| text!("Sample rate: {}", sample_rate).size(14))
                 )
@@ -58,11 +58,11 @@ where
 
         container(
             column![header(&self.title)]
-                .push_maybe(self.content)
+                .push(self.content)
                 .push(
                     container(
                         row![self.cancel_button]
-                            .push_maybe(self.back_button)
+                            .push(self.back_button)
                             .push(self.next_button)
                             .spacing(6),
                     )

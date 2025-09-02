@@ -2,6 +2,10 @@ mod chart;
 mod frequency_response;
 mod impulse_response;
 mod measurement;
+mod recording;
+
+use impulse_response::{ChartOperation, WindowSettings};
+use recording::Recording;
 
 use crate::{
     data::{self, window, SampleRate, Samples, Window},
@@ -18,11 +22,10 @@ use iced::{
     },
     Alignment, Color, Element, Length, Subscription, Task, Theme,
 };
-use impulse_response::{ChartOperation, WindowSettings};
 use prism::{axis, line_series, Axis, Chart, Labels};
 use raumklang_core::dbfs;
 
-use std::{collections::HashMap, fmt::Display, sync::Arc};
+use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc};
 
 pub struct Main {
     state: State,
@@ -33,10 +36,10 @@ pub struct Main {
     modal: Modal,
 }
 
-#[derive(Debug, Default)]
 enum State {
-    #[default]
-    CollectingMeasuremnts,
+    CollectingMeasuremnts {
+        recording: Option<Recording>,
+    },
     Analysing {
         active_tab: Tab,
         window: Window<Samples>,
@@ -47,23 +50,16 @@ enum State {
     },
 }
 
-#[derive(Debug)]
-pub enum Tab {
-    Measurements,
-    ImpulseResponses {
-        window_settings: WindowSettings,
-        hovered: Option<usize>,
-        dragging: Dragging,
-    },
-    FrequencyResponses,
+impl Default for State {
+    fn default() -> Self {
+        State::CollectingMeasuremnts { recording: None }
+    }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-enum Dragging {
-    CouldStillBeClick(usize, iced::Point),
-    ForSure(usize, iced::Point),
-    #[default]
-    None,
+pub enum Tab {
+    Measurements { recording: Option<Recording> },
+    ImpulseResponses { window_settings: WindowSettings },
+    FrequencyResponses,
 }
 
 #[derive(Debug, Default)]
@@ -106,6 +102,8 @@ pub enum Message {
     FrequencyResponseEvent(ui::measurement::Id, data::frequency_response::Event),
     FrequencyResponseComputed(ui::measurement::Id, data::FrequencyResponse),
     Modal(ModalAction),
+    Recording(recording::Message),
+    StartRecording(recording::Kind),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,7 +153,7 @@ impl Main {
                 };
 
                 let (tab, tasks) = match (&active_tab, id) {
-                    (Tab::Measurements, TabId::Measurements)
+                    (Tab::Measurements { .. }, TabId::Measurements)
                     | (Tab::ImpulseResponses { .. }, TabId::ImpulseResponses)
                     | (Tab::FrequencyResponses, TabId::FrequencyResponses) => return Task::none(),
                     (
@@ -168,12 +166,12 @@ impl Main {
                         self.modal = Modal::PendingWindow { goto_tab: tab_id };
                         return Task::none();
                     }
-                    (_, TabId::Measurements) => (Tab::Measurements, Task::none()),
+                    (_, TabId::Measurements) => {
+                        (Tab::Measurements { recording: None }, Task::none())
+                    }
                     (_, TabId::ImpulseResponses) => (
                         Tab::ImpulseResponses {
                             window_settings: WindowSettings::new(window.clone()),
-                            hovered: None,
-                            dragging: Dragging::None,
                         },
                         Task::none(),
                     ),
@@ -258,14 +256,16 @@ impl Main {
                         self.measurements.remove(index);
                         Task::none()
                     }
-                    measurement::Message::Select(selected) => todo!(),
+                    measurement::Message::Select(_selected) => todo!(),
                 };
 
                 let state = std::mem::take(&mut self.state);
                 self.state = match (state, self.analysing_possible()) {
-                    (State::CollectingMeasuremnts, false) => State::CollectingMeasuremnts,
-                    (State::CollectingMeasuremnts, true) => State::Analysing {
-                        active_tab: Tab::Measurements,
+                    (State::CollectingMeasuremnts { recording }, false) => {
+                        State::CollectingMeasuremnts { recording }
+                    }
+                    (State::CollectingMeasuremnts { recording }, true) => State::Analysing {
+                        active_tab: Tab::Measurements { recording },
                         window: Window::new(SampleRate::from(
                             self.loopback
                                 .as_ref()
@@ -279,7 +279,9 @@ impl Main {
                         charts: Charts::default(),
                     },
                     (old_state, true) => old_state,
-                    (State::Analysing { .. }, false) => State::CollectingMeasuremnts,
+                    (State::Analysing { .. }, false) => {
+                        State::CollectingMeasuremnts { recording: None }
+                    }
                 };
 
                 task.map(Message::Measurements)
@@ -601,19 +603,79 @@ impl Main {
 
                 Task::done(Message::TabSelected(goto_tab))
             }
+            Message::Recording(message) => {
+                let (State::CollectingMeasuremnts { ref mut recording }
+                | State::Analysing {
+                    active_tab: Tab::Measurements { ref mut recording },
+                    ..
+                }) = self.state
+                else {
+                    return Task::none();
+                };
+
+                if let Some(view) = recording {
+                    match view.update(message) {
+                        recording::Action::None => Task::none(),
+                        recording::Action::Cancel => {
+                            *recording = None;
+                            Task::none()
+                        }
+                        recording::Action::Finished(result) => {
+                            match result {
+                                recording::Result::Loopback(loopback) => {
+                                    self.loopback = Some(ui::Loopback::from_data(data::Loopback {
+                                        name: "Loopback".to_string(),
+                                        path: PathBuf::new(),
+                                        inner: loopback,
+                                    }))
+                                }
+                                recording::Result::Measurement(measurement) => self
+                                    .measurements
+                                    .push(ui::Measurement::from_data(data::Measurement {
+                                        name: "Measurement".to_string(),
+                                        path: PathBuf::new(),
+                                        inner: measurement,
+                                    })),
+                            }
+                            *recording = None;
+                            Task::none()
+                        }
+                        recording::Action::Task(task) => task.map(Message::Recording),
+                    }
+                } else {
+                    Task::none()
+                }
+            }
+            Message::StartRecording(kind) => match &mut self.state {
+                State::CollectingMeasuremnts { recording }
+                | State::Analysing {
+                    active_tab: Tab::Measurements { recording },
+                    ..
+                } => {
+                    *recording = Some(Recording::new(kind));
+                    Task::none()
+                }
+                _ => Task::none(),
+            },
         }
     }
 
     pub fn view(&self) -> Element<Message> {
         let header = container(match &self.state {
-            State::CollectingMeasuremnts => TabId::Measurements.view(false),
+            State::CollectingMeasuremnts { .. } => TabId::Measurements.view(false),
             State::Analysing { active_tab, .. } => TabId::from(active_tab).view(true),
         })
         .width(Length::Fill)
         .style(container::dark);
 
         let content = match &self.state {
-            State::CollectingMeasuremnts => self.measurements_tab().map(Message::Measurements),
+            State::CollectingMeasuremnts { recording } => {
+                if let Some(recording) = recording {
+                    recording.view().map(Message::Recording)
+                } else {
+                    self.measurements_tab()
+                }
+            }
             State::Analysing {
                 active_tab,
                 impulse_responses,
@@ -622,7 +684,13 @@ impl Main {
                 charts,
                 ..
             } => match active_tab {
-                Tab::Measurements => self.measurements_tab().map(Message::Measurements),
+                Tab::Measurements { recording } => {
+                    if let Some(recording) = recording {
+                        recording.view().map(Message::Recording)
+                    } else {
+                        self.measurements_tab()
+                    }
+                }
                 Tab::ImpulseResponses {
                     window_settings, ..
                 } => self.impulse_responses_tab(
@@ -671,41 +739,42 @@ impl Main {
         }
     }
 
-    fn measurements_tab(&self) -> Element<'_, measurement::Message> {
+    fn measurements_tab(&self) -> Element<'_, Message> {
         let sidebar = {
             let loopback = Category::new("Loopback")
                 .push_button(
                     button("+")
-                        .on_press_maybe(Some(measurement::Message::Load(
+                        .on_press_maybe(Some(Message::Measurements(measurement::Message::Load(
                             measurement::Kind::Loopback,
-                        )))
+                        ))))
                         .style(button::secondary),
                 )
                 .push_button(
                     button(icon::record())
-                        // .on_press(Message::StartRecording(recording::Kind::Loopback))
+                        .on_press(Message::StartRecording(recording::Kind::Loopback))
                         .style(button::secondary),
                 )
-                .push_entry_maybe(
-                    self.loopback
-                        .as_ref()
-                        .map(|loopback| measurement::loopback_entry(self.selected, loopback)),
-                );
+                .push_entry_maybe(self.loopback.as_ref().map(|loopback| {
+                    measurement::loopback_entry(self.selected, loopback).map(Message::Measurements)
+                }));
 
             let measurements =
                 Category::new("Measurements")
-                    .push_button(
-                        button("+")
-                            .style(button::secondary)
-                            .on_press(measurement::Message::Load(measurement::Kind::Normal)),
-                    )
+                    .push_button(button("+").style(button::secondary).on_press(
+                        Message::Measurements(measurement::Message::Load(
+                            measurement::Kind::Normal,
+                        )),
+                    ))
                     .push_button(
                         button(icon::record())
-                            // .on_press(Message::StartRecording(recording::Kind::Measurement))
+                            .on_press(Message::StartRecording(recording::Kind::Measurement))
                             .style(button::secondary),
                     )
                     .extend_entries(self.measurements.iter().enumerate().map(
-                        |(id, measurement)| measurement::list_entry(id, self.selected, measurement),
+                        |(id, measurement)| {
+                            measurement::list_entry(id, self.selected, measurement)
+                                .map(Message::Measurements)
+                        },
                     ));
 
             container(scrollable(
@@ -719,7 +788,7 @@ impl Main {
             //     break 'content recording.view().map(Message::Recording);
             // }
 
-            let welcome_text = |base_text| -> Element<measurement::Message> {
+            let welcome_text = |base_text| -> Element<Message> {
                 column![
                     text("Welcome").size(24),
                     column![
@@ -1002,7 +1071,21 @@ impl Main {
             })
         });
 
-        Subscription::batch([hotkeys_pressed, hotkeys_released])
+        let recording = match &self.state {
+            State::CollectingMeasuremnts {
+                recording: Some(recording),
+            }
+            | State::Analysing {
+                active_tab:
+                    Tab::Measurements {
+                        recording: Some(recording),
+                    },
+                ..
+            } => recording.subscription().map(Message::Recording),
+            _ => Subscription::none(),
+        };
+
+        Subscription::batch([hotkeys_pressed, hotkeys_released, recording])
     }
 
     fn analysing_possible(&self) -> bool {
@@ -1038,7 +1121,7 @@ fn compute_frequency_response(
 impl Default for Main {
     fn default() -> Self {
         Self {
-            state: State::CollectingMeasuremnts,
+            state: State::CollectingMeasuremnts { recording: None },
             selected: None,
             smoothing: frequency_response::Smoothing::default(),
             loopback: None,
@@ -1112,7 +1195,7 @@ impl Display for TabId {
 impl From<&Tab> for TabId {
     fn from(tab: &Tab) -> Self {
         match tab {
-            Tab::Measurements => TabId::Measurements,
+            Tab::Measurements { .. } => TabId::Measurements,
             Tab::ImpulseResponses { .. } => TabId::ImpulseResponses,
             Tab::FrequencyResponses => TabId::FrequencyResponses,
         }

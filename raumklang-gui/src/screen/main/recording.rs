@@ -12,8 +12,7 @@ use iced::{
     alignment::{Horizontal, Vertical},
     time,
     widget::{
-        canvas, column, container, horizontal_rule, pick_list, row, rule, slider, text,
-        vertical_rule,
+        canvas, column, container, horizontal_rule, pick_list, row, slider, text, vertical_rule,
     },
     Element, Length, Subscription, Task,
 };
@@ -373,11 +372,7 @@ impl Recording {
                         container(
                             row![
                                 loudness_text("RMS", loudness.rms),
-                                vertical_rule(3).style(|theme| {
-                                    let mut style = rule::default(theme);
-                                    style.width = 3;
-                                    style
-                                }),
+                                vertical_rule(3),
                                 loudness_text("Peak", loudness.peak),
                             ]
                             .align_y(Vertical::Bottom)
