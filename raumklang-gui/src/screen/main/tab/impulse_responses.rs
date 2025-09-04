@@ -1,6 +1,7 @@
 use crate::data::{
     self,
     chart::{self},
+    impulse_response, measurement,
     window::{self},
     Samples,
 };
@@ -11,18 +12,18 @@ use iced::{
     keyboard,
     mouse::ScrollDelta,
     widget::{
-        button, column, container, horizontal_rule, horizontal_space, pick_list, row, scrollable,
-        text,
+        button, canvas, column, container, horizontal_rule, horizontal_space, pick_list, row,
+        scrollable, stack, text,
     },
-    Alignment, Element, Length, Point, Subscription,
+    Alignment, Color, Element, Length, Point, Subscription,
 };
 
 use core::panic;
-use std::{ops::RangeInclusive, time::Duration};
+use std::{collections::HashMap, ops::RangeInclusive, time::Duration};
 
 pub struct ImpulseReponses {
+    selected: Option<measurement::Id>,
     window_settings: WindowSettings,
-    selected: Option<usize>,
     chart_data: ChartData,
 }
 
@@ -34,7 +35,7 @@ struct WindowSettings {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Select(usize),
+    Select(measurement::Id),
     Chart(ChartOperation),
     Window(WindowOperation),
 }
@@ -51,6 +52,7 @@ pub struct ChartData {
     shift_key_pressed: bool,
     amplitude_unit: chart::AmplitudeUnit,
     time_unit: chart::TimeSeriesUnit,
+    cache: canvas::Cache,
 }
 
 #[derive(Debug, Default)]
@@ -82,7 +84,7 @@ pub enum WindowOperation {
 }
 
 pub enum Action {
-    ComputeImpulseResponse(usize),
+    ComputeImpulseResponse(measurement::Id),
     WindowModified(data::Window<data::Samples>),
     None,
 }
@@ -96,8 +98,8 @@ impl ImpulseReponses {
         };
 
         Self {
-            window_settings,
             selected: None,
+            window_settings,
             chart_data: ChartData::default(),
         }
     }
@@ -118,6 +120,8 @@ impl ImpulseReponses {
                 self.window_settings
                     .apply(operation, self.chart_data.time_unit);
 
+                self.chart_data.cache.clear();
+
                 Action::WindowModified(self.window_settings.window.clone())
             }
         }
@@ -125,7 +129,8 @@ impl ImpulseReponses {
 
     pub fn view<'a>(
         &'a self,
-        measurements: &'a [data::measurement::State<data::Measurement>],
+        measurements: &'a measurement::List,
+        impulse_responses: &'a HashMap<measurement::Id, impulse_response::State>,
     ) -> Element<'a, Message> {
         let sidebar = {
             let header = {
@@ -134,26 +139,44 @@ impl ImpulseReponses {
                     .spacing(5)
             };
 
-            let measurements = measurements.iter().enumerate().map(|(id, entry)| {
-                let content = column![text(&entry.details().name).size(16),]
-                    .spacing(5)
-                    .clip(true)
-                    .spacing(3);
+            let entries = measurements
+                .loaded()
+                .map(|measurement| (measurement, impulse_responses.get(&measurement.id)))
+                .map(|(measurement, ir)| {
+                    let id = measurement.id;
 
-                let style = match self.selected.as_ref() {
-                    Some(selected) if *selected == id => button::primary,
-                    _ => button::secondary,
-                };
+                    let entry = {
+                        let content = column![text(&measurement.details.name).size(16),]
+                            .spacing(5)
+                            .clip(true)
+                            .spacing(3);
 
-                button(content)
-                    .on_press_with(move || Message::Select(id))
-                    .width(Length::Fill)
-                    .style(style)
-                    .into()
-            });
+                        let style = match self.selected.as_ref() {
+                            Some(selected) if *selected == id => button::primary,
+                            _ => button::secondary,
+                        };
+
+                        button(content)
+                            .on_press_with(move || Message::Select(id))
+                            .width(Length::Fill)
+                            .style(style)
+                            .into()
+                    };
+
+                    if let Some(ir) = ir {
+                        match &ir {
+                            impulse_response::State::Computing => {
+                                processing_overlay("Impulse Response", entry)
+                            }
+                            impulse_response::State::Computed(_) => entry,
+                        }
+                    } else {
+                        entry
+                    }
+                });
 
             container(scrollable(
-                column![header, column(measurements).spacing(3)]
+                column![header, column(entries).spacing(3)]
                     .spacing(10)
                     .padding(10),
             ))
@@ -163,7 +186,10 @@ impl ImpulseReponses {
 
         let content: Element<_> = {
             if let Some(id) = self.selected {
-                let state = measurements.get(id).and_then(|s| s.impulse_response());
+                let state = impulse_responses.get(&id).and_then(|ir| match &ir {
+                    impulse_response::State::Computing => None,
+                    impulse_response::State::Computed(ir) => Some(ir),
+                });
 
                 match state {
                     Some(impulse_response) => {
@@ -192,6 +218,7 @@ impl ImpulseReponses {
                             let chart = Chart::new()
                                 .width(Length::Fill)
                                 .height(Length::Fill)
+                                .cache(&self.chart_data.cache)
                                 .x_range(
                                     self.chart_data
                                         .x_range
@@ -325,6 +352,26 @@ impl ImpulseReponses {
     }
 }
 
+fn processing_overlay<'a>(
+    status: &'a str,
+    entry: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    stack([
+        container(entry).style(container::bordered_box).into(),
+        container(column![text("Computing..."), text(status).size(12)])
+            .center(Length::Fill)
+            .style(|theme| container::Style {
+                border: container::rounded_box(theme).border,
+                background: Some(iced::Background::Color(Color::from_rgba(
+                    0.0, 0.0, 0.0, 0.8,
+                ))),
+                ..Default::default()
+            })
+            .into(),
+    ])
+    .into()
+}
+
 impl ChartData {
     fn apply(&mut self, operation: ChartOperation) {
         match operation {
@@ -360,6 +407,8 @@ impl ChartData {
                 self.shift_key_pressed = false;
             }
         }
+
+        self.cache.clear();
     }
 
     fn scroll_right(&mut self) {

@@ -13,9 +13,9 @@ use iced::{
 
 #[derive(Debug)]
 pub struct SignalSetup {
-    duration: String,
     start_frequency: String,
     end_frequency: String,
+    duration: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -177,7 +177,7 @@ where
 
     fn view(self) -> Element<'a, Message> {
         column![]
-            .push_maybe(self.label.map(text))
+            .push(self.label.map(text))
             .push(
                 row![text_input("", self.value)
                     .id(text_input::Id::new("from"))
@@ -188,7 +188,7 @@ where
                     } else {
                         number_input_danger
                     })]
-                .push_maybe(self.unit.map(text))
+                .push(self.unit.map(text))
                 .align_y(Vertical::Center)
                 .spacing(3),
             )
@@ -231,7 +231,7 @@ where
 {
     container(
         column![text(label), horizontal_rule(1),]
-            .push(column!().push_maybe(err.map(|err| {
+            .push(column!().push(err.map(|err| {
                 text!("{}", err).style(|theme| {
                     let mut style = text::default(theme);
                     style.color = Some(theme.extended_palette().danger.base.color);

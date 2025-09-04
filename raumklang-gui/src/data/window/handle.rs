@@ -2,7 +2,7 @@ use std::ops::{AddAssign, SubAssign};
 
 #[derive(Debug, Clone)]
 pub struct Handle {
-    x: f32,
+    pub x: f32,
     alignment: Alignment,
 }
 

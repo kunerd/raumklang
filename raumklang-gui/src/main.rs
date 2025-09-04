@@ -3,7 +3,8 @@ mod data;
 mod icon;
 mod log;
 mod screen;
-mod widgets;
+mod ui;
+mod widget;
 
 use screen::{
     landing,
@@ -11,7 +12,7 @@ use screen::{
     Screen,
 };
 
-use data::{project::file, RecentProjects};
+use data::{project, RecentProjects};
 
 use iced::{futures::FutureExt, Element, Font, Subscription, Task, Theme};
 
@@ -118,9 +119,14 @@ impl Raumklang {
             Message::ProjectLoaded(Ok((project, path))) => match Arc::into_inner(project) {
                 Some(project) => {
                     self.recent_projects.insert(path);
-                    self.screen = Screen::Main(screen::Main::new(project));
 
-                    Task::future(self.recent_projects.clone().save()).discard()
+                    let (screen, tasks) = screen::Main::from_project(project);
+                    self.screen = Screen::Main(screen);
+
+                    Task::batch([
+                        tasks.map(Message::Main),
+                        Task::future(self.recent_projects.clone().save()).discard(),
+                    ])
                 }
                 None => Task::none(),
             },
@@ -157,7 +163,7 @@ pub enum PickAndLoadError {
     #[error("dialog closed")]
     DialogClosed,
     #[error(transparent)]
-    File(#[from] file::Error),
+    File(#[from] project::Error),
 }
 
 async fn pick_project_file() -> Result<PathBuf, PickAndLoadError> {

@@ -13,8 +13,9 @@ use plotters::{
     style::RGBColor,
 };
 use raumklang_core::{
-    dbfs, loudness, volume_to_amplitude, AudioEngine, FiniteSignal, ImpulseResponse,
-    LinearSineSweep, PinkNoise, WhiteNoise,
+    dbfs, loudness,
+    signals::{ExponentialSweep, FiniteSignal, LinearSineSweep, PinkNoise, WhiteNoise},
+    volume_to_amplitude, AudioEngine, ImpulseResponse,
 };
 use rustfft::{num_complex::Complex, FftPlanner};
 
@@ -72,6 +73,12 @@ enum Command {
 enum SignalType {
     WhiteNoise,
     PinkNoise,
+    LinearSweep {
+        #[clap(short, long, default_value_t = 50)]
+        start_frequency: u16,
+        #[clap(short, long, default_value_t = 1000)]
+        end_frequency: u16,
+    },
     LogSweep {
         #[clap(short, long, default_value_t = 50)]
         start_frequency: u16,
@@ -405,7 +412,7 @@ fn play_signal(
         SignalType::PinkNoise => {
             Box::new(PinkNoise::with_amplitude(amplitude).take_duration(sample_rate, duration))
         }
-        SignalType::LogSweep {
+        SignalType::LinearSweep {
             start_frequency,
             end_frequency,
         } => {
@@ -418,6 +425,22 @@ fn play_signal(
                 sample_rate,
             );
             Box::new(sweep)
+        }
+        SignalType::LogSweep {
+            start_frequency,
+            end_frequency,
+        } => {
+            let n_samples = duration * sample_rate;
+            let sweep = ExponentialSweep::new(
+                start_frequency as f32,
+                end_frequency as f32,
+                amplitude,
+                n_samples,
+                sample_rate,
+            );
+
+            // Box::new(sweep.iter().collect::<Vec<_>>().into_iter())
+            Box::new(sweep.into_iter())
         }
     };
 

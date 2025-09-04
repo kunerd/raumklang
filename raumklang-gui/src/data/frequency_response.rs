@@ -1,88 +1,59 @@
-use super::{impulse_response, ImpulseResponse, Samples, Window};
+use std::sync::Arc;
 
-use iced::task::Sipper;
+use iced::task::{sipper, Sipper};
 use ndarray::{concatenate, Array, Array1, ArrayView, Axis};
 use ndarray_interp::interp1d::{cubic_spline::CubicSpline, Interp1DBuilder};
 use ndarray_stats::SummaryStatisticsExt;
-use rustfft::num_complex::Complex;
+
+use super::{Samples, Window};
 
 #[derive(Debug, Clone)]
 pub struct FrequencyResponse {
-    pub origin: raumklang_core::FrequencyResponse,
-    pub smoothed: Option<Vec<Complex<f32>>>,
-}
-
-#[derive(Debug)]
-pub enum State {
-    Computing,
-    Computed(FrequencyResponse),
+    pub sample_rate: u32,
+    pub data: Arc<Vec<f32>>,
 }
 
 impl FrequencyResponse {
-    pub fn new(origin: raumklang_core::FrequencyResponse) -> Self {
+    pub fn from_data(frequency_response: raumklang_core::FrequencyResponse) -> Self {
+        let sample_rate = frequency_response.sample_rate;
+        let data = frequency_response
+            .data
+            .into_iter()
+            .map(|s| s.re.abs())
+            .collect();
+
         Self {
-            origin,
-            smoothed: None,
+            sample_rate,
+            data: Arc::new(data),
         }
     }
 }
 
-pub struct Computation {
-    from: CompputationType,
+#[derive(Debug, Clone)]
+pub enum Event {
+    ComputingStarted,
+}
+
+pub fn compute(
+    mut impulse_response: raumklang_core::ImpulseResponse,
     window: Window<Samples>,
-}
+) -> impl Sipper<FrequencyResponse, Event> {
+    sipper(|mut output| async move {
+        output.send(Event::ComputingStarted).await;
 
-enum CompputationType {
-    ImpulseResponse(usize, ImpulseResponse),
-    Computation(impulse_response::Computation),
-}
+        let offset = window.offset().into();
 
-impl Computation {
-    pub fn from_impulse_response(
-        id: usize,
-        impulse_response: ImpulseResponse,
-        window: Window<Samples>,
-    ) -> Self {
-        Self {
-            from: CompputationType::ImpulseResponse(id, impulse_response),
-            window,
-        }
-    }
+        impulse_response.data.rotate_right(offset);
 
-    pub fn from_impulse_response_computation(
-        computation: impulse_response::Computation,
-        window: Window<Samples>,
-    ) -> Self {
-        Self {
-            from: CompputationType::Computation(computation),
-            window,
-        }
-    }
+        let window: Vec<_> = window.curve().map(|(_x, y)| y).collect();
 
-    pub fn run(self) -> impl Sipper<(usize, FrequencyResponse), (usize, ImpulseResponse)> {
-        iced::task::sipper(async move |mut progress| {
-            let (id, impulse_response) = match self.from {
-                CompputationType::ImpulseResponse(id, impulse_response) => (id, impulse_response),
-                CompputationType::Computation(computation) => computation.run().await.unwrap(),
-            };
-
-            progress.send((id, impulse_response.clone())).await;
-
-            let mut impulse_response = impulse_response.origin;
-            let offset = self.window.offset().into();
-
-            impulse_response.data.rotate_right(offset);
-
-            let window: Vec<_> = self.window.curve().map(|(_x, y)| y).collect();
-            let frequency_response = tokio::task::spawn_blocking(move || {
-                raumklang_core::FrequencyResponse::new(impulse_response, &window)
-            })
-            .await
-            .unwrap();
-
-            (id, FrequencyResponse::new(frequency_response))
+        tokio::task::spawn_blocking(move || {
+            raumklang_core::FrequencyResponse::new(impulse_response, &window)
         })
-    }
+        .await
+        .map(FrequencyResponse::from_data)
+        .unwrap()
+    })
 }
 
 //   credits to https://github.com/pyfar/pyfar

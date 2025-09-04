@@ -1,201 +1,99 @@
-pub mod file;
+// pub mod file;
 
-use super::{
-    frequency_response, impulse_response,
-    measurement::{self, Loopback},
-    Error, Measurement, Samples, Window,
+// // pub use file::File;
+
+// use super::{measurement::Loopback, Measurement};
+
+// use iced::futures::future::join_all;
+
+// use std::path::Path;
+
+// #[derive(Debug)]
+// pub struct Project {
+//     pub loopback: Option<Loopback>,
+//     pub measurements: Vec<Measurement>,
+// }
+
+// impl Project {
+//     pub async fn load(path: impl AsRef<Path>) -> Result<Self, file::Error> {
+//         let path = path.as_ref();
+//         let project_file = File::load(path).await?;
+
+//         let loopback = match project_file.loopback {
+//             Some(loopback) => Loopback::from_file(loopback.path()).await.ok(),
+//             None => None,
+//         };
+
+//         let measurements = join_all(
+//             project_file
+//                 .measurements
+//                 .iter()
+//                 .map(|p| Measurement::from_file(p.path.clone())),
+//         )
+//         .await
+//         .into_iter()
+//         .flatten()
+//         .collect();
+
+//         Ok(Self {
+//             loopback,
+//             measurements,
+//         })
+//     }
+// }
+
+// impl Default for Project {
+//     fn default() -> Self {
+//         Self {
+//             loopback: None,
+//             measurements: vec![],
+//         }
+//     }
+// }
+
+use std::{
+    io,
+    path::{Path, PathBuf},
 };
-pub use file::File;
 
-use iced::futures::future::join_all;
-
-use std::path::Path;
-
-#[derive(Debug)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Project {
-    window: Window<Samples>,
-    loopback: Option<measurement::State<Loopback>>,
-    measurements: Vec<measurement::State<Measurement>>,
+    pub loopback: Option<Loopback>,
+    pub measurements: Vec<Measurement>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Loopback(pub Measurement);
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Measurement {
+    pub path: PathBuf,
+}
+
+#[derive(thiserror::Error, Debug, Clone)]
+pub enum Error {
+    #[error("could not load file: {0}")]
+    Io(io::ErrorKind),
+    #[error("could not parse file: {0}")]
+    Json(String),
 }
 
 impl Project {
-    pub fn new(
-        loopback: Option<measurement::State<Loopback>>,
-        measurements: Vec<measurement::State<Measurement>>,
-    ) -> Self {
-        let sample_rate = loopback
-            .as_ref()
-            .and_then(measurement::State::<Loopback>::sample_rate)
-            .unwrap_or_default();
-
-        let window = Window::new(sample_rate).into();
-
-        Self {
-            window,
-            loopback,
-            measurements,
-        }
-    }
-
-    pub async fn load(path: impl AsRef<Path>) -> Result<Self, file::Error> {
+    pub async fn load(path: impl AsRef<Path>) -> Result<Self, Error> {
         let path = path.as_ref();
-        let project_file = File::load(path).await?;
+        let content = tokio::fs::read(path)
+            .await
+            .map_err(|err| Error::Io(err.kind()))?;
 
-        let loopback = match project_file.loopback {
-            Some(loopback) => measurement::load_from_file(loopback.path()).await.ok(),
-            None => None,
-        };
+        let project =
+            serde_json::from_slice(&content).map_err(|err| Error::Json(err.to_string()))?;
 
-        let measurements: Vec<_> = join_all(
-            project_file
-                .measurements
-                .iter()
-                .map(|p| measurement::load_from_file(p.path.clone())),
-        )
-        .await
-        .into_iter()
-        .flatten()
-        .collect();
-
-        Ok(Self::new(loopback, measurements))
-    }
-
-    pub fn window(&self) -> &Window<Samples> {
-        &self.window
-    }
-
-    pub fn loopback(&self) -> Option<&measurement::State<Loopback>> {
-        self.loopback.as_ref()
-    }
-
-    pub fn measurements(&self) -> &[measurement::State<Measurement>] {
-        &self.measurements
-    }
-
-    pub fn measurements_mut(&mut self) -> &mut [measurement::State<Measurement>] {
-        &mut self.measurements
-    }
-
-    pub fn has_no_measurements(&self) -> bool {
-        self.loopback.is_none() && self.measurements.is_empty()
-    }
-
-    pub fn set_loopback(&mut self, loopback: Option<measurement::State<Loopback>>) {
-        let sample_rate = loopback
-            .as_ref()
-            .and_then(measurement::State::<Loopback>::sample_rate)
-            .unwrap_or_default();
-
-        self.window = Window::new(sample_rate).into();
-        self.loopback = loopback;
-
-        self.reset_impulse_responses();
-    }
-
-    pub fn push_measurements(&mut self, measurement: measurement::State<Measurement>) {
-        self.measurements.push(measurement);
-    }
-
-    pub fn remove_measurement(&mut self, index: usize) -> measurement::State<Measurement> {
-        self.measurements.remove(index)
-    }
-
-    pub fn set_window(&mut self, window: Window<Samples>) {
-        self.window = window;
-
-        self.measurements.iter_mut().for_each(|state| match state {
-            measurement::State::NotLoaded(_details) => {}
-            measurement::State::Loaded(measurement) => measurement.reset_frequency_responses(),
-        });
-    }
-
-    fn reset_impulse_responses(&mut self) {
-        self.measurements.iter_mut().for_each(|state| match state {
-            measurement::State::NotLoaded(_details) => {}
-            measurement::State::Loaded(measurement) => measurement.reset_analysis(),
-        });
-    }
-
-    pub fn impulse_response_computation(
-        &mut self,
-        id: usize,
-    ) -> Result<Option<impulse_response::Computation>, Error> {
-        let Some(loopback) = self.loopback.as_ref() else {
-            return Err(Error::ImpulseResponseComputationFailed);
-        };
-
-        let Some(measurement) = self.measurements.get_mut(id) else {
-            return Err(Error::ImpulseResponseComputationFailed);
-        };
-
-        let measurement::State::Loaded(loopback) = &loopback else {
-            return Err(Error::ImpulseResponseComputationFailed);
-        };
-
-        let computation = if let measurement::State::Loaded(measurement) = measurement {
-            measurement.impulse_response_computation(id, loopback.as_ref().clone())
-        } else {
-            None
-        };
-
-        Ok(computation)
-    }
-
-    pub fn all_frequency_response_computations(
-        &mut self,
-    ) -> Result<Vec<frequency_response::Computation>, Error> {
-        let Some(loopback) = self.loopback.as_ref() else {
-            return Err(Error::ImpulseResponseComputationFailed);
-        };
-
-        let measurement::State::Loaded(loopback) = &loopback else {
-            return Err(Error::ImpulseResponseComputationFailed);
-        };
-
-        Ok(self
-            .measurements
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(id, state)| {
-                if let measurement::State::Loaded(measurement) = state {
-                    Some((id, measurement))
-                } else {
-                    None
-                }
-            })
-            .flat_map(|(id, measurement)| match &measurement.analysis {
-                measurement::Analysis::None => {
-                    let computation = measurement
-                        .impulse_response_computation(id, loopback.as_ref().clone())
-                        .unwrap();
-                    Some(
-                        frequency_response::Computation::from_impulse_response_computation(
-                            computation,
-                            self.window.clone(),
-                        ),
-                    )
-                }
-                measurement::Analysis::ImpulseResponse(impulse_response::State::Computing) => None,
-                measurement::Analysis::ImpulseResponse(impulse_response::State::Computed(
-                    impulse_response,
-                ))
-                | measurement::Analysis::FrequencyResponse(impulse_response, _) => {
-                    Some(frequency_response::Computation::from_impulse_response(
-                        id,
-                        impulse_response.clone(),
-                        self.window.clone(),
-                    ))
-                }
-            })
-            .collect())
+        Ok(project)
     }
 }
 
-impl Default for Project {
-    fn default() -> Self {
-        let loopback = None;
-        let measurements = Vec::new();
-
-        Self::new(loopback, measurements)
+impl Loopback {
+    pub fn path(&self) -> &PathBuf {
+        &self.0.path
     }
 }

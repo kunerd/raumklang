@@ -202,47 +202,50 @@ impl Measurements {
     }
 
     pub fn view<'a>(&'a self, project: &'a data::Project) -> Element<'a, Message> {
-        let sidebar = {
-            let loopback = Category::new("Loopback")
-                .push_button(
-                    button("+")
-                        .on_press_maybe(project.loopback().as_ref().map(|_| Message::AddLoopback))
-                        .style(button::secondary),
-                )
-                .push_button(
-                    button(icon::record())
-                        .on_press(Message::StartRecording(recording::Kind::Loopback))
-                        .style(button::secondary),
-                )
-                .push_entry_maybe(
-                    project
-                        .loopback()
-                        .as_ref()
-                        .map(|loopback| loopback_list_entry(self.selected.as_ref(), &loopback)),
-                );
+        let sidebar =
+            {
+                let loopback =
+                    Category::new("Loopback")
+                        .push_button(
+                            button("+")
+                                .on_press_maybe(if project.loopback().is_none() {
+                                    Some(Message::AddLoopback)
+                                } else {
+                                    None
+                                })
+                                .style(button::secondary),
+                        )
+                        .push_button(
+                            button(icon::record())
+                                .on_press(Message::StartRecording(recording::Kind::Loopback))
+                                .style(button::secondary),
+                        )
+                        .push_entry_maybe(project.loopback().as_ref().map(|loopback| {
+                            loopback_list_entry(self.selected.as_ref(), &loopback)
+                        }));
 
-            let measurements = Category::new("Measurements")
-                .push_button(
-                    button("+")
-                        .style(button::secondary)
-                        .on_press(Message::AddMeasurement),
-                )
-                .push_button(
-                    button(icon::record())
-                        .on_press(Message::StartRecording(recording::Kind::Measurement))
-                        .style(button::secondary),
-                )
-                .extend_entries(project.measurements().iter().enumerate().map(
-                    |(id, measurement)| {
-                        measurement_list_entry(id, measurement, self.selected.as_ref())
-                    },
-                ));
+                let measurements = Category::new("Measurements")
+                    .push_button(
+                        button("+")
+                            .style(button::secondary)
+                            .on_press(Message::AddMeasurement),
+                    )
+                    .push_button(
+                        button(icon::record())
+                            .on_press(Message::StartRecording(recording::Kind::Measurement))
+                            .style(button::secondary),
+                    )
+                    .extend_entries(project.measurements.iter().enumerate().map(
+                        |(id, measurement)| {
+                            measurement_list_entry(id, measurement, self.selected.as_ref())
+                        },
+                    ));
 
-            container(scrollable(
-                column![loopback, measurements].spacing(20).padding(10),
-            ))
-            .style(container::rounded_box)
-        };
+                container(scrollable(
+                    column![loopback, measurements].spacing(20).padding(10),
+                ))
+                .style(container::rounded_box)
+            };
 
         let content: Element<_> = 'content: {
             if let Some(recording) = &self.recording {
@@ -288,7 +291,7 @@ impl Measurements {
                             }
                         }),
                         Selected::Measurement(id) => project
-                            .measurements()
+                            .measurements
                             .get(*id)
                             .and_then(measurement::State::signal),
                     });

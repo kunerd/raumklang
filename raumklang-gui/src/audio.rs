@@ -231,7 +231,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                             loudness: sender,
                         }) => {
                             let sample_rate = client.as_client().sample_rate();
-                            let signal = raumklang_core::PinkNoise::with_amplitude(0.8)
+                            let signal = raumklang_core::signals::PinkNoise::with_amplitude(0.8)
                                 .take_duration(
                                     sample_rate,
                                     data::Samples::from_duration(
@@ -260,13 +260,44 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                             data_sender,
                         }) => {
                             let sample_rate = client.as_client().sample_rate();
-                            let sweep = raumklang_core::LinearSineSweep::new(
-                                start_frequency,
-                                end_frequency,
-                                duration,
+                            // let sweep = raumklang_core::signals::LinearSineSweep::new(
+                            //     start_frequency,
+                            //     end_frequency,
+                            //     duration,
+                            //     0.8,
+                            //     sample_rate,
+                            // );
+                            let sweep = raumklang_core::signals::ExponentialSweep::new(
+                                start_frequency.into(),
+                                end_frequency.into(),
                                 0.8,
+                                (duration.as_secs() * sample_rate as u64) as usize,
                                 sample_rate,
                             );
+
+                            let left = (sample_rate as f32 * 0.01) as usize;
+                            let right = (sample_rate as f32 * 0.01) as usize;
+                            let offset = sweep.clone().count() - left - right;
+
+                            let window = raumklang_core::WindowBuilder::new(
+                                raumklang_core::Window::Hann,
+                                left,
+                                raumklang_core::Window::Hann,
+                                right,
+                            )
+                            .set_offset(offset)
+                            .build();
+
+                            let sweep = sweep
+                                .into_iter()
+                                .enumerate()
+                                .map(move |(i, s)| s * window[i]);
+
+                            let sweep = (0..22_000)
+                                .into_iter()
+                                .map(|_| 0.0)
+                                .chain(sweep)
+                                .chain((0..20_000).into_iter().map(|_| 0.0));
 
                             let buf_size = client.as_client().buffer_size() as usize;
                             let (producer, consumer) = measurement::create(buf_size);

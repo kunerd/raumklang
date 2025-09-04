@@ -1,53 +1,61 @@
 use raumklang_core::dbfs;
 
-use prism::{line_series, Chart, Labels};
+use prism::{axis, line_series, Axis, Chart, Labels};
 
 use iced::{
     keyboard,
     mouse::ScrollDelta,
-    widget::{column, container, horizontal_space, pick_list, row, stack, text, toggler},
+    widget::{canvas, column, container, horizontal_space, pick_list, row, stack, text, toggler},
     Alignment, Color, Element,
     Length::{self, FillPortion},
-    Point, Subscription,
+    Point, Subscription, Task,
 };
 use rand::Rng;
-use rustfft::num_complex::Complex;
+use rustfft::num_complex::{Complex, Complex32};
 
 use crate::{
-    data::{self, frequency_response, measurement},
-    widgets::colored_circle,
+    data::{self, frequency_response, measurement, ImpulseResponse},
+    icon, log,
 };
 
-use std::{fmt, ops::RangeInclusive};
+use std::{collections::HashMap, fmt, ops::RangeInclusive};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    ShowInGraphToggled(usize, bool),
+    ShowInGraphToggled(measurement::Id, bool),
     Chart(ChartOperation),
     SmoothingChanged(Smoothing),
+    FrequencyResponseComputed((measurement::Id, data::FrequencyResponse)),
+    ImpulseResponseComputed(Result<(measurement::Id, data::ImpulseResponse), data::Error>),
+    FrequencyResponseSmoothed((measurement::Id, Box<[Complex<f32>]>)),
 }
 
 pub enum Action {
     None,
-    Smooth(Option<u8>),
+    Task(Task<Message>),
+    ImpulseResponseComputed(measurement::Id, data::ImpulseResponse, Task<Message>),
 }
 
+#[derive(Debug, Default)]
 pub struct FrequencyResponses {
     chart: ChartData,
-    entries: Vec<Entry>,
+    entries: HashMap<measurement::Id, Entry>,
     smoothing: Smoothing,
 }
 
+#[derive(Debug)]
 struct Entry {
-    measurement_id: usize,
     show: bool,
     color: iced::Color,
+    state: frequency_response::State,
+    smoothed: Option<Box<[Complex<f32>]>>,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct ChartData {
     x_max: Option<f32>,
     x_range: Option<RangeInclusive<f32>>,
+    cache: canvas::Cache,
     shift_key_pressed: bool,
 }
 
@@ -62,8 +70,9 @@ pub enum ChartOperation {
     ShiftKeyReleased,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Smoothing {
+    #[default]
     None,
     OneOne,
     OneSecond,
@@ -75,113 +84,238 @@ pub enum Smoothing {
 }
 
 impl FrequencyResponses {
-    pub fn new(iter: impl Iterator<Item = usize>) -> Self {
-        let entries = iter.map(Entry::new).collect();
-
+    pub fn new() -> Self {
         Self {
             chart: ChartData::default(),
+            entries: HashMap::new(),
             smoothing: Smoothing::None,
-            entries,
         }
     }
 
-    pub fn view<'a>(&'a self, measurements: &[&'a data::Measurement]) -> Element<'a, Message> {
+    #[must_use]
+    pub fn update(&mut self, message: Message, project: &data::Project) -> Action {
+        match message {
+            Message::ShowInGraphToggled(id, state) => {
+                if let Some(entry) = self.entries.get_mut(&id) {
+                    entry.show = state;
+                }
+
+                Action::None
+            }
+            Message::Chart(operation) => {
+                self.chart.apply(operation);
+                Action::None
+            }
+            Message::SmoothingChanged(smoothing) => {
+                self.smoothing = smoothing;
+
+                if let Some(fraction) = smoothing.fraction() {
+                    let tasks = self
+                        .entries
+                        .iter()
+                        .flat_map(|(id, fr)| match &fr.state {
+                            frequency_response::State::Computing => None,
+                            frequency_response::State::Computed(frequency_response) => {
+                                Some((*id, frequency_response.clone()))
+                            }
+                        })
+                        .map(|(id, frequency_response)| {
+                            Task::perform(
+                                smooth_frequency_response(id, frequency_response, fraction),
+                                Message::FrequencyResponseSmoothed,
+                            )
+                        });
+
+                    Action::Task(Task::batch(tasks))
+                } else {
+                    self.entries
+                        .values_mut()
+                        .for_each(|entry| entry.smoothed = None);
+
+                    self.chart.cache.clear();
+
+                    Action::None
+                }
+            }
+            Message::FrequencyResponseComputed((id, frequency_response)) => {
+                if let Some(entry) = self.entries.get_mut(&id) {
+                    entry.state = frequency_response::State::Computed(frequency_response.clone());
+                    self.chart.cache.clear();
+
+                    if let Some(fraction) = self.smoothing.fraction() {
+                        Action::Task(Task::perform(
+                            smooth_frequency_response(id, frequency_response, fraction),
+                            Message::FrequencyResponseSmoothed,
+                        ))
+                    } else {
+                        Action::None
+                    }
+                } else {
+                    Action::None
+                }
+            }
+            Message::ImpulseResponseComputed(Ok((id, impulse_response))) => {
+                let computation = frequency_response::Computation::from_impulse_response(
+                    id,
+                    impulse_response.clone(),
+                    project.window().clone(),
+                );
+
+                let task = Task::perform(computation.run(), Message::FrequencyResponseComputed);
+
+                Action::ImpulseResponseComputed(id, impulse_response, task)
+            }
+            Message::ImpulseResponseComputed(Err(err)) => {
+                log::error!("{}", err);
+                Action::None
+            }
+            Message::FrequencyResponseSmoothed((id, smoothed_data)) => {
+                if let Some(frequency_response) = self.entries.get_mut(&id) {
+                    frequency_response.smoothed = Some(smoothed_data);
+                    self.chart.cache.clear();
+                }
+
+                Action::None
+            }
+        }
+    }
+
+    pub fn compute(
+        &mut self,
+        id: measurement::Id,
+        impulse_response: ImpulseResponse,
+        window: data::Window<data::Samples>,
+    ) -> Task<Message> {
+        let computation =
+            frequency_response::Computation::from_impulse_response(id, impulse_response, window);
+
+        self.entries
+            .entry(id)
+            .and_modify(|entry| entry.state = frequency_response::State::Computing)
+            .or_insert(Entry::new());
+
+        Task::perform(computation.run(), Message::FrequencyResponseComputed)
+    }
+
+    // pub(crate) fn refresh<'a>(
+    //     &mut self,
+    //     project: &'a mut data::Project,
+    //     impulse_response: &'a HashMap<measurement::Id, impulse_response::State>,
+    // ) -> Task<Message> {
+    //     let mut tasks = vec![];
+
+    //     for measurement in project.measurements.loaded() {
+    //         self.entries.entry(measurement.id).or_insert(Entry::new());
+
+    //         if let Some(impulse_response::State::Computed(impulse_response)) =
+    //             impulse_response.get(&measurement.id)
+    //         {
+    //             let computation = frequency_response::Computation::from_impulse_response(
+    //                 measurement.id,
+    //                 impulse_response.clone(),
+    //                 project.window().clone(),
+    //             );
+
+    //             tasks.push(Task::perform(
+    //                 computation.run(),
+    //                 Message::FrequencyResponseComputed,
+    //             ));
+    //         } else {
+    //             let computation = project
+    //                 .impulse_response_computation(measurement.id)
+    //                 .unwrap();
+
+    //             if let Some(computation) = computation {
+    //                 tasks.push(Task::perform(
+    //                     computation.run(),
+    //                     Message::ImpulseResponseComputed,
+    //                 ));
+    //             }
+    //         }
+    //     }
+
+    //     Task::batch(tasks)
+    // }
+
+    pub fn view<'a>(&'a self, measurements: &'a measurement::List) -> Element<'a, Message> {
         let sidebar = {
-            let entries = self.entries.iter().enumerate().flat_map(
-                |(id, entry)| -> Option<Element<Message>> {
-                    let measurement = measurements.get(entry.measurement_id)?;
-
+            let entries = measurements.loaded().flat_map(|measurement| {
+                if let Some(entry) = self.entries.get(&measurement.id) {
                     let name = &measurement.details.name;
-                    let state = &measurement.analysis;
 
-                    entry.view(id, name, state).into()
-                },
-            );
+                    entry.view(measurement.id, name).into()
+                } else {
+                    None
+                }
+            });
 
             container(column(entries).spacing(10).padding(8)).style(container::rounded_box)
         };
 
         let header = {
-            let computed_frs = self
-                .entries
-                .iter()
-                .flat_map(|entry| measurements.get(entry.measurement_id))
-                .flat_map(|m| m.frequency_response())
-                .count();
-
-            let smoothing_options = if computed_frs == self.entries.len() {
-                Some(pick_list(
-                    Smoothing::ALL,
-                    Some(&self.smoothing),
-                    Message::SmoothingChanged,
-                ))
-            } else {
-                None
-            };
-
-            row![].push_maybe(smoothing_options)
+            row![pick_list(
+                Smoothing::ALL,
+                Some(&self.smoothing),
+                Message::SmoothingChanged,
+            )]
         };
 
-        let content: Element<_> = if self.entries.iter().any(|entry| entry.show) {
+        let content: Element<_> = if self.entries.values().any(|entry| entry.show) {
             let series_list = self
                 .entries
-                .iter()
-                .flat_map(|entry| {
-                    if entry.show {
-                        let measurement = measurements.get(entry.measurement_id)?;
-                        let frequency_response = measurement.frequency_response()?;
+                .values()
+                .filter(|entry| entry.show)
+                .map(|entry| {
+                    let frequency_response::State::Computed(frequency_response) = &entry.state
+                    else {
+                        return [None, None];
+                    };
 
-                        Some((frequency_response, entry.color))
-                    } else {
-                        None
-                    }
-                })
-                .flat_map(|(frequency_response, color)| {
-                    let sample_reate = frequency_response.origin.sample_rate;
-                    let len = frequency_response.origin.data.len() * 2;
-                    let resolution = sample_reate as f32 / len as f32;
+                    let sample_rate = frequency_response.origin.sample_rate;
+                    let len = frequency_response.origin.data.len() * 2 + 1;
+                    let resolution = sample_rate as f32 / len as f32;
 
                     let closure = move |(i, s): (usize, &Complex<f32>)| {
                         (i as f32 * resolution, dbfs(s.re.abs()))
                     };
+
                     [
                         Some(
-                            line_series(frequency_response.origin.data.iter().enumerate().map(
-                                closure, // move |(i, s)| (i as f32 * resolution, dbfs(s.re.abs())),
-                            ))
-                            .color(color.scale_alpha(0.2)),
+                            line_series(
+                                frequency_response
+                                    .origin
+                                    .data
+                                    .iter()
+                                    .enumerate()
+                                    .skip(1)
+                                    .map(closure),
+                            )
+                            .color(entry.color.scale_alpha(0.1)),
                         ),
-                        frequency_response.smoothed.as_ref().map(|smoothed| {
-                            {
-                                line_series(smoothed.iter().enumerate().map(
-                                    closure, // move |(i, s)| (i as f32 * resolution, dbfs(s.re.abs())),
-                                ))
-                            }
-                            .color(color)
+                        entry.smoothed.as_ref().map(|smoothed| {
+                            { line_series(smoothed.iter().enumerate().skip(1).map(closure)) }
+                                .color(entry.color)
                         }),
                     ]
                 })
+                .flatten()
                 .flatten();
 
-            let length = self
-                .entries
-                .iter()
-                .find_map(|entry| {
-                    if entry.show {
-                        let measurement = measurements.get(entry.measurement_id)?;
-                        let frequency_response = measurement.frequency_response()?;
-
-                        Some(frequency_response)
-                    } else {
-                        None
-                    }
-                })
-                .map_or(0.0..=22_050.0, |fr| 0.0..=fr.origin.data.len() as f32);
-
             let chart: Chart<Message, ()> = Chart::new()
-                .x_range(self.chart.x_range.clone().unwrap_or(length))
+                .x_axis(
+                    Axis::new(axis::Alignment::Horizontal)
+                        .scale(axis::Scale::Log)
+                        .x_tick_marks(
+                            [0, 20, 50, 100, 1000, 10_000, 20_000]
+                                .into_iter()
+                                .map(|v| v as f32)
+                                .collect(),
+                        ),
+                )
+                .x_range(self.chart.x_range.clone().unwrap_or(20.0..=22_500.0))
                 .y_labels(Labels::default().format(&|v| format!("{v:.0}")))
                 .extend_series(series_list)
+                .cache(&self.chart.cache)
                 .on_scroll(|state| {
                     let pos = state.get_coords();
                     let delta = state.scroll_delta();
@@ -204,28 +338,6 @@ impl FrequencyResponses {
         .into()
     }
 
-    #[must_use]
-    pub fn update(&mut self, message: Message) -> Action {
-        match message {
-            Message::ShowInGraphToggled(id, state) => {
-                if let Some(entry) = self.entries.get_mut(id) {
-                    entry.show = state;
-                }
-
-                Action::None
-            }
-            Message::Chart(operation) => {
-                self.chart.apply(operation);
-                Action::None
-            }
-            Message::SmoothingChanged(smoothing) => {
-                self.smoothing = smoothing;
-
-                Action::Smooth(smoothing.fraction())
-            }
-        }
-    }
-
     pub fn subscription(&self) -> Subscription<Message> {
         Subscription::batch(vec![
             keyboard::on_key_press(|key, _modifiers| match key {
@@ -242,23 +354,23 @@ impl FrequencyResponses {
             }),
         ])
     }
+
+    pub(crate) fn remove(&mut self, id: measurement::Id) {
+        self.entries.remove(&id);
+    }
 }
 
 impl Entry {
-    pub fn new(id: usize) -> Self {
+    pub fn new() -> Self {
         Self {
-            measurement_id: id,
             show: true,
             color: random_color(),
+            state: frequency_response::State::Computing,
+            smoothed: None,
         }
     }
 
-    pub fn view<'a>(
-        &'a self,
-        id: usize,
-        name: &'a str,
-        state: &'a measurement::Analysis,
-    ) -> Element<'a, Message> {
+    pub fn view<'a>(&'a self, id: measurement::Id, name: &'a str) -> Element<'a, Message> {
         let entry = {
             let content = column![
                 text(name).wrapping(text::Wrapping::Glyph),
@@ -267,7 +379,7 @@ impl Entry {
                         .on_toggle(move |state| Message::ShowInGraphToggled(id, state))
                         .width(Length::Shrink),
                     horizontal_space(),
-                    colored_circle(10.0, self.color),
+                    icon::record().color(self.color)
                 ]
                 .align_y(Alignment::Center)
             ]
@@ -278,17 +390,9 @@ impl Entry {
             container(content).style(container::rounded_box)
         };
 
-        match state {
-            measurement::Analysis::None => panic!(),
-            measurement::Analysis::ImpulseResponse(_) => {
-                processing_overlay("Impulse Response", entry).into()
-            }
-            measurement::Analysis::FrequencyResponse(_, frequency_response::State::Computing) => {
-                processing_overlay("Frequency Response", entry).into()
-            }
-            measurement::Analysis::FrequencyResponse(_, frequency_response::State::Computed(_)) => {
-                entry.into()
-            }
+        match &self.state {
+            frequency_response::State::Computing => processing_overlay("Frequency Response", entry),
+            frequency_response::State::Computed(_frequency_response) => entry.into(),
         }
     }
 }
@@ -347,6 +451,8 @@ impl ChartData {
                     (false, true) => self.zoom_in(pos),
                     (false, false) => self.zoom_out(pos),
                 }
+
+                self.cache.clear();
             }
             ChartOperation::ShiftKeyPressed => {
                 self.shift_key_pressed = true;
@@ -485,4 +591,28 @@ impl fmt::Display for Smoothing {
             }
         )
     }
+}
+
+async fn smooth_frequency_response(
+    id: measurement::Id,
+    frequency_response: data::FrequencyResponse,
+    fraction: u8,
+) -> (measurement::Id, Box<[Complex<f32>]>) {
+    let data: Vec<_> = frequency_response
+        .origin
+        .data
+        .iter()
+        .map(|c| c.re.abs())
+        .collect();
+
+    let data: Vec<_> = tokio::task::spawn_blocking(move || {
+        frequency_response::smooth_fractional_octave(&data, fraction)
+    })
+    .await
+    .unwrap()
+    .into_iter()
+    .map(Complex32::from)
+    .collect();
+
+    (id, data.into_boxed_slice())
 }
