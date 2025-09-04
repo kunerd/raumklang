@@ -106,10 +106,8 @@ impl Display for State {
 
 #[derive(Debug, Default)]
 pub struct ChartData {
-    pub x_max: Option<f32>,
     pub x_range: Option<RangeInclusive<f32>>,
     pub cache: canvas::Cache,
-    pub shift_key_pressed: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

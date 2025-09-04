@@ -784,10 +784,6 @@ impl Main {
         };
 
         let content: Element<_> = {
-            // if let Some(recording) = &self.recording {
-            //     break 'content recording.view().map(Message::Recording);
-            // }
-
             let welcome_text = |base_text| -> Element<Message> {
                 column![
                     text("Welcome").size(24),
@@ -861,9 +857,8 @@ impl Main {
         column!(row![
             container(sidebar).width(Length::FillPortion(1)),
             container(content).width(Length::FillPortion(4))
-        ]
-        .spacing(8))
-        .padding(10)
+        ])
+        .spacing(10)
         .into()
     }
     pub fn impulse_responses_tab<'a>(
