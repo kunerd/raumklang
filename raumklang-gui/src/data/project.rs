@@ -91,9 +91,3 @@ impl Project {
         Ok(project)
     }
 }
-
-impl Loopback {
-    pub fn path(&self) -> &PathBuf {
-        &self.0.path
-    }
-}

@@ -34,7 +34,7 @@ impl Loopback {
         Self(inner)
     }
 
-    pub fn iter(&self) -> Iter<f32> {
+    pub fn iter(&self) -> Iter<'_, f32> {
         self.0.iter()
     }
 
@@ -84,7 +84,7 @@ impl Measurement {
         self.data.len()
     }
 
-    pub fn iter(&self) -> Iter<f32> {
+    pub fn iter(&self) -> Iter<'_, f32> {
         self.data.iter()
     }
 }

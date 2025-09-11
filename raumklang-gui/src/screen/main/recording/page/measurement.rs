@@ -84,7 +84,7 @@ impl Measurement {
         }
     }
 
-    pub fn view(&self) -> Component<Message> {
+    pub fn view(&self) -> Component<'_, Message> {
         Component::new("Measurement Running ...").content(
             row![
                 container(

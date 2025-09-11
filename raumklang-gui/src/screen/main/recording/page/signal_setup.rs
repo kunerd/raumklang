@@ -50,7 +50,7 @@ impl SignalSetup {
         }
     }
 
-    pub fn view(&self, config: &port::Config) -> super::Component<Message> {
+    pub fn view(&self, config: &port::Config) -> super::Component<'_, Message> {
         let range =
             config::FrequencyRange::from_strings(&self.start_frequency, &self.end_frequency);
 

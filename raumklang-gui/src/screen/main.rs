@@ -390,29 +390,29 @@ impl Main {
 
                 Task::none()
             }
-            Message::ImpulseResponses(impulse_response::Message::Window(operation)) => {
-                let State::Analysing {
-                    active_tab:
-                        Tab::ImpulseResponses {
-                            ref mut window_settings,
-                            ..
-                        },
-                    ref charts,
-                    ..
-                } = self.state
-                else {
-                    return Task::none();
-                };
+            // Message::ImpulseResponses(impulse_response::Message::Window(operation)) => {
+            //     let State::Analysing {
+            //         active_tab:
+            //             Tab::ImpulseResponses {
+            //                 ref mut window_settings,
+            //                 ..
+            //             },
+            //         ref charts,
+            //         ..
+            //     } = self.state
+            //     else {
+            //         return Task::none();
+            //     };
 
-                window_settings.apply(
-                    operation,
-                    charts.impulse_responses.time_unit,
-                    charts.impulse_responses.amplitude_unit,
-                );
-                charts.impulse_responses.cache.clear();
+            //     window_settings.apply(
+            //         operation,
+            //         charts.impulse_responses.time_unit,
+            //         charts.impulse_responses.amplitude_unit,
+            //     );
+            //     charts.impulse_responses.cache.clear();
 
-                Task::none()
-            }
+            //     Task::none()
+            // }
             Message::FrequencyResponseComputed(id, frequency_response) => {
                 let State::Analysing {
                     ref mut frequency_responses,
@@ -660,7 +660,7 @@ impl Main {
         }
     }
 
-    pub fn view(&self) -> Element<Message> {
+    pub fn view(&self) -> Element<'_, Message> {
         let header = container(match &self.state {
             State::CollectingMeasuremnts { .. } => TabId::Measurements.view(false),
             State::Analysing { active_tab, .. } => TabId::from(active_tab).view(true),

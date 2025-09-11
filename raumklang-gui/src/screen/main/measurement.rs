@@ -10,11 +10,7 @@ use iced::{
 use raumklang_core::WavLoadError;
 use rfd::FileHandle;
 
-use std::{
-    fmt::Display,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{fmt::Display, path::Path, sync::Arc};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -171,8 +167,8 @@ pub async fn pick_file(file_type: impl AsRef<str>) -> Result<FileHandle, Error> 
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum Error {
-    #[error("error while loading file: {0}")]
-    File(PathBuf, Arc<WavLoadError>),
+    // #[error("error while loading file: {0}")]
+    // File(PathBuf, Arc<WavLoadError>),
     #[error("dialog closed")]
     DialogClosed,
 }
