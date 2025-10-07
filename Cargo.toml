@@ -12,4 +12,4 @@ raumklang-core = { path = "./raumklang-core" }
 
 [patch.crates-io]
 iced = { git = "https://github.com/iced-rs/iced.git", branch = "master" }
-prism = { path = "../prism" }
+prism = { git = "https://github.com/kunerd/prism.git", branch ="refactor_axis_drawing" }

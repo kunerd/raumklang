@@ -3837,6 +3837,7 @@ dependencies = [
 [[package]]
 name = "prism"
 version = "0.2.1"
+source = "git+https://github.com/kunerd/prism.git?branch=refactor_axis_drawing#9a5759047f076d63ade279e31c1cb8fdc6d9e4cb"
 dependencies = [
  "iced",
  "ordered-float 1.1.1",
