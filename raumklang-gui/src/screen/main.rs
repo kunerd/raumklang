@@ -17,8 +17,8 @@ use iced::{
     alignment::{Horizontal, Vertical},
     keyboard,
     widget::{
-        button, center, column, container, horizontal_rule, horizontal_space, opaque, pick_list,
-        row, scrollable, stack, text, text::Wrapping, Button,
+        button, canvas, center, column, container, horizontal_rule, horizontal_space, opaque,
+        pick_list, row, scrollable, stack, text, text::Wrapping, Button,
     },
     Alignment, Color, Element, Length, Subscription, Task, Theme,
 };
@@ -30,6 +30,7 @@ use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc};
 pub struct Main {
     state: State,
     selected: Option<measurement::Selected>,
+    signal_cache: canvas::Cache,
     smoothing: frequency_response::Smoothing,
     loopback: Option<ui::Loopback>,
     measurements: Vec<ui::Measurement>,
@@ -104,6 +105,7 @@ pub enum Message {
     Modal(ModalAction),
     Recording(recording::Message),
     StartRecording(recording::Kind),
+    ChartInteraction(chart::Interaction),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -256,7 +258,11 @@ impl Main {
                         self.measurements.remove(index);
                         Task::none()
                     }
-                    measurement::Message::Select(_selected) => todo!(),
+                    measurement::Message::Select(selected) => {
+                        self.selected = Some(selected);
+                        self.signal_cache.clear();
+                        Task::none()
+                    }
                 };
 
                 let state = std::mem::take(&mut self.state);
@@ -390,29 +396,6 @@ impl Main {
 
                 Task::none()
             }
-            // Message::ImpulseResponses(impulse_response::Message::Window(operation)) => {
-            //     let State::Analysing {
-            //         active_tab:
-            //             Tab::ImpulseResponses {
-            //                 ref mut window_settings,
-            //                 ..
-            //             },
-            //         ref charts,
-            //         ..
-            //     } = self.state
-            //     else {
-            //         return Task::none();
-            //     };
-
-            //     window_settings.apply(
-            //         operation,
-            //         charts.impulse_responses.time_unit,
-            //         charts.impulse_responses.amplitude_unit,
-            //     );
-            //     charts.impulse_responses.cache.clear();
-
-            //     Task::none()
-            // }
             Message::FrequencyResponseComputed(id, frequency_response) => {
                 let State::Analysing {
                     ref mut frequency_responses,
@@ -657,6 +640,7 @@ impl Main {
                 }
                 _ => Task::none(),
             },
+            Message::ChartInteraction(_interaction) => todo!(),
         }
     }
 
@@ -804,52 +788,24 @@ impl Main {
                 .into()
             };
 
-            // let content: Element<_> = if project.has_no_measurements() {
-            //     welcome_text(text(
-            //         "You need to load at least one loopback or measurement signal.",
-            //     ))
-            // } else {
-            //     let signal = self
-            //         .selected
-            //         .as_ref()
-            //         .and_then(|selection| match selection {
-            //             Selected::Loopback => project.loopback().and_then(|s| {
-            //                 if let data::measurement::State::Loaded(data) = &s {
-            //                     Some(data.as_ref().iter())
-            //                 } else {
-            //                     None
-            //                 }
-            //             }),
-            //             Selected::Measurement(id) => project
-            //                 .measurements
-            //                 .get(*id)
-            //                 .and_then(measurement::State::signal),
-            //         });
-
-            //     if let Some(signal) = signal {
-            //         Chart::<_, (), _>::new()
-            //             .width(Length::Fill)
-            //             .height(Length::Fill)
-            //             .x_range(self.x_range.clone().unwrap_or(0.0..=signal.len() as f32))
-            //             .x_labels(Labels::default().format(&|v| format!("{v:.0}")))
-            //             .y_labels(Labels::default().format(&|v| format!("{v:.1}")))
-            //             .push_series(
-            //                 line_series(signal.copied().enumerate().map(|(i, s)| (i as f32, s)))
-            //                     .color(iced::Color::from_rgb8(2, 125, 66)),
-            //             )
-            //             .on_scroll(|state| {
-            //                 let pos = state.get_coords();
-            //                 let delta = state.scroll_delta();
-            //                 let x_range = state.x_range();
-            //                 Message::ChartScroll(pos, delta, x_range)
-            //             })
-            //             .into()
-            //     } else {
-            //         welcome_text(text("Select a signal to view its data."))
-            //     }
-            // };
-            //
-            let content = welcome_text(text("Select a signal to view its data."));
+            let content = if let Some(measurement) = self
+                .selected
+                .map(|selected| match selected {
+                    measurement::Selected::Loopback => self
+                        .loopback
+                        .as_ref()
+                        .and_then(|l| l.loaded())
+                        .map(AsRef::as_ref),
+                    measurement::Selected::Measurement(i) => {
+                        self.measurements.get(i).and_then(|m| m.inner.loaded())
+                    }
+                })
+                .flatten()
+            {
+                chart::waveform(&measurement, &self.signal_cache).map(Message::ChartInteraction)
+            } else {
+                welcome_text(text("Select a signal to view its data."))
+            };
 
             container(content).center(Length::Fill).into()
         };
@@ -861,6 +817,7 @@ impl Main {
         .spacing(10)
         .into()
     }
+
     pub fn impulse_responses_tab<'a>(
         &'a self,
         selected: Option<ui::measurement::Id>,
@@ -1122,6 +1079,7 @@ impl Default for Main {
             loopback: None,
             measurements: vec![],
             modal: Modal::None,
+            signal_cache: canvas::Cache::default(),
         }
     }
 }

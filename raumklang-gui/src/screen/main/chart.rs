@@ -25,6 +25,34 @@ use std::{
     ops::{Add, RangeInclusive, Sub},
 };
 
+pub fn waveform<'a>(
+    measurement: &'a raumklang_core::Measurement,
+    cache: &'a canvas::Cache,
+    // zoom: Zoom,
+    // offset: i64,
+) -> Element<'a, Interaction, iced::Theme> {
+    canvas::Canvas::new(Waveform {
+        datapoints: measurement.iter().copied().enumerate(),
+        cache,
+        cmp: |a, b| a.total_cmp(b),
+        y_to_float: |s| s,
+        to_x_scale: move |i| i as f32,
+        // to_x_scale: move |i| match time_unit {
+        //     chart::TimeSeriesUnit::Time => time_scale(i, impulse_response.sample_rate.into()),
+        //     chart::TimeSeriesUnit::Samples => i as f32,
+        // },
+        // to_y_scale: move |s| match amplitude_unit {
+        //     chart::AmplitudeUnit::PercentFullScale => percent_full_scale(s),
+        //     chart::AmplitudeUnit::DezibelFullScale => db_full_scale(s),
+        // },
+        // zoom,
+        // offset,
+    })
+    .width(Fill)
+    .height(Fill)
+    .into()
+}
+
 pub fn impulse_response<'a>(
     window: &'a Window<Samples>,
     impulse_response: &'a ui::ImpulseResponse,
@@ -91,6 +119,100 @@ impl Sub<f32> for Zoom {
 impl From<Zoom> for f32 {
     fn from(zoom: Zoom) -> Self {
         zoom.0
+    }
+}
+
+struct Waveform<'a, I, X, Y, ScaleX>
+where
+    I: Iterator<Item = (X, Y)>,
+{
+    datapoints: I,
+    cache: &'a canvas::Cache,
+    cmp: fn(&Y, &Y) -> Ordering,
+    y_to_float: fn(Y) -> f32,
+    to_x_scale: ScaleX,
+    // to_y_scale: ScaleY,
+    // zoom: Zoom,
+    // offset: i64,
+}
+
+impl<'a, I, X, Y, ScaleX> canvas::Program<Interaction, iced::Theme>
+    for Waveform<'a, I, X, Y, ScaleX>
+where
+    I: Iterator<Item = (X, Y)> + Clone + 'a,
+    Y: Copy + std::iter::Sum + PartialOrd,
+    ScaleX: Fn(f32) -> f32,
+    // ScaleY: Fn(f32) -> f32,
+{
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &Renderer,
+        theme: &iced::Theme,
+        bounds: Rectangle,
+        _cursor: iced::advanced::mouse::Cursor,
+    ) -> Vec<canvas::Geometry<Renderer>> {
+        let palette = theme.extended_palette();
+
+        let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
+            let datapoints = self.datapoints.clone().map(|(_x, y)| y);
+
+            let x_min = 0 as f32;
+            let x_max = datapoints.clone().count() as f32;
+
+            let Some(y_min) = datapoints.clone().min_by(self.cmp) else {
+                return;
+            };
+            let Some(y_max) = datapoints.clone().max_by(self.cmp) else {
+                return;
+            };
+
+            let y_min = (self.y_to_float)(y_min);
+            let y_max = (self.y_to_float)(y_max);
+
+            let x_range = x_min..=x_max;
+            let x_axis = HorizontalAxis::new(x_range, &self.to_x_scale, 10);
+
+            let y_range = y_min..=y_max;
+            let y_axis = VerticalAxis::new(y_range, 10);
+
+            let plane = Rectangle::new(
+                Point::new(bounds.x + y_axis.width, bounds.y),
+                Size::new(bounds.width - y_axis.width, bounds.height - x_axis.height),
+            );
+
+            let pixels_per_unit_x = plane.width / x_axis.length;
+
+            let y_target_length = plane.height - y_axis.min_label_height * 0.5;
+            let pixels_per_unit_y = y_target_length / y_axis.length;
+
+            for (i, datapoint) in datapoints.enumerate() {
+                let value = (self.y_to_float)(datapoint);
+
+                let bar_height = value * pixels_per_unit_y;
+                let bar = Rectangle {
+                    x: y_axis.width + (x_min * pixels_per_unit_x) + (i as f32 * pixels_per_unit_x),
+                    y: plane.height + y_axis.min * pixels_per_unit_y,
+                    width: 1.0,
+                    height: bar_height,
+                };
+
+                frame.fill_rectangle(bar.position(), bar.size(), palette.secondary.weak.color);
+            }
+
+            frame.with_save(|frame| {
+                frame.translate(Vector::new(y_axis.width, 0.0));
+
+                x_axis.draw(frame, plane.width);
+            });
+
+            // let y_target_length = plane.height - y_axis.min_label_height * 0.5;
+            // y_axis.draw(frame, y_target_length);
+        });
+
+        vec![geometry]
     }
 }
 
