@@ -10,6 +10,7 @@ use recording::Recording;
 use crate::{
     data::{self, window, SampleRate, Samples, Window},
     icon, log,
+    screen::main::chart::waveform,
     ui::{self},
 };
 
@@ -35,6 +36,8 @@ pub struct Main {
     loopback: Option<ui::Loopback>,
     measurements: Vec<ui::Measurement>,
     modal: Modal,
+    zoom: chart::Zoom,
+    offset: chart::Offset,
 }
 
 enum State {
@@ -105,7 +108,7 @@ pub enum Message {
     Modal(ModalAction),
     Recording(recording::Message),
     StartRecording(recording::Kind),
-    ChartInteraction(chart::Interaction),
+    MeasurementChart(waveform::Interaction),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -640,7 +643,16 @@ impl Main {
                 }
                 _ => Task::none(),
             },
-            Message::ChartInteraction(_interaction) => todo!(),
+            Message::MeasurementChart(interaction) => {
+                match interaction {
+                    waveform::Interaction::ZoomChanged(zoom) => self.zoom = zoom,
+                    waveform::Interaction::OffsetChanged(offset) => self.offset = offset,
+                }
+
+                self.signal_cache.clear();
+
+                Task::none()
+            }
         }
     }
 
@@ -802,7 +814,8 @@ impl Main {
                 })
                 .flatten()
             {
-                chart::waveform(&measurement, &self.signal_cache).map(Message::ChartInteraction)
+                chart::waveform(&measurement, &self.signal_cache, self.zoom, self.offset)
+                    .map(Message::MeasurementChart)
             } else {
                 welcome_text(text("Select a signal to view its data."))
             };
@@ -1080,6 +1093,8 @@ impl Default for Main {
             measurements: vec![],
             modal: Modal::None,
             signal_cache: canvas::Cache::default(),
+            zoom: chart::Zoom::default(),
+            offset: chart::Offset::default(),
         }
     }
 }

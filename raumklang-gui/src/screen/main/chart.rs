@@ -1,3 +1,9 @@
+mod impulse_response;
+
+pub mod waveform;
+
+use waveform::Waveform;
+
 use crate::{
     data::{chart, window::Handles, Samples, Window},
     ui,
@@ -28,11 +34,11 @@ use std::{
 pub fn waveform<'a>(
     measurement: &'a raumklang_core::Measurement,
     cache: &'a canvas::Cache,
-    // zoom: Zoom,
-    // offset: i64,
-) -> Element<'a, Interaction, iced::Theme> {
+    zoom: Zoom,
+    offset: Offset,
+) -> Element<'a, waveform::Interaction, iced::Theme> {
     canvas::Canvas::new(Waveform {
-        datapoints: measurement.iter().copied().enumerate(),
+        datapoints: measurement.iter().copied(),
         cache,
         cmp: |a, b| a.total_cmp(b),
         y_to_float: |s| s,
@@ -45,8 +51,8 @@ pub fn waveform<'a>(
         //     chart::AmplitudeUnit::PercentFullScale => percent_full_scale(s),
         //     chart::AmplitudeUnit::DezibelFullScale => db_full_scale(s),
         // },
-        // zoom,
-        // offset,
+        zoom,
+        offset,
     })
     .width(Fill)
     .height(Fill)
@@ -122,97 +128,33 @@ impl From<Zoom> for f32 {
     }
 }
 
-struct Waveform<'a, I, X, Y, ScaleX>
-where
-    I: Iterator<Item = (X, Y)>,
-{
-    datapoints: I,
-    cache: &'a canvas::Cache,
-    cmp: fn(&Y, &Y) -> Ordering,
-    y_to_float: fn(Y) -> f32,
-    to_x_scale: ScaleX,
-    // to_y_scale: ScaleY,
-    // zoom: Zoom,
-    // offset: i64,
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Offset(isize);
+impl Offset {
+    fn saturating_add(&self, rhs: isize) -> Offset {
+        Offset(self.0.saturating_add(rhs))
+    }
+
+    fn saturating_sub(&self, rhs: isize) -> Offset {
+        Offset(self.0.saturating_sub(rhs))
+    }
 }
 
-impl<'a, I, X, Y, ScaleX> canvas::Program<Interaction, iced::Theme>
-    for Waveform<'a, I, X, Y, ScaleX>
-where
-    I: Iterator<Item = (X, Y)> + Clone + 'a,
-    Y: Copy + std::iter::Sum + PartialOrd,
-    ScaleX: Fn(f32) -> f32,
-    // ScaleY: Fn(f32) -> f32,
-{
-    type State = ();
+impl Default for Offset {
+    fn default() -> Self {
+        Self(0)
+    }
+}
 
-    fn draw(
-        &self,
-        _state: &Self::State,
-        renderer: &Renderer,
-        theme: &iced::Theme,
-        bounds: Rectangle,
-        _cursor: iced::advanced::mouse::Cursor,
-    ) -> Vec<canvas::Geometry<Renderer>> {
-        let palette = theme.extended_palette();
+impl From<Offset> for f32 {
+    fn from(value: Offset) -> Self {
+        value.0 as f32
+    }
+}
 
-        let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
-            let datapoints = self.datapoints.clone().map(|(_x, y)| y);
-
-            let x_min = 0 as f32;
-            let x_max = datapoints.clone().count() as f32;
-
-            let Some(y_min) = datapoints.clone().min_by(self.cmp) else {
-                return;
-            };
-            let Some(y_max) = datapoints.clone().max_by(self.cmp) else {
-                return;
-            };
-
-            let y_min = (self.y_to_float)(y_min);
-            let y_max = (self.y_to_float)(y_max);
-
-            let x_range = x_min..=x_max;
-            let x_axis = HorizontalAxis::new(x_range, &self.to_x_scale, 10);
-
-            let y_range = y_min..=y_max;
-            let y_axis = VerticalAxis::new(y_range, 10);
-
-            let plane = Rectangle::new(
-                Point::new(bounds.x + y_axis.width, bounds.y),
-                Size::new(bounds.width - y_axis.width, bounds.height - x_axis.height),
-            );
-
-            let pixels_per_unit_x = plane.width / x_axis.length;
-
-            let y_target_length = plane.height - y_axis.min_label_height * 0.5;
-            let pixels_per_unit_y = y_target_length / y_axis.length;
-
-            for (i, datapoint) in datapoints.enumerate() {
-                let value = (self.y_to_float)(datapoint);
-
-                let bar_height = value * pixels_per_unit_y;
-                let bar = Rectangle {
-                    x: y_axis.width + (x_min * pixels_per_unit_x) + (i as f32 * pixels_per_unit_x),
-                    y: plane.height + y_axis.min * pixels_per_unit_y,
-                    width: 1.0,
-                    height: bar_height,
-                };
-
-                frame.fill_rectangle(bar.position(), bar.size(), palette.secondary.weak.color);
-            }
-
-            frame.with_save(|frame| {
-                frame.translate(Vector::new(y_axis.width, 0.0));
-
-                x_axis.draw(frame, plane.width);
-            });
-
-            // let y_target_length = plane.height - y_axis.min_label_height * 0.5;
-            // y_axis.draw(frame, y_target_length);
-        });
-
-        vec![geometry]
+impl From<Offset> for isize {
+    fn from(value: Offset) -> Self {
+        value.0
     }
 }
 
@@ -350,7 +292,6 @@ where
         match event {
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 let State::Initialized {
-                    // bounds,
                     x_axis,
                     y_axis,
                     plane,
@@ -570,9 +511,6 @@ where
         _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
         let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
-            // let cursor = cursor.position_in(bounds);
-
-            // let bounds = frame.size();
             let palette = theme.extended_palette();
 
             let State::Initialized {
@@ -599,13 +537,6 @@ where
                 pixels_per_unit_x
             };
 
-            // struct Window<T> {
-            //     value: T,
-            //     pos: usize,
-            // }
-
-            // let mut cur_window = window_size.map(|_| Window { value: min, pos: 0 });
-
             let y_target_length = plane.height - y_axis.min_label_height * 0.5;
             let pixels_per_unit = y_target_length / y_axis.length;
 
@@ -628,26 +559,6 @@ where
 
             let x_min = -x_axis.min;
             for (i, datapoint) in datapoints.enumerate() {
-                // let value = if let Some(ref mut cur_window) = cur_window {
-                //     if cur_window.pos < window_size.unwrap() {
-                //         // window.value += (self.to_float)(datapoint);
-                //         cur_window.value = match (self.cmp)(&cur_window.value, &datapoint) {
-                //             Ordering::Less => datapoint,
-                //             Ordering::Equal => datapoint,
-                //             Ordering::Greater => cur_window.value,
-                //         };
-                //         cur_window.pos += 1;
-                //         continue;
-                //     } else {
-                //         // let datapoint = window.value / window.pos as f32;
-                //         let datapoint = cur_window.value;
-                //         *cur_window = Window { value: min, pos: 0 };
-                //         datapoint
-                //     }
-                // } else {
-                //     datapoint
-                // };
-                //
                 let value = datapoint;
 
                 let value = (self.y_to_float)(value);
