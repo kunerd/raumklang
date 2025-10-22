@@ -66,7 +66,8 @@ pub fn impulse_response<'a>(
     amplitude_unit: &'a chart::AmplitudeUnit,
     zoom: Zoom,
     offset: i64,
-    cache: &'a canvas::Cache,
+    data_cache: &'a canvas::Cache,
+    overlay_cache: &'a canvas::Cache,
 ) -> Element<'a, Interaction, iced::Theme> {
     container(
         canvas::Canvas::new(BarChart {
@@ -77,7 +78,6 @@ pub fn impulse_response<'a>(
                 .copied()
                 .map(f32::abs)
                 .enumerate(),
-            cache,
             cmp: |a, b| a.total_cmp(b),
             to_x_scale: move |i| match time_unit {
                 chart::TimeSeriesUnit::Time => time_scale(i, impulse_response.sample_rate.into()),
@@ -90,6 +90,8 @@ pub fn impulse_response<'a>(
             },
             zoom,
             offset,
+            data_cache,
+            overlay_cache,
         })
         .width(Fill)
         .height(Fill),
@@ -165,13 +167,14 @@ where
 {
     window: &'a Window<Samples>,
     datapoints: I,
-    cache: &'a canvas::Cache,
     cmp: fn(&Y, &Y) -> Ordering,
     to_x_scale: ScaleX,
     y_to_float: fn(Y) -> f32,
     to_y_scale: ScaleY,
     zoom: Zoom,
     offset: i64,
+    data_cache: &'a canvas::Cache,
+    overlay_cache: &'a canvas::Cache,
 }
 
 #[derive(Debug, Clone)]
@@ -317,6 +320,7 @@ where
                             )));
 
                             *dragging = Dragging::ForSure(*id, cursor);
+                            self.overlay_cache.clear();
 
                             action
                         } else {
@@ -332,6 +336,7 @@ where
                         )));
 
                         *dragging = Dragging::ForSure(*id, cursor);
+                        self.overlay_cache.clear();
 
                         action
                     }
@@ -373,7 +378,7 @@ where
 
                         if *hovered_handle != hovered {
                             *hovered_handle = hovered;
-                            self.cache.clear();
+                            self.overlay_cache.clear();
 
                             Some(canvas::Action::request_redraw())
                         } else {
@@ -400,6 +405,8 @@ where
                 let hovered = (*hovered_handle)?;
                 let cursor = cursor.position_from(plane.position())?;
 
+                self.overlay_cache.clear();
+
                 *dragging = Dragging::CouldStillBeClick(hovered, cursor);
 
                 None
@@ -420,7 +427,7 @@ where
                     *dragging = Dragging::None;
                     *hovered_handle = None;
 
-                    self.cache.clear();
+                    self.overlay_cache.clear();
 
                     return Some(canvas::Action::request_redraw());
                 };
@@ -443,6 +450,8 @@ where
 
                         *dragging = Dragging::None;
                         *hovered_handle = None;
+
+                        self.overlay_cache.clear();
 
                         action
                     }
@@ -488,6 +497,9 @@ where
                     };
 
                     if self.offset != new_offset {
+                        self.data_cache.clear();
+                        self.overlay_cache.clear();
+
                         Some(canvas::Action::publish(Interaction::OffsetChanged(
                             new_offset,
                         )))
@@ -500,6 +512,9 @@ where
                     } else {
                         self.zoom + (self.zoom.0 * 0.1)
                     };
+
+                    self.data_cache.clear();
+                    self.overlay_cache.clear();
 
                     Some(canvas::Action::publish(Interaction::ZoomChanged(new_zoom)))
                 }
@@ -516,36 +531,36 @@ where
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
-        let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
-            let palette = theme.extended_palette();
+        let palette = theme.extended_palette();
 
-            let State::Initialized {
-                x_axis,
-                y_axis,
-                hovered_handle,
-                plane,
-                ..
-            } = state
-            else {
-                return;
-            };
+        let State::Initialized {
+            x_axis,
+            y_axis,
+            hovered_handle,
+            plane,
+            ..
+        } = state
+        else {
+            return vec![];
+        };
 
-            let pixels_per_unit_x = plane.width / x_axis.length;
-            let window_size = if pixels_per_unit_x < 1.0 {
-                Some((x_axis.length / plane.width).floor() as usize)
-            } else {
-                None
-            };
+        let pixels_per_unit_x = plane.width / x_axis.length;
+        let window_size = if pixels_per_unit_x < 1.0 {
+            Some((x_axis.length / plane.width).floor() as usize)
+        } else {
+            None
+        };
 
-            let bar_width = if window_size.is_some() {
-                1.0
-            } else {
-                pixels_per_unit_x
-            };
+        let bar_width = if window_size.is_some() {
+            1.0
+        } else {
+            pixels_per_unit_x
+        };
 
-            let y_target_length = plane.height - y_axis.min_label_height * 0.5;
-            let pixels_per_unit = y_target_length / y_axis.length;
+        let y_target_length = plane.height - y_axis.min_label_height * 0.5;
+        let pixels_per_unit = y_target_length / y_axis.length;
 
+        let data = self.data_cache.draw(renderer, bounds.size(), |frame| {
             let x_min = 0.250 * 44_100 as f32 * f32::from(self.zoom);
             let x_min = -x_min + self.offset as f32;
 
@@ -582,6 +597,17 @@ where
                 frame.fill_rectangle(bar.position(), bar.size(), palette.secondary.weak.color);
             }
 
+            frame.with_save(|frame| {
+                frame.translate(Vector::new(y_axis.width, 0.0));
+
+                x_axis.draw(frame, plane.width);
+            });
+
+            y_axis.draw(frame, y_target_length);
+        });
+
+        let overlay = self.overlay_cache.draw(renderer, bounds.size(), |frame| {
+            let x_min = -x_axis.min;
             let mut window_curve = self.window.curve().map(|(x, y)| (x, (self.to_y_scale)(y)));
 
             let path = Path::new(|b| {
@@ -599,6 +625,13 @@ where
                     });
                 }
             });
+
+            frame.stroke(
+                &path,
+                Stroke::default()
+                    .with_width(2.0)
+                    .with_color(palette.success.weak.color),
+            );
 
             let radius = 5.0;
             let handles = Handles::from(self.window);
@@ -629,13 +662,6 @@ where
                 );
             }
 
-            frame.stroke(
-                &path,
-                Stroke::default()
-                    .with_width(2.0)
-                    .with_color(palette.success.weak.color),
-            );
-
             // if let Some(cursor) = cursor.position() {
             //     let path = Path::line(
             //         Point {
@@ -655,17 +681,9 @@ where
             //             .with_color(palette.background.weakest.color),
             //     );
             // }
-
-            frame.with_save(|frame| {
-                frame.translate(Vector::new(y_axis.width, 0.0));
-
-                x_axis.draw(frame, plane.width);
-            });
-
-            y_axis.draw(frame, y_target_length);
         });
 
-        vec![geometry]
+        vec![data, overlay]
     }
 
     fn mouse_interaction(

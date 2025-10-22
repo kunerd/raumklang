@@ -307,7 +307,7 @@ impl Main {
                 };
 
                 *selected_impulse_response = Some(id);
-                charts.impulse_responses.line_cache.clear();
+                charts.impulse_responses.data_cache.clear();
 
                 if impulse_responses.contains_key(&id) {
                     Task::none()
@@ -355,7 +355,7 @@ impl Main {
                         .x_range
                         .get_or_insert_with(|| 0.0..=impulse_response.data.len() as f32);
 
-                    charts.impulse_responses.line_cache.clear();
+                    charts.impulse_responses.data_cache.clear();
                 }
 
                 if let Tab::FrequencyResponses { .. } = active_tab {
@@ -389,13 +389,12 @@ impl Main {
                             charts.impulse_responses.zoom = *zoom;
                         }
                         chart::Interaction::OffsetChanged(offset) => {
-                            charts.impulse_responses.offset = *offset
+                            charts.impulse_responses.offset = *offset;
                         }
                     }
                 }
 
                 charts.impulse_responses.update(operation);
-                window_settings.cache.clear();
 
                 Task::none()
             }

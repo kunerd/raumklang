@@ -30,24 +30,27 @@ pub struct Chart {
     shift_key_pressed: bool,
     pub amplitude_unit: data::chart::AmplitudeUnit,
     pub time_unit: data::chart::TimeSeriesUnit,
-    pub cache: canvas::Cache,
-    pub line_cache: canvas::Cache,
     pub zoom: chart::Zoom,
     pub offset: i64,
+    pub data_cache: canvas::Cache,
+    pub overlay_cache: canvas::Cache,
 }
 
 impl Chart {
     pub(crate) fn update(&mut self, chart_operation: ChartOperation) {
         match chart_operation {
-            ChartOperation::TimeUnitChanged(time_unit) => self.time_unit = time_unit,
+            ChartOperation::TimeUnitChanged(time_unit) => {
+                self.time_unit = time_unit;
+                self.data_cache.clear();
+                self.overlay_cache.clear();
+            }
             ChartOperation::AmplitudeUnitChanged(amplitude_unit) => {
-                self.amplitude_unit = amplitude_unit
+                self.amplitude_unit = amplitude_unit;
+                self.data_cache.clear();
+                self.overlay_cache.clear();
             }
             ChartOperation::Interaction(_) => {}
         }
-
-        self.cache.clear();
-        self.line_cache.clear();
     }
 
     pub(crate) fn view<'a>(
@@ -72,7 +75,8 @@ impl Chart {
                     &self.amplitude_unit,
                     self.zoom,
                     self.offset,
-                    &self.line_cache,
+                    &self.data_cache,
+                    &self.overlay_cache,
                 )
                 .map(ChartOperation::Interaction)
                 .map(Message::Chart),
@@ -104,15 +108,11 @@ impl Chart {
 
 pub struct WindowSettings {
     pub window: data::Window<data::Samples>,
-    pub cache: canvas::Cache,
 }
 
 impl WindowSettings {
     pub(crate) fn new(window: data::Window<data::Samples>) -> Self {
-        Self {
-            window,
-            cache: canvas::Cache::new(),
-        }
+        Self { window }
     }
 }
 
