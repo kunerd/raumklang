@@ -303,7 +303,7 @@ where
                     return None;
                 };
 
-                let cursor = cursor.position_in(*plane)?;
+                let cursor = cursor.position_from(plane.position())?;
                 let pixels_per_unit_x = plane.width / x_axis.length;
 
                 match dragging {
@@ -397,8 +397,8 @@ where
                     return None;
                 };
 
-                let cursor = cursor.position_in(*plane)?;
                 let hovered = (*hovered_handle)?;
+                let cursor = cursor.position_from(plane.position())?;
 
                 *dragging = Dragging::CouldStillBeClick(hovered, cursor);
 
@@ -408,17 +408,22 @@ where
                 let State::Initialized {
                     x_axis,
                     plane,
-                    hovered_handle,
-                    dragging,
+                    ref mut hovered_handle,
+                    ref mut dragging,
                     ..
                 } = state
                 else {
                     return None;
                 };
 
-                let cursor = cursor.position_in(*plane)?;
+                let Some(cursor) = cursor.position_from(plane.position()) else {
+                    *dragging = Dragging::None;
+                    *hovered_handle = None;
 
-                *hovered_handle = None;
+                    self.cache.clear();
+
+                    return Some(canvas::Action::request_redraw());
+                };
 
                 match dragging {
                     Dragging::CouldStillBeClick(_id, _point) => {
@@ -437,6 +442,7 @@ where
                         )));
 
                         *dragging = Dragging::None;
+                        *hovered_handle = None;
 
                         action
                     }
