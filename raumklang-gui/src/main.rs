@@ -16,6 +16,7 @@ use data::{project, RecentProjects};
 
 use iced::{futures::FutureExt, Element, Font, Subscription, Task, Theme};
 
+use core::fmt;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -73,6 +74,8 @@ impl Raumklang {
     fn update(&mut self, msg: Message) -> Task<Message> {
         match msg {
             Message::RecentProjectsLoaded(Ok(recent_projects)) => {
+                log::debug!("Recent projects loaded: {:?}", recent_projects);
+
                 for path in recent_projects
                     .into_iter()
                     .take(MAX_RECENT_PROJECTS_ENTRIES)

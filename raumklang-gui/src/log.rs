@@ -26,9 +26,8 @@ pub fn init() -> Result<(), std::io::Error> {
         .with(
             stdout_log.with_filter(
                 Targets::default()
-                    .with_target("raumklang_core", Level::DEBUG)
-                    .with_target("gui", Level::DEBUG)
-                    .with_default(Level::INFO),
+                    // .with_target("raumklang", Level::DEBUG)
+                    .with_default(Level::DEBUG),
             ),
         )
         // Log everything enabled by the global filter to `debug_log.json`.
@@ -39,7 +38,7 @@ pub fn init() -> Result<(), std::io::Error> {
         // filtered by its per-layer filter.
         .with(
             Targets::default()
-                .with_target("gui", Level::TRACE)
+                .with_target("raumklang", Level::TRACE)
                 .with_target("iced", Level::WARN)
                 .with_target("iced_wgpu", Level::WARN)
                 .with_target("wgpu_core", LevelFilter::OFF),

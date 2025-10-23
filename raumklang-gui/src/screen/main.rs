@@ -255,6 +255,12 @@ impl Main {
                     }
                     measurement::Message::Loaded(Err(err)) => {
                         log::error!("{err}");
+                        // match err {
+                        //     raumklang_core::WavLoadError::Io(error) => match error.kind() {
+                        //         std::io::ErrorKind::NotFound => todo!(),
+                        //     },
+                        //     raumklang_core::WavLoadError::Other => todo!(),
+                        // }
                         Task::none()
                     }
                     measurement::Message::Remove(index) => {
