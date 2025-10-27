@@ -19,7 +19,7 @@ use iced::{
     keyboard,
     widget::{
         button, canvas, center, column, container, horizontal_rule, horizontal_space, opaque,
-        pick_list, row, scrollable, stack, text, text::Wrapping, Button,
+        pick_list, right, row, scrollable, stack, text, text::Wrapping, vertical_rule, Button,
     },
     Alignment, Color, Element, Length, Subscription, Task, Theme,
 };
@@ -109,6 +109,7 @@ pub enum Message {
     Recording(recording::Message),
     StartRecording(recording::Kind),
     MeasurementChart(waveform::Interaction),
+    SaveImpulseResponse(ui::measurement::Id),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -658,6 +659,10 @@ impl Main {
 
                 Task::none()
             }
+            Message::SaveImpulseResponse(id) => {
+                dbg!("Save impulse response triggered: {id}");
+                Task::none()
+            }
         }
     }
 
@@ -859,22 +864,49 @@ impl Main {
                     let id = measurement.id;
 
                     let entry = {
-                        let content = column![text(&measurement.name).size(16),]
-                            .spacing(5)
-                            .clip(true)
-                            .spacing(3);
+                        let save_btn = button(icon::download().size(10))
+                            .style(button::secondary)
+                            .on_press_with(move || Message::SaveImpulseResponse(id));
 
-                        button(content)
-                            .on_press_with(move || Message::ImpulseResponseSelected(id))
-                            .width(Length::Fill)
-                            .style(move |theme, status| {
-                                let status = match selected {
-                                    Some(selected) if selected == id => button::Status::Hovered,
-                                    _ => status,
-                                };
-                                button::secondary(theme, status)
-                            })
-                            .into()
+                        // let content = column![
+                        //     text(&measurement.name).size(16),
+                        //     horizontal_rule(1.0),
+                        //     right(save_btn)
+                        // ]
+                        // .clip(true)
+                        // .spacing(3);
+
+                        let ir_btn = button(
+                            column![
+                                text(&measurement.name).size(16),
+                                text("10.12.2019 10:24:12").size(10)
+                            ]
+                            .clip(true)
+                            .padding(3)
+                            .spacing(6),
+                        )
+                        .on_press_with(move || Message::ImpulseResponseSelected(id))
+                        .width(Length::Fill)
+                        .style(move |theme, status| {
+                            let status = match selected {
+                                Some(selected) if selected == id => button::Status::Hovered,
+                                _ => status,
+                            };
+                            button::secondary(theme, status)
+                        });
+
+                        container(
+                            row![
+                                ir_btn,
+                                vertical_rule(1.0),
+                                right(save_btn).width(Length::Shrink)
+                            ]
+                            .height(Length::Shrink)
+                            .spacing(6),
+                        )
+                        .style(container::dark)
+                        .padding(6)
+                        .into()
                     };
 
                     if let Some(ir) = ir {

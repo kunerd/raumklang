@@ -3,3 +3,4 @@ module = "icon"
 [glyphs]
 delete = "fontawesome-trash"
 record = "typicons-record"
+download = "typicons-download"

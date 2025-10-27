@@ -1,6 +1,6 @@
 // Generated automatically by iced_fontello at build time.
 // Do not edit manually. Source: ../fonts/icons.toml
-// 6e97cb019bb413dc7bddd2cda0e72cc1e1a3771813b80f09e89c763fc7b3b003
+// e06e6ed8ae0dd802393e4523d83a742b4559aef0d8eff1eb1505292f975784e5
 use iced::Font;
 use iced::widget::{Text, text};
 
@@ -8,6 +8,10 @@ pub const FONT: &[u8] = include_bytes!("../fonts/icons.ttf");
 
 pub fn delete<'a>() -> Text<'a> {
     icon("\u{F1F8}")
+}
+
+pub fn download<'a>() -> Text<'a> {
+    icon("\u{1F4E5}")
 }
 
 pub fn record<'a>() -> Text<'a> {
