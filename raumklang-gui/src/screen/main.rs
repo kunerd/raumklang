@@ -110,6 +110,7 @@ pub enum Message {
     StartRecording(recording::Kind),
     MeasurementChart(waveform::Interaction),
     SaveImpulseResponse(ui::measurement::Id),
+    ImpulseResponsesSaved(PathBuf),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -319,22 +320,7 @@ impl Main {
                 if impulse_responses.contains_key(&id) {
                     Task::none()
                 } else {
-                    let loopback = self
-                        .loopback
-                        .as_ref()
-                        .and_then(|l| l.inner.loaded())
-                        .unwrap()
-                        .clone();
-
-                    let measurement = self
-                        .measurements
-                        .iter()
-                        .find(|m| m.id == id)
-                        .and_then(|m| m.inner.loaded())
-                        .unwrap()
-                        .clone();
-
-                    compute_impulse_response(id, loopback, measurement)
+                    self.compute_impulse_response(id)
                 }
             }
             Message::ImpulseResponseComputed(id, impulse_response) => {
@@ -660,7 +646,30 @@ impl Main {
                 Task::none()
             }
             Message::SaveImpulseResponse(id) => {
-                dbg!("Save impulse response triggered: {id}");
+                let State::Analysing {
+                    active_tab: Tab::ImpulseResponses { .. },
+                    impulse_responses,
+                    ..
+                } = &self.state
+                else {
+                    return Task::none();
+                };
+
+                if let Some(impulse_response) = impulse_responses
+                    .get(&id)
+                    .and_then(ui::impulse_response::State::computed)
+                {
+                    Task::perform(
+                        save_impulse_response(impulse_response.clone()),
+                        Message::ImpulseResponsesSaved,
+                    )
+                } else {
+                    self.compute_impulse_response(id)
+                        .chain(Task::done(Message::SaveImpulseResponse(id)))
+                }
+            }
+            Message::ImpulseResponsesSaved(path_buf) => {
+                log::debug!("Impulse response saved to: {}", path_buf.display());
                 Task::none()
             }
         }
@@ -867,14 +876,6 @@ impl Main {
                         let save_btn = button(icon::download().size(10))
                             .style(button::secondary)
                             .on_press_with(move || Message::SaveImpulseResponse(id));
-
-                        // let content = column![
-                        //     text(&measurement.name).size(16),
-                        //     horizontal_rule(1.0),
-                        //     right(save_btn)
-                        // ]
-                        // .clip(true)
-                        // .spacing(3);
 
                         let ir_btn = button(
                             column![
@@ -1094,6 +1095,63 @@ impl Main {
         self.loopback.as_ref().is_some_and(ui::Loopback::is_loaded)
             && self.measurements.iter().any(ui::Measurement::is_loaded)
     }
+
+    fn compute_impulse_response(&self, id: ui::measurement::Id) -> Task<Message> {
+        let loopback = self
+            .loopback
+            .as_ref()
+            .and_then(|l| l.inner.loaded())
+            .unwrap()
+            .clone();
+
+        let measurement = self
+            .measurements
+            .iter()
+            .find(|m| m.id == id)
+            .and_then(|m| m.inner.loaded())
+            .unwrap()
+            .clone();
+
+        compute_impulse_response(id, loopback, measurement)
+    }
+}
+
+async fn choose_dir() -> PathBuf {
+    let handle = rfd::AsyncFileDialog::new()
+        .set_title("Save Impulse Response ...")
+        .add_filter("wav", &["wav", "wave"])
+        .add_filter("all", &["*"])
+        .save_file()
+        .await
+        .unwrap();
+
+    handle.path().to_path_buf()
+}
+
+async fn save_impulse_response(impulse_response: ui::ImpulseResponse) -> PathBuf {
+    let handle = rfd::AsyncFileDialog::new()
+        .set_title("Save Impulse Response ...")
+        .add_filter("wav", &["wav", "wave"])
+        .add_filter("all", &["*"])
+        .save_file()
+        .await
+        .unwrap();
+
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: impulse_response.sample_rate.into(),
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+
+    let path = handle.path();
+    let mut writer = hound::WavWriter::create(path, spec).unwrap();
+    for s in impulse_response.data.iter().copied() {
+        writer.write_sample(s).unwrap();
+    }
+    writer.finalize().unwrap();
+
+    path.to_path_buf()
 }
 
 fn compute_impulse_response(
