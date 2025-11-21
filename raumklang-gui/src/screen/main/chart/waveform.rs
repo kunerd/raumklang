@@ -69,15 +69,12 @@ where
 
                 if state.shift_pressed {
                     let diff = (f32::from(self.zoom) * 44_100_f32).ceil() as isize;
-                    dbg!(diff);
 
                     let new_offset = if y.is_sign_positive() {
                         self.offset.saturating_add(diff)
                     } else {
                         self.offset.saturating_sub(diff)
                     };
-
-                    dbg!(new_offset);
 
                     if self.offset != new_offset {
                         Some(canvas::Action::publish(Interaction::OffsetChanged(
