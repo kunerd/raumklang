@@ -32,6 +32,7 @@ atomic_float = "1.1.0"
 ndarray = "0.16.1"
 ndarray-interp = "0.5.0"
 ndarray-stats = "0.6.0"
+chrono = "0.4.42"
 
 [dependencies.iced]
 version = "0.14.0-dev"

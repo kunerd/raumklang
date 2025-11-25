@@ -879,7 +879,9 @@ impl Main {
 
                         let ir_btn = button(
                             column![
-                                text(&measurement.name).size(16),
+                                text(&measurement.name)
+                                    .size(16)
+                                    .wrapping(Wrapping::WordOrGlyph),
                                 text("10.12.2019 10:24:12").size(10)
                             ]
                             .clip(true)
@@ -1114,18 +1116,6 @@ impl Main {
 
         compute_impulse_response(id, loopback, measurement)
     }
-}
-
-async fn choose_dir() -> PathBuf {
-    let handle = rfd::AsyncFileDialog::new()
-        .set_title("Save Impulse Response ...")
-        .add_filter("wav", &["wav", "wave"])
-        .add_filter("all", &["*"])
-        .save_file()
-        .await
-        .unwrap();
-
-    handle.path().to_path_buf()
 }
 
 async fn save_impulse_response(impulse_response: ui::ImpulseResponse) -> PathBuf {

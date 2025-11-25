@@ -16,7 +16,6 @@ use data::{project, RecentProjects};
 
 use iced::{futures::FutureExt, Element, Font, Subscription, Task, Theme};
 
-use core::fmt;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,

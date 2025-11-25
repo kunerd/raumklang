@@ -3,6 +3,7 @@ use crate::{
     ui::{measurement, Loopback, Measurement},
 };
 
+use chrono::{DateTime, Utc};
 use iced::{
     widget::{button, column, horizontal_rule, horizontal_space, row, text},
     Element, Length,
@@ -50,9 +51,16 @@ pub enum LoadedKind {
 }
 
 pub fn loopback_entry<'a>(selected: Option<Selected>, signal: &Loopback) -> Element<'a, Message> {
-    let info = match &signal.inner {
-        measurement::State::NotLoaded => text("Error").style(text::danger),
-        measurement::State::Loaded(_inner) => text("TODO: Some info"),
+    let info: Element<_> = match &signal.inner {
+        measurement::State::NotLoaded => text("Error").style(text::danger).into(),
+        measurement::State::Loaded(inner) => {
+            let dt: DateTime<Utc> = inner.as_ref().modified.into();
+            column![
+                text("Last modified:").size(10),
+                text!("{}", dt.format("%x %X")).size(10)
+            ]
+        }
+        .into(),
     };
 
     let content = column![
@@ -93,9 +101,16 @@ pub fn list_entry<'a>(
     selected: Option<Selected>,
     signal: &'a Measurement,
 ) -> Element<'a, Message> {
-    let info = match &signal.inner {
-        measurement::State::NotLoaded => text("Error").style(text::danger),
-        measurement::State::Loaded(_inner) => text("TODO: Some info"),
+    let info: Element<_> = match &signal.inner {
+        measurement::State::NotLoaded => text("Error").style(text::danger).into(),
+        measurement::State::Loaded(inner) => {
+            let dt: DateTime<Utc> = inner.modified.into();
+            column![
+                text("Last modified:").size(10),
+                text!("{}", dt.format("%x %X")).size(10)
+            ]
+        }
+        .into(),
     };
 
     let content = column![

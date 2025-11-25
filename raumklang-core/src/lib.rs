@@ -14,10 +14,10 @@ use signals::map_hound_error;
 use thiserror::Error;
 
 use std::{
-    f32,
     io::{self},
     path::Path,
     slice::Iter,
+    time::SystemTime,
 };
 
 #[derive(Debug, Clone)]
@@ -27,6 +27,7 @@ pub struct Loopback(Measurement);
 pub struct Measurement {
     sample_rate: u32,
     data: Vec<f32>,
+    pub modified: SystemTime,
 }
 
 impl Loopback {
@@ -61,11 +62,18 @@ impl AsRef<Measurement> for Loopback {
 
 impl Measurement {
     pub fn new(sample_rate: u32, data: Vec<f32>) -> Self {
-        Self { sample_rate, data }
+        Self {
+            sample_rate,
+            data,
+            modified: SystemTime::now(),
+        }
     }
 
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError> {
-        let mut file = hound::WavReader::open(path).map_err(map_hound_error)?;
+        let file = std::fs::File::open(path)?;
+        // let mut file = hound::WavReader::open(file).map_err(map_hound_error)?;
+        let modified = file.metadata()?.modified()?;
+        let mut file = hound::WavReader::new(file).map_err(map_hound_error)?;
 
         let sample_rate = file.spec().sample_rate;
         let data: Vec<f32> = file
@@ -73,7 +81,11 @@ impl Measurement {
             .collect::<Result<Vec<f32>, _>>()
             .map_err(map_hound_error)?;
 
-        Ok(Measurement::new(sample_rate, data))
+        Ok(Measurement {
+            sample_rate,
+            data,
+            modified,
+        })
     }
 
     pub fn sample_rate(&self) -> u32 {
