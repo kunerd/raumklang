@@ -11,9 +11,7 @@ use crate::{
 use iced::{
     alignment::{Horizontal, Vertical},
     time,
-    widget::{
-        canvas, column, container, horizontal_rule, pick_list, row, slider, text, vertical_rule,
-    },
+    widget::{canvas, column, container, pick_list, row, rule, slider, text},
     Element, Length, Subscription, Task,
 };
 use tokio_stream::wrappers::ReceiverStream;
@@ -341,7 +339,7 @@ impl Recording {
         fn loudness_text<'a>(label: &'a str, value: f32) -> Element<'a, Message> {
             column![
                 text(label).size(12).align_y(Vertical::Bottom),
-                horizontal_rule(1),
+                rule::horizontal(1),
                 text!("{:.1}", value).size(24),
             ]
             .spacing(3)
@@ -372,7 +370,7 @@ impl Recording {
                         container(
                             row![
                                 loudness_text("RMS", loudness.rms),
-                                vertical_rule(3),
+                                rule::vertical(3),
                                 loudness_text("Peak", loudness.peak),
                             ]
                             .align_y(Vertical::Bottom)

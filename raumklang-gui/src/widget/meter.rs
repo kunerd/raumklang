@@ -65,7 +65,7 @@ impl<'a, Message> canvas::Program<Message> for RmsPeakMeter<'a> {
             font: Font::MONOSPACE,
             align_x: iced::widget::text::Alignment::Right,
             align_y: iced::alignment::Vertical::Center,
-            bounds: Size::INFINITY,
+            bounds: Size::INFINITE,
             line_height: LineHeight::default(),
             shaping: iced::widget::text::Shaping::Basic,
             wrapping: iced::widget::text::Wrapping::None,

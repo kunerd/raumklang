@@ -5,7 +5,7 @@ use crate::{
 
 use chrono::{DateTime, Utc};
 use iced::{
-    widget::{button, column, horizontal_rule, horizontal_space, row, text},
+    widget::{button, column, row, rule, space, text},
     Element, Length,
 };
 use raumklang_core::WavLoadError;
@@ -65,9 +65,9 @@ pub fn loopback_entry<'a>(selected: Option<Selected>, signal: &Loopback) -> Elem
 
     let content = column![
         column![text("Loopback").size(16)].push(info).spacing(5),
-        horizontal_rule(3),
+        rule::horizontal(2),
         row![
-            horizontal_space(),
+            space::horizontal(),
             button("...").style(button::secondary),
             button(icon::delete())
                 // .on_press(Message::RemoveLoopback)
@@ -76,7 +76,7 @@ pub fn loopback_entry<'a>(selected: Option<Selected>, signal: &Loopback) -> Elem
         .spacing(3),
     ]
     .clip(true)
-    .spacing(3);
+    .spacing(5);
 
     let style = if let Some(Selected::Loopback) = selected {
         button::primary
@@ -115,9 +115,9 @@ pub fn list_entry<'a>(
 
     let content = column![
         column![text(&signal.name).size(16),].push(info).spacing(5),
-        horizontal_rule(3),
+        rule::horizontal(2),
         row![
-            horizontal_space(),
+            space::horizontal(),
             button("...").style(button::secondary),
             button(icon::delete())
                 .on_press(Message::Remove(index))
@@ -126,7 +126,7 @@ pub fn list_entry<'a>(
         .spacing(3),
     ]
     .clip(true)
-    .spacing(3);
+    .spacing(5);
 
     let style = match selected {
         Some(Selected::Measurement(selected)) if selected == index => button::primary,

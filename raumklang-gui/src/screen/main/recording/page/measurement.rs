@@ -8,7 +8,7 @@ use crate::{
 
 use iced::{
     alignment::{Horizontal, Vertical},
-    widget::{canvas, column, container, horizontal_rule, row, text, vertical_rule},
+    widget::{canvas, column, container, row, rule, text},
     Element, Length, Task,
 };
 use prism::{line_series, Chart};
@@ -101,7 +101,7 @@ impl Measurement {
                     container(
                         row![
                             loudness_text("RMS", self.loudness.rms),
-                            vertical_rule(3),
+                            rule::vertical(3),
                             loudness_text("Peak", self.loudness.peak),
                         ]
                         .align_y(Vertical::Bottom)
@@ -129,7 +129,7 @@ impl Measurement {
 fn loudness_text<'a>(label: &'a str, value: f32) -> Element<'a, Message> {
     column![
         text(label).size(12).align_y(Vertical::Bottom),
-        horizontal_rule(1),
+        rule::horizontal(1),
         text!("{:.1}", value).size(24),
     ]
     .spacing(3)

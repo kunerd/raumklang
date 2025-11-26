@@ -1,7 +1,7 @@
 use crate::data::RecentProjects;
 
 use iced::{
-    widget::{button, column, container, horizontal_rule, horizontal_space, row, scrollable, text},
+    widget::{button, column, container, row, rule, scrollable, space, text},
     Element, Length,
 };
 
@@ -27,10 +27,10 @@ pub fn landing<'a>(recent_projects: &'a RecentProjects) -> Element<'a, Message> 
         });
 
     container(row![
-        horizontal_space().width(Length::FillPortion(1)),
+        space::horizontal().width(Length::FillPortion(1)),
         row![
             column!(
-                column![text("Project"), horizontal_rule(2)].spacing(4),
+                column![text("Project"), rule::horizontal(2)].spacing(4),
                 column![
                     button("New").on_press(Message::New).width(Length::Fill),
                     button("Load ...")
@@ -43,7 +43,7 @@ pub fn landing<'a>(recent_projects: &'a RecentProjects) -> Element<'a, Message> 
             .padding(5)
             .width(Length::FillPortion(1)),
             column!(
-                column![text("Open recent"), horizontal_rule(2)].spacing(4),
+                column![text("Open recent"), rule::horizontal(2)].spacing(4),
                 scrollable(column(recent_project_entries).spacing(3))
             )
             .spacing(10)
@@ -52,7 +52,7 @@ pub fn landing<'a>(recent_projects: &'a RecentProjects) -> Element<'a, Message> 
         ]
         .spacing(20)
         .width(Length::FillPortion(2)),
-        horizontal_space().width(Length::FillPortion(1)),
+        space::horizontal().width(Length::FillPortion(1)),
     ])
     .center(Length::Fill)
     .into()

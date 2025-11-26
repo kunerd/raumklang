@@ -4,26 +4,30 @@ mod impulse_response;
 mod measurement;
 mod recording;
 
+use generic_overlay::generic_overlay::{dropdown_menu, dropdown_root};
 use impulse_response::{ChartOperation, WindowSettings};
 use recording::Recording;
 
 use crate::{
-    data::{self, window, SampleRate, Samples, Window},
-    icon, log,
+    data::{self, project, window, Project, RecentProjects, SampleRate, Samples, Window},
+    icon, load_project, log,
     screen::main::chart::waveform,
-    ui::{self},
+    ui, PickAndLoadError,
 };
 
 use iced::{
     alignment::{Horizontal, Vertical},
+    futures::{FutureExt, TryFutureExt},
     keyboard,
     widget::{
-        button, canvas, center, column, container, horizontal_rule, horizontal_space, opaque,
-        pick_list, right, row, scrollable, stack, text, text::Wrapping, vertical_rule, Button,
+        button, canvas, center, column, container, opaque, pick_list, right, row, rule, scrollable,
+        space, stack, text, text::Wrapping, Button,
     },
     Alignment, Color, Element, Length, Subscription, Task, Theme,
 };
+
 use prism::{axis, line_series, Axis, Chart, Labels};
+
 use raumklang_core::dbfs;
 
 use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc};
@@ -38,6 +42,7 @@ pub struct Main {
     modal: Modal,
     zoom: chart::Zoom,
     offset: chart::Offset,
+    project_path: Option<PathBuf>,
 }
 
 enum State {
@@ -92,6 +97,12 @@ pub enum ModalAction {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    NewProject,
+    LoadProject,
+    ProjectLoaded(Result<(Arc<data::Project>, PathBuf), PickAndLoadError>),
+    RecentProject(usize),
+    SaveProject,
+    ProjectSaved(Result<PathBuf, PickAndSaveError>),
     TabSelected(TabId),
     Measurements(measurement::Message),
     ImpulseResponseSelected(ui::measurement::Id),
@@ -121,7 +132,7 @@ pub enum TabId {
 }
 
 impl Main {
-    pub fn from_project(project: data::Project) -> (Self, Task<Message>) {
+    pub fn from_project(path: PathBuf, project: data::Project) -> (Self, Task<Message>) {
         let load_loopback = project
             .loopback
             .map(|loopback| {
@@ -140,12 +151,19 @@ impl Main {
         });
 
         (
-            Self::default(),
+            Self {
+                project_path: Some(path),
+                ..Default::default()
+            },
             Task::batch([load_loopback, Task::batch(load_measurements)]).map(Message::Measurements),
         )
     }
 
-    pub fn update(&mut self, message: Message) -> Task<Message> {
+    pub fn update(
+        &mut self,
+        recent_projects: &mut RecentProjects,
+        message: Message,
+    ) -> Task<Message> {
         match message {
             Message::TabSelected(id) => {
                 let State::Analysing {
@@ -257,12 +275,6 @@ impl Main {
                     }
                     measurement::Message::Loaded(Err(err)) => {
                         log::error!("{err}");
-                        // match err {
-                        //     raumklang_core::WavLoadError::Io(error) => match error.kind() {
-                        //         std::io::ErrorKind::NotFound => todo!(),
-                        //     },
-                        //     raumklang_core::WavLoadError::Other => todo!(),
-                        // }
                         Task::none()
                     }
                     measurement::Message::Remove(index) => {
@@ -601,19 +613,15 @@ impl Main {
                         recording::Action::Finished(result) => {
                             match result {
                                 recording::Result::Loopback(loopback) => {
-                                    self.loopback = Some(ui::Loopback::from_data(data::Loopback {
-                                        name: "Loopback".to_string(),
-                                        path: PathBuf::new(),
-                                        inner: loopback,
-                                    }))
+                                    self.loopback =
+                                        Some(ui::Loopback::new("Loopback".to_string(), loopback))
                                 }
-                                recording::Result::Measurement(measurement) => self
-                                    .measurements
-                                    .push(ui::Measurement::from_data(data::Measurement {
-                                        name: "Measurement".to_string(),
-                                        path: PathBuf::new(),
-                                        inner: measurement,
-                                    })),
+                                recording::Result::Measurement(measurement) => {
+                                    self.measurements.push(ui::Measurement::new(
+                                        "Measurement".to_string(),
+                                        measurement,
+                                    ))
+                                }
                             }
                             *recording = None;
                             Task::none()
@@ -672,14 +680,137 @@ impl Main {
                 log::debug!("Impulse response saved to: {}", path_buf.display());
                 Task::none()
             }
+            Message::NewProject => {
+                *self = Self::default();
+
+                Task::none()
+            }
+            Message::LoadProject => Task::perform(
+                crate::pick_project_file().then(async |res| {
+                    let path = res?;
+                    load_project(path).await
+                }),
+                Message::ProjectLoaded,
+            ),
+            Message::ProjectLoaded(Ok((project, path))) => match Arc::into_inner(project) {
+                Some(project) => {
+                    recent_projects.insert(path.clone());
+
+                    let (screen, tasks) = Self::from_project(path, project);
+                    *self = screen;
+
+                    Task::batch([
+                        tasks,
+                        Task::future(recent_projects.clone().save()).discard(),
+                    ])
+                }
+                None => Task::none(),
+            },
+            Message::ProjectLoaded(Err(err)) => {
+                log::debug!("Loading project failed: {err}");
+
+                Task::none()
+            }
+            Message::RecentProject(id) => match recent_projects.get(id) {
+                Some(path) => Task::perform(load_project(path.clone()), Message::ProjectLoaded),
+                None => Task::none(),
+            },
+            Message::SaveProject => {
+                let loopback = self
+                    .loopback
+                    .as_ref()
+                    .and_then(|l| l.path.clone())
+                    .map(|path| project::Loopback(project::Measurement { path }));
+
+                let measurements = self
+                    .measurements
+                    .iter()
+                    .flat_map(|m| m.path.clone())
+                    .map(|path| project::Measurement { path })
+                    .collect();
+
+                let project = Project {
+                    loopback,
+                    measurements,
+                };
+
+                if let Some(path) = self.project_path.clone() {
+                    Task::perform(
+                        project
+                            .save(path.clone())
+                            .map_ok(move |_| path)
+                            .map_err(PickAndSaveError::File),
+                        Message::ProjectSaved,
+                    )
+                } else {
+                    Task::perform(
+                        pick_project_file().then(async |res| {
+                            let path = res?;
+                            project.save(path.clone()).await?;
+
+                            Ok(path)
+                        }),
+                        Message::ProjectSaved,
+                    )
+                }
+            }
+            Message::ProjectSaved(Ok(path)) => {
+                log::debug!("Project saved.");
+
+                self.project_path = Some(path);
+
+                Task::none()
+            }
+            Message::ProjectSaved(Err(err)) => {
+                log::debug!("Saving project failed: {err}");
+                Task::none()
+            }
         }
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
-        let header = container(match &self.state {
-            State::CollectingMeasuremnts { .. } => TabId::Measurements.view(false),
-            State::Analysing { active_tab, .. } => TabId::from(active_tab).view(true),
-        })
+    pub fn view<'a>(&'a self, recent_projects: &'a RecentProjects) -> Element<'a, Message> {
+        let recent_project_entries = column(
+            recent_projects
+                .iter()
+                .enumerate()
+                .filter_map(|(i, p)| p.file_name().map(|f| (i, f)))
+                .filter_map(|(i, p)| p.to_str().map(|f| (i, f)))
+                .map(|(i, s)| {
+                    button(s)
+                        .on_press(Message::RecentProject(i))
+                        .style(button::subtle)
+                        .width(Length::Fill)
+                        .into()
+                }),
+        )
+        .width(Length::Fill);
+
+        let project_menu = column![
+            button("New")
+                .on_press(Message::NewProject)
+                .style(button::subtle)
+                .width(Length::Fill),
+            button("Save")
+                .on_press(Message::SaveProject)
+                .style(button::subtle)
+                .width(Length::Fill),
+            button("Open ...")
+                .on_press(Message::LoadProject)
+                .style(button::subtle)
+                .width(Length::Fill),
+            dropdown_menu("Open recent ...", recent_project_entries)
+                .style(button::subtle)
+                .width(Length::Fill),
+        ]
+        .width(Length::Fill);
+
+        let header = container(column![
+            dropdown_root("Project", project_menu).style(button::secondary),
+            match &self.state {
+                State::CollectingMeasuremnts { .. } => TabId::Measurements.view(false),
+                State::Analysing { active_tab, .. } => TabId::from(active_tab).view(true),
+            }
+        ])
         .width(Length::Fill)
         .style(container::dark);
 
@@ -732,7 +863,7 @@ impl Main {
                             text("You need to discard or apply your changes before proceeding."),
                         ].spacing(5),
                         row![
-                            horizontal_space(),
+                            space::horizontal(),
                             button("Discard")
                                 .style(button::danger)
                                 .on_press(Message::Modal(ModalAction::Discard)),
@@ -859,7 +990,7 @@ impl Main {
     ) -> Element<'a, Message> {
         let sidebar = {
             let header = {
-                column!(text("For Measurements"), horizontal_rule(1))
+                column!(text("For Measurements"), rule::horizontal(1))
                     .width(Length::Fill)
                     .spacing(5)
             };
@@ -901,7 +1032,7 @@ impl Main {
                         container(
                             row![
                                 ir_btn,
-                                vertical_rule(1.0),
+                                rule::vertical(1.0),
                                 right(save_btn).width(Length::Shrink)
                             ]
                             .height(Length::Shrink)
@@ -1172,10 +1303,11 @@ impl Default for Main {
     fn default() -> Self {
         Self {
             state: State::CollectingMeasuremnts { recording: None },
-            selected: None,
-            smoothing: frequency_response::Smoothing::default(),
             loopback: None,
             measurements: vec![],
+            project_path: None,
+            selected: None,
+            smoothing: frequency_response::Smoothing::default(),
             modal: Modal::None,
             signal_cache: canvas::Cache::default(),
             zoom: chart::Zoom::default(),
@@ -1329,7 +1461,7 @@ where
         .padding(5)
         .align_y(Alignment::Center);
 
-        column!(header, horizontal_rule(1))
+        column!(header, rule::horizontal(1))
             .extend(self.entries.into_iter())
             .width(Length::Fill)
             .spacing(5)
@@ -1344,4 +1476,22 @@ where
     fn from(category: Category<'a, Message>) -> Self {
         category.view()
     }
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum PickAndSaveError {
+    #[error("dialog closed")]
+    DialogClosed,
+    #[error(transparent)]
+    File(#[from] project::Error),
+}
+
+async fn pick_project_file() -> Result<PathBuf, PickAndSaveError> {
+    let handle = rfd::AsyncFileDialog::new()
+        .set_title("Save project file ...")
+        .save_file()
+        .await
+        .ok_or(PickAndSaveError::DialogClosed)?;
+
+    Ok(handle.path().to_path_buf())
 }

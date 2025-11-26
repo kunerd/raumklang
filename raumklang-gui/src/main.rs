@@ -87,7 +87,7 @@ impl Raumklang {
                 Task::none()
             }
             Message::RecentProjectsLoaded(Err(err)) => {
-                dbg!(err);
+                log::debug!("Loading recent project failed: {err}");
 
                 self.screen = Screen::Landing;
 
@@ -116,13 +116,15 @@ impl Raumklang {
                     return Task::none();
                 };
 
-                main_screen.update(message).map(Message::Main)
+                main_screen
+                    .update(&mut self.recent_projects, message)
+                    .map(Message::Main)
             }
             Message::ProjectLoaded(Ok((project, path))) => match Arc::into_inner(project) {
                 Some(project) => {
-                    self.recent_projects.insert(path);
+                    self.recent_projects.insert(path.clone());
 
-                    let (screen, tasks) = screen::Main::from_project(project);
+                    let (screen, tasks) = screen::Main::from_project(path, project);
                     self.screen = Screen::Main(screen);
 
                     Task::batch([
@@ -133,7 +135,7 @@ impl Raumklang {
                 None => Task::none(),
             },
             Message::ProjectLoaded(Err(err)) => {
-                dbg!(err);
+                log::debug!("Loading project failed: {err}");
 
                 Task::none()
             }
@@ -144,7 +146,7 @@ impl Raumklang {
         match &self.screen {
             Screen::Loading => screen::loading(),
             Screen::Landing => screen::landing(&self.recent_projects).map(Message::Landing),
-            Screen::Main(main_screen) => main_screen.view().map(Message::Main),
+            Screen::Main(main_screen) => main_screen.view(&self.recent_projects).map(Message::Main),
         }
     }
 

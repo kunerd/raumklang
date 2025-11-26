@@ -9,7 +9,7 @@ use crate::data;
 pub struct Measurement {
     pub id: Id,
     pub name: String,
-    pub path: PathBuf,
+    pub path: Option<PathBuf>,
     pub inner: State<raumklang_core::Measurement>,
 }
 
@@ -36,6 +36,19 @@ impl<T> State<T> {
 }
 
 impl Measurement {
+    pub fn new(name: String, measurement: raumklang_core::Measurement) -> Self {
+        static ID: AtomicUsize = AtomicUsize::new(0);
+
+        let id = Id(ID.fetch_add(1, atomic::Ordering::Relaxed));
+
+        Self {
+            id,
+            name,
+            path: None,
+            inner: State::Loaded(measurement),
+        }
+    }
+
     pub fn from_data(measurement: data::Measurement) -> Self {
         static ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -44,7 +57,7 @@ impl Measurement {
         Self {
             id,
             name: measurement.name,
-            path: measurement.path,
+            path: Some(measurement.path),
             inner: State::Loaded(measurement.inner),
         }
     }
@@ -57,7 +70,7 @@ impl Measurement {
 #[derive(Debug, Clone)]
 pub struct Loopback {
     pub name: String,
-    pub path: PathBuf,
+    pub path: Option<PathBuf>,
     pub inner: State<raumklang_core::Loopback>,
 }
 
@@ -66,10 +79,18 @@ impl Loopback {
         self.inner.is_loaded()
     }
 
+    pub(crate) fn new(name: String, inner: raumklang_core::Loopback) -> Self {
+        Self {
+            name,
+            path: None,
+            inner: State::Loaded(inner),
+        }
+    }
+
     pub(crate) fn from_data(loopback: data::Loopback) -> Loopback {
         Self {
             name: loopback.name,
-            path: loopback.path,
+            path: Some(loopback.path),
             inner: State::Loaded(loopback.inner),
         }
     }

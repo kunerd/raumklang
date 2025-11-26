@@ -1,56 +1,3 @@
-// pub mod file;
-
-// // pub use file::File;
-
-// use super::{measurement::Loopback, Measurement};
-
-// use iced::futures::future::join_all;
-
-// use std::path::Path;
-
-// #[derive(Debug)]
-// pub struct Project {
-//     pub loopback: Option<Loopback>,
-//     pub measurements: Vec<Measurement>,
-// }
-
-// impl Project {
-//     pub async fn load(path: impl AsRef<Path>) -> Result<Self, file::Error> {
-//         let path = path.as_ref();
-//         let project_file = File::load(path).await?;
-
-//         let loopback = match project_file.loopback {
-//             Some(loopback) => Loopback::from_file(loopback.path()).await.ok(),
-//             None => None,
-//         };
-
-//         let measurements = join_all(
-//             project_file
-//                 .measurements
-//                 .iter()
-//                 .map(|p| Measurement::from_file(p.path.clone())),
-//         )
-//         .await
-//         .into_iter()
-//         .flatten()
-//         .collect();
-
-//         Ok(Self {
-//             loopback,
-//             measurements,
-//         })
-//     }
-// }
-
-// impl Default for Project {
-//     fn default() -> Self {
-//         Self {
-//             loopback: None,
-//             measurements: vec![],
-//         }
-//     }
-// }
-
 use std::{
     io,
     path::{Path, PathBuf},
@@ -89,5 +36,16 @@ impl Project {
             serde_json::from_slice(&content).map_err(|err| Error::Json(err.to_string()))?;
 
         Ok(project)
+    }
+
+    pub async fn save(self, path: impl AsRef<Path>) -> Result<(), Error> {
+        let json =
+            serde_json::to_string_pretty(&self).map_err(|err| Error::Json(err.to_string()))?;
+
+        tokio::fs::write(path, json)
+            .await
+            .map_err(|err| Error::Io(err.kind()))?;
+
+        Ok(())
     }
 }

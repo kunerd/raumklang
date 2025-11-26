@@ -7,7 +7,7 @@ use crate::data::{
 
 use iced::{
     alignment::{Horizontal, Vertical},
-    widget::{column, container, horizontal_rule, row, text, text_input},
+    widget::{self, column, container, row, rule, text, text_input},
     Alignment, Element,
 };
 
@@ -180,7 +180,7 @@ where
             .push(self.label.map(text))
             .push(
                 row![text_input("", self.value)
-                    .id(text_input::Id::new("from"))
+                    .id(widget::Id::new("from"))
                     .align_x(Horizontal::Right)
                     .on_input_maybe(self.on_input)
                     .style(if self.is_valid {
@@ -230,7 +230,7 @@ where
     Message: 'a,
 {
     container(
-        column![text(label), horizontal_rule(1),]
+        column![text(label), rule::horizontal(1),]
             .push(column!().push(err.map(|err| {
                 text!("{}", err).style(|theme| {
                     let mut style = text::default(theme);

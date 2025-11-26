@@ -3,7 +3,7 @@ use crate::data;
 use iced::{
     alignment::Vertical,
     widget::{
-        button, column, container, horizontal_rule, horizontal_space, row, text,
+        button, column, container, row, rule, space, text,
         text::{Fragment, IntoFragment},
         Button,
     },
@@ -44,14 +44,14 @@ where
             column![
                 row![
                     text!("Recording - {subsection}").size(20),
-                    horizontal_space(),
+                    space::horizontal(),
                 ]
                 .push(
                     self.sample_rate
                         .map(|sample_rate| text!("Sample rate: {}", sample_rate).size(14))
                 )
                 .align_y(Vertical::Bottom),
-                horizontal_rule(1),
+                rule::horizontal(1),
             ]
             .spacing(4)
         };
