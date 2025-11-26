@@ -121,7 +121,7 @@ pub enum Message {
     StartRecording(recording::Kind),
     MeasurementChart(waveform::Interaction),
     SaveImpulseResponse(ui::measurement::Id),
-    ImpulseResponsesSaved(PathBuf),
+    ImpulseResponsesSaved(Option<PathBuf>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -676,8 +676,13 @@ impl Main {
                         .chain(Task::done(Message::SaveImpulseResponse(id)))
                 }
             }
-            Message::ImpulseResponsesSaved(path_buf) => {
-                log::debug!("Impulse response saved to: {}", path_buf.display());
+            Message::ImpulseResponsesSaved(path) => {
+                if let Some(path) = path {
+                    log::debug!("Impulse response saved to: {}", path.display());
+                } else {
+                    log::debug!("Save impulse response file dialog closed.");
+                }
+
                 Task::none()
             }
             Message::NewProject => {
@@ -1249,14 +1254,13 @@ impl Main {
     }
 }
 
-async fn save_impulse_response(impulse_response: ui::ImpulseResponse) -> PathBuf {
+async fn save_impulse_response(impulse_response: ui::ImpulseResponse) -> Option<PathBuf> {
     let handle = rfd::AsyncFileDialog::new()
         .set_title("Save Impulse Response ...")
         .add_filter("wav", &["wav", "wave"])
         .add_filter("all", &["*"])
         .save_file()
-        .await
-        .unwrap();
+        .await?;
 
     let spec = hound::WavSpec {
         channels: 1,
@@ -1272,7 +1276,7 @@ async fn save_impulse_response(impulse_response: ui::ImpulseResponse) -> PathBuf
     }
     writer.finalize().unwrap();
 
-    path.to_path_buf()
+    Some(path.to_path_buf())
 }
 
 fn compute_impulse_response(
