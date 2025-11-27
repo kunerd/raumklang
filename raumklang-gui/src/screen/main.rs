@@ -69,6 +69,7 @@ pub enum Tab {
     Measurements { recording: Option<Recording> },
     ImpulseResponses { window_settings: WindowSettings },
     FrequencyResponses,
+    SpectralDecay,
 }
 
 #[derive(Debug, Default)]
@@ -129,6 +130,7 @@ pub enum TabId {
     Measurements,
     ImpulseResponses,
     FrequencyResponses,
+    SpectralDecay,
 }
 
 impl Main {
@@ -244,6 +246,7 @@ impl Main {
                                 });
                         (Tab::FrequencyResponses, Task::batch(tasks))
                     }
+                    (_, TabId::SpectralDecay) => (Tab::SpectralDecay, Task::none()),
                 };
 
                 *active_tab = tab;
@@ -853,6 +856,7 @@ impl Main {
                 Tab::FrequencyResponses => {
                     self.frequency_responses_tab(frequency_responses, &charts.frequency_responses)
                 }
+                Tab::SpectralDecay => self.spectral_decay_tab(),
             },
         };
 
@@ -1193,6 +1197,12 @@ impl Main {
         .into()
     }
 
+    pub fn spectral_decay_tab(&self) -> Element<'_, Message> {
+        container(text("Not much to see here."))
+            .center(Length::Fill)
+            .into()
+    }
+
     pub fn subscription(&self) -> Subscription<Message> {
         let hotkeys_pressed = keyboard::on_key_press(|key, _modifiers| {
             use keyboard::key::{Key, Named};
@@ -1326,6 +1336,7 @@ impl TabId {
             TabId::Measurements,
             TabId::ImpulseResponses,
             TabId::FrequencyResponses,
+            TabId::SpectralDecay,
         ]
         .into_iter()
     }
@@ -1338,7 +1349,9 @@ impl TabId {
 
             let is_enabled = match tab {
                 TabId::Measurements => true,
-                TabId::ImpulseResponses | TabId::FrequencyResponses => is_analysing,
+                TabId::ImpulseResponses | TabId::FrequencyResponses | TabId::SpectralDecay => {
+                    is_analysing
+                }
             };
 
             let button = button(text(tab.to_string()).size(16))
@@ -1375,6 +1388,7 @@ impl Display for TabId {
             TabId::Measurements => "Measurements",
             TabId::ImpulseResponses => "Impulse Responses",
             TabId::FrequencyResponses => "Frequency Responses",
+            TabId::SpectralDecay => "Spectral Decay",
         };
 
         write!(f, "{}", label)
@@ -1387,6 +1401,7 @@ impl From<&Tab> for TabId {
             Tab::Measurements { .. } => TabId::Measurements,
             Tab::ImpulseResponses { .. } => TabId::ImpulseResponses,
             Tab::FrequencyResponses => TabId::FrequencyResponses,
+            Tab::SpectralDecay => TabId::SpectralDecay,
         }
     }
 }
