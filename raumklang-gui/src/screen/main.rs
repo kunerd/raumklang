@@ -7,9 +7,12 @@ mod recording;
 use generic_overlay::generic_overlay::{dropdown_menu, dropdown_root};
 use impulse_response::{ChartOperation, WindowSettings};
 use recording::Recording;
+use rustfft::num_complex::Complex32;
 
 use crate::{
-    data::{self, project, window, Project, RecentProjects, SampleRate, Samples, Window},
+    data::{
+        self, project, window, Project, RecentProjects, SampleRate, Samples, SpectralDecay, Window,
+    },
     icon, load_project, log,
     screen::main::chart::waveform,
     ui, PickAndLoadError,
@@ -55,6 +58,7 @@ enum State {
         selected_impulse_response: Option<ui::measurement::Id>,
         impulse_responses: HashMap<ui::measurement::Id, ui::impulse_response::State>,
         frequency_responses: HashMap<ui::measurement::Id, frequency_response::Item>,
+        spectral_decay: Option<SpectralDecay>,
         charts: Charts,
     },
 }
@@ -76,6 +80,7 @@ pub enum Tab {
 struct Charts {
     impulse_responses: impulse_response::Chart,
     frequency_responses: frequency_response::ChartData,
+    spectral_decay_cache: canvas::Cache,
 }
 
 #[derive(Default, Debug)]
@@ -123,6 +128,8 @@ pub enum Message {
     MeasurementChart(waveform::Interaction),
     SaveImpulseResponse(ui::measurement::Id),
     ImpulseResponsesSaved(Option<PathBuf>),
+    SpectralDecayEvent(ui::measurement::Id, data::spectral_decay::Event),
+    SpectralDecayComputed(ui::measurement::Id, data::SpectralDecay),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -309,6 +316,7 @@ impl Main {
                         impulse_responses: HashMap::new(),
                         frequency_responses: HashMap::new(),
                         charts: Charts::default(),
+                        spectral_decay: None,
                     },
                     (old_state, true) => old_state,
                     (State::Analysing { .. }, false) => {
@@ -368,6 +376,8 @@ impl Main {
 
                 if let Tab::FrequencyResponses { .. } = active_tab {
                     compute_frequency_response(id, impulse_response, window)
+                } else if let Tab::SpectralDecay { .. } = active_tab {
+                    compute_spectral_decay(id, impulse_response)
                 } else {
                     Task::none()
                 }
@@ -773,6 +783,31 @@ impl Main {
                 log::debug!("Saving project failed: {err}");
                 Task::none()
             }
+            Message::SpectralDecayEvent(id, event) => {
+                match event {
+                    data::spectral_decay::Event::ComputingStarted => {
+                        log::debug!(
+                            "Spectral decay computation for measurement (ID: {}) started",
+                            id
+                        );
+                    }
+                }
+
+                Task::none()
+            }
+            Message::SpectralDecayComputed(id, decay) => {
+                log::debug!(
+                    "Spectral decay for measurement (ID: {}) with: {} slices, computed.",
+                    id,
+                    decay.len()
+                );
+
+                if let State::Analysing { spectral_decay, .. } = &mut self.state {
+                    *spectral_decay = Some(decay)
+                };
+
+                Task::none()
+            }
         }
     }
 
@@ -835,6 +870,7 @@ impl Main {
                 impulse_responses,
                 selected_impulse_response,
                 frequency_responses,
+                spectral_decay,
                 charts,
                 ..
             } => match active_tab {
@@ -856,7 +892,12 @@ impl Main {
                 Tab::FrequencyResponses => {
                     self.frequency_responses_tab(frequency_responses, &charts.frequency_responses)
                 }
-                Tab::SpectralDecay => self.spectral_decay_tab(),
+                Tab::SpectralDecay => self.spectral_decay_tab(
+                    *selected_impulse_response,
+                    &impulse_responses,
+                    spectral_decay,
+                    &charts.spectral_decay_cache,
+                ),
             },
         };
 
@@ -1197,10 +1238,118 @@ impl Main {
         .into()
     }
 
-    pub fn spectral_decay_tab(&self) -> Element<'_, Message> {
-        container(text("Not much to see here."))
-            .center(Length::Fill)
-            .into()
+    pub fn spectral_decay_tab<'a>(
+        &'a self,
+        selected: Option<ui::measurement::Id>,
+        impulse_responses: &'a HashMap<ui::measurement::Id, ui::impulse_response::State>,
+        spectral_decay: &'a Option<SpectralDecay>,
+        cache: &'a canvas::Cache,
+    ) -> Element<'a, Message> {
+        let sidebar = {
+            let header = {
+                column!(text("For Measurements"), rule::horizontal(1))
+                    .width(Length::Fill)
+                    .spacing(5)
+            };
+
+            let entries = self
+                .measurements
+                .iter()
+                .filter(|m| m.is_loaded())
+                .map(|measurement| (measurement, impulse_responses.get(&measurement.id)))
+                .map(|(measurement, ir)| {
+                    let id = measurement.id;
+
+                    let entry = {
+                        let btn = button(
+                            column![
+                                text(&measurement.name)
+                                    .size(16)
+                                    .wrapping(Wrapping::WordOrGlyph),
+                                text("10.12.2019 10:24:12").size(10)
+                            ]
+                            .clip(true)
+                            .padding(3)
+                            .spacing(6),
+                        )
+                        // FIXME: rename message
+                        .on_press_with(move || Message::ImpulseResponseSelected(id))
+                        .width(Length::Fill)
+                        .style(move |theme, status| {
+                            let status = match selected {
+                                Some(selected) if selected == id => button::Status::Hovered,
+                                _ => status,
+                            };
+                            button::secondary(theme, status)
+                        });
+
+                        container(btn).style(container::dark).padding(6).into()
+                    };
+
+                    if let Some(ir) = ir {
+                        match &ir {
+                            ui::impulse_response::State::Computing => {
+                                impulse_response::processing_overlay("Impulse Response", entry)
+                            }
+                            ui::impulse_response::State::Computed(_) => entry,
+                        }
+                    } else {
+                        entry
+                    }
+                });
+
+            container(scrollable(
+                column![header, column(entries).spacing(3)]
+                    .spacing(10)
+                    .padding(10),
+            ))
+            .style(container::rounded_box)
+        };
+
+        let content = if let Some(decay) = spectral_decay {
+            let gradient = colorous::MAGMA;
+
+            let series_list = decay.iter().enumerate().map(|(fr_index, fr)| {
+                let sample_rate = fr.sample_rate;
+                let len = fr.data.len() * 2 + 1;
+                let resolution = sample_rate as f32 / len as f32;
+
+                let closure = move |(i, s): (_, Complex32)| (i as f32 * resolution, dbfs(s.norm()));
+
+                let color = gradient.eval_rational(fr_index, decay.len());
+                line_series(fr.data.iter().copied().enumerate().map(closure))
+                    .color(iced::Color::from_rgb8(color.r, color.g, color.b))
+            });
+
+            let chart: Chart<Message, ()> = Chart::new()
+                .x_axis(
+                    Axis::new(axis::Alignment::Horizontal)
+                        .scale(axis::Scale::Log)
+                        .x_tick_marks(
+                            [10, 20, 50, 100, 1000]
+                                .into_iter()
+                                .map(|v| v as f32)
+                                .collect(),
+                        ),
+                )
+                .x_range(20.0..=2000.0)
+                .y_labels(Labels::default().format(&|v| format!("{v:.0}")))
+                .extend_series(series_list)
+                .cache(&cache);
+
+            container(chart)
+        } else {
+            container(text("Please select a frequency respone."))
+        };
+
+        row![
+            container(sidebar)
+                .width(Length::FillPortion(3))
+                .style(container::bordered_box),
+            column![container(content).width(Length::FillPortion(10))].spacing(12)
+        ]
+        .spacing(10)
+        .into()
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -1264,6 +1413,23 @@ impl Main {
     }
 }
 
+impl Default for Main {
+    fn default() -> Self {
+        Self {
+            state: State::CollectingMeasuremnts { recording: None },
+            loopback: None,
+            measurements: vec![],
+            project_path: None,
+            selected: None,
+            smoothing: frequency_response::Smoothing::default(),
+            modal: Modal::None,
+            signal_cache: canvas::Cache::default(),
+            zoom: chart::Zoom::default(),
+            offset: chart::Offset::default(),
+        }
+    }
+}
+
 async fn save_impulse_response(impulse_response: ui::ImpulseResponse) -> Option<PathBuf> {
     let handle = rfd::AsyncFileDialog::new()
         .set_title("Save Impulse Response ...")
@@ -1313,21 +1479,15 @@ fn compute_frequency_response(
     )
 }
 
-impl Default for Main {
-    fn default() -> Self {
-        Self {
-            state: State::CollectingMeasuremnts { recording: None },
-            loopback: None,
-            measurements: vec![],
-            project_path: None,
-            selected: None,
-            smoothing: frequency_response::Smoothing::default(),
-            modal: Modal::None,
-            signal_cache: canvas::Cache::default(),
-            zoom: chart::Zoom::default(),
-            offset: chart::Offset::default(),
-        }
-    }
+fn compute_spectral_decay(
+    id: ui::measurement::Id,
+    impulse_response: ui::ImpulseResponse,
+) -> Task<Message> {
+    Task::sip(
+        data::spectral_decay::compute(impulse_response.origin),
+        move |event| Message::SpectralDecayEvent(id, event),
+        move |decay| Message::SpectralDecayComputed(id, decay),
+    )
 }
 
 impl TabId {
