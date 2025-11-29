@@ -7,14 +7,14 @@ mod recording;
 use generic_overlay::generic_overlay::{dropdown_menu, dropdown_root};
 use impulse_response::{ChartOperation, WindowSettings};
 use recording::Recording;
-use rustfft::num_complex::Complex32;
 
 use crate::{
     data::{
-        self, project, window, Project, RecentProjects, SampleRate, Samples, SpectralDecay, Window,
+        self, project, spectral_decay, window, Project, RecentProjects, SampleRate, Samples,
+        SpectralDecay, Window,
     },
     icon, load_project, log,
-    screen::main::chart::{spectrogram, waveform, Offset, Zoom},
+    screen::main::chart::{spectrogram, waveform},
     ui, PickAndLoadError,
 };
 
@@ -77,6 +77,12 @@ pub enum Tab {
     Spectrogram,
 }
 
+impl Default for Tab {
+    fn default() -> Self {
+        Self::Measurements { recording: None }
+    }
+}
+
 #[derive(Debug, Default)]
 struct Charts {
     impulse_responses: impulse_response::Chart,
@@ -114,32 +120,42 @@ pub enum ModalAction {
 pub enum Message {
     NewProject,
     LoadProject,
-    ProjectLoaded(Result<(Arc<data::Project>, PathBuf), PickAndLoadError>),
-    RecentProject(usize),
     SaveProject,
+    RecentProject(usize),
+    ProjectLoaded(Result<(Arc<data::Project>, PathBuf), PickAndLoadError>),
     ProjectSaved(Result<PathBuf, PickAndSaveError>),
+
     TabSelected(TabId),
+
     Measurements(measurement::Message),
+    MeasurementChart(waveform::Interaction),
     ImpulseResponseSelected(ui::measurement::Id),
+
     FrequencyResponseToggled(ui::measurement::Id, bool),
     SmoothingChanged(frequency_response::Smoothing),
     FrequencyResponseSmoothed((ui::measurement::Id, Box<[f32]>)),
-    ImpulseResponses(impulse_response::Message),
-    ShiftKeyPressed,
-    ShiftKeyReleased,
-    ImpulseResponseEvent(ui::measurement::Id, data::impulse_response::Event),
-    ImpulseResponseComputed(ui::measurement::Id, data::ImpulseResponse),
     FrequencyResponseEvent(ui::measurement::Id, data::frequency_response::Event),
     FrequencyResponseComputed(ui::measurement::Id, data::FrequencyResponse),
-    Modal(ModalAction),
-    Recording(recording::Message),
-    StartRecording(recording::Kind),
-    MeasurementChart(waveform::Interaction),
+
+    ImpulseResponses(impulse_response::Message),
     SaveImpulseResponse(ui::measurement::Id),
     ImpulseResponsesSaved(Option<PathBuf>),
+
+    ShiftKeyPressed,
+    ShiftKeyReleased,
+
+    ImpulseResponseEvent(ui::measurement::Id, data::impulse_response::Event),
+    ImpulseResponseComputed(ui::measurement::Id, data::ImpulseResponse),
+
+    Recording(recording::Message),
+    StartRecording(recording::Kind),
+
     SpectralDecayEvent(ui::measurement::Id, data::spectral_decay::Event),
     SpectralDecayComputed(ui::measurement::Id, data::SpectralDecay),
+
     Spectrogram(spectrogram::Interaction),
+
+    Modal(ModalAction),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,7 +213,8 @@ impl Main {
                     return Task::none();
                 };
 
-                let (tab, tasks) = match (&active_tab, id) {
+                let cur_tab = std::mem::take(active_tab);
+                let (tab, tasks) = match (cur_tab, id) {
                     (Tab::Measurements { .. }, TabId::Measurements)
                     | (Tab::ImpulseResponses { .. }, TabId::ImpulseResponses)
                     | (Tab::FrequencyResponses, TabId::FrequencyResponses) => return Task::none(),
@@ -221,50 +238,68 @@ impl Main {
                         Task::none(),
                     ),
                     (_, TabId::FrequencyResponses) => {
-                        let tasks =
-                            self.measurements
-                                .iter()
-                                .filter(|m| m.is_loaded())
-                                .map(|measurement| {
-                                    let id = measurement.id;
-                                    let impulse_response = impulse_responses.get(&id);
+                        let tasks = self.measurements.iter().map(|measurement| {
+                            let id = measurement.id;
+                            if let Some(impulse_response) = impulse_responses
+                                .get(&id)
+                                .and_then(ui::impulse_response::State::computed)
+                            {
+                                if frequency_responses
+                                    .get(&id)
+                                    .and_then(|fr| fr.computed())
+                                    .is_some()
+                                {
+                                    return Task::none();
+                                }
 
-                                    impulse_response.and_then(|ir| ir.computed()).map_or_else(
-                                        || {
-                                            let loopback = self
-                                                .loopback
-                                                .as_ref()
-                                                .and_then(ui::Loopback::loaded)
-                                                .unwrap();
+                                compute_frequency_response(id, impulse_response.clone(), window)
+                            } else {
+                                let loopback = self
+                                    .loopback
+                                    .as_ref()
+                                    .and_then(ui::Loopback::loaded)
+                                    .unwrap();
 
-                                            let measurement = measurement.inner.loaded().unwrap();
+                                let measurement = measurement.loaded().unwrap();
 
-                                            compute_impulse_response(
-                                                id,
-                                                loopback.clone(),
-                                                measurement.clone(),
-                                            )
-                                        },
-                                        |impulse_response| {
-                                            if frequency_responses
-                                                .get(&id)
-                                                .and_then(|fr| fr.computed())
-                                                .is_some()
-                                            {
-                                                return Task::none();
-                                            }
+                                compute_impulse_response(id, loopback.clone(), measurement.clone())
+                            }
+                        });
 
-                                            compute_frequency_response(
-                                                id,
-                                                impulse_response.clone(),
-                                                window,
-                                            )
-                                        },
-                                    )
-                                });
                         (Tab::FrequencyResponses, Task::batch(tasks))
                     }
-                    (_, TabId::SpectralDecay) => (Tab::SpectralDecay, Task::none()),
+                    (_, TabId::SpectralDecay) => {
+                        let task = self
+                            .selected
+                            .and_then(|s| match s {
+                                measurement::Selected::Loopback => None,
+                                measurement::Selected::Measurement(i) => Some(i),
+                            })
+                            .and_then(|i| self.measurements.get(i))
+                            .and_then(|uim| match uim.loaded() {
+                                Some(m) => Some((uim.id, m)),
+                                None => None,
+                            })
+                            .and_then(|(id, measurement)| {
+                                if let Some(impulse_response) = impulse_responses
+                                    .get(&id)
+                                    .and_then(ui::impulse_response::State::computed)
+                                {
+                                    Some(compute_spectral_decay(id, impulse_response.clone()))
+                                } else if let Some(loopback) =
+                                    self.loopback.as_ref().and_then(ui::Loopback::loaded)
+                                {
+                                    Some(compute_impulse_response(
+                                        id,
+                                        loopback.clone(),
+                                        measurement.clone(),
+                                    ))
+                                } else {
+                                    None
+                                }
+                            });
+                        (Tab::SpectralDecay, task.unwrap_or(Task::none()))
+                    }
                     (_, TabId::Spectrogram) => (Tab::Spectrogram, Task::none()),
                 };
 
@@ -352,8 +387,8 @@ impl Main {
                 };
 
                 *selected_impulse_response = Some(id);
-                charts.impulse_responses.data_cache.clear();
 
+                charts.impulse_responses.data_cache.clear();
                 // FIXME: this is a hack and should not be here
                 charts.spectrogram.cache.clear();
 
@@ -1363,7 +1398,7 @@ impl Main {
                 let len = fr.data.len() * 2 + 1;
                 let resolution = sample_rate as f32 / len as f32;
 
-                let closure = move |(i, s): (_, Complex32)| (i as f32 * resolution, dbfs(s.norm()));
+                let closure = move |(i, s)| (i as f32 * resolution, dbfs(s));
 
                 let color = gradient.eval_rational(fr_index, decay.len());
                 line_series(fr.data.iter().copied().enumerate().map(closure))
@@ -1625,7 +1660,10 @@ fn compute_spectral_decay(
     impulse_response: ui::ImpulseResponse,
 ) -> Task<Message> {
     Task::sip(
-        data::spectral_decay::compute(impulse_response.origin),
+        data::spectral_decay::compute(
+            impulse_response.origin,
+            spectral_decay::Preferences::default(),
+        ),
         move |event| Message::SpectralDecayEvent(id, event),
         move |decay| Message::SpectralDecayComputed(id, decay),
     )
