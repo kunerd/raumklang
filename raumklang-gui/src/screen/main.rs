@@ -41,7 +41,7 @@ pub struct Main {
     signal_cache: canvas::Cache,
     smoothing: frequency_response::Smoothing,
     loopback: Option<ui::Loopback>,
-    measurements: Vec<ui::Measurement>,
+    measurements: Vec<ui::measurement::State>,
     modal: Modal,
     zoom: chart::Zoom,
     offset: chart::Offset,
@@ -238,33 +238,39 @@ impl Main {
                         Task::none(),
                     ),
                     (_, TabId::FrequencyResponses) => {
-                        let tasks = self.measurements.iter().map(|measurement| {
-                            let id = measurement.id;
-                            if let Some(impulse_response) = impulse_responses
-                                .get(&id)
-                                .and_then(ui::impulse_response::State::computed)
-                            {
-                                if frequency_responses
+                        let tasks = self
+                            .measurements
+                            .iter()
+                            .flat_map(ui::measurement::State::loaded)
+                            .map(|measurement| {
+                                let id = measurement.id;
+                                if let Some(impulse_response) = impulse_responses
                                     .get(&id)
-                                    .and_then(|fr| fr.computed())
-                                    .is_some()
+                                    .and_then(ui::impulse_response::State::computed)
                                 {
-                                    return Task::none();
+                                    if frequency_responses
+                                        .get(&id)
+                                        .and_then(|fr| fr.computed())
+                                        .is_some()
+                                    {
+                                        return Task::none();
+                                    }
+
+                                    compute_frequency_response(id, impulse_response.clone(), window)
+                                } else {
+                                    let loopback = self
+                                        .loopback
+                                        .as_ref()
+                                        .and_then(ui::Loopback::loaded)
+                                        .unwrap();
+
+                                    compute_impulse_response(
+                                        id,
+                                        loopback.clone(),
+                                        measurement.data.clone(),
+                                    )
                                 }
-
-                                compute_frequency_response(id, impulse_response.clone(), window)
-                            } else {
-                                let loopback = self
-                                    .loopback
-                                    .as_ref()
-                                    .and_then(ui::Loopback::loaded)
-                                    .unwrap();
-
-                                let measurement = measurement.loaded().unwrap();
-
-                                compute_impulse_response(id, loopback.clone(), measurement.clone())
-                            }
-                        });
+                            });
 
                         (Tab::FrequencyResponses, Task::batch(tasks))
                     }
@@ -276,23 +282,23 @@ impl Main {
                                 measurement::Selected::Measurement(i) => Some(i),
                             })
                             .and_then(|i| self.measurements.get(i))
-                            .and_then(|uim| match uim.loaded() {
-                                Some(m) => Some((uim.id, m)),
-                                None => None,
-                            })
-                            .and_then(|(id, measurement)| {
+                            .and_then(ui::measurement::State::loaded)
+                            .and_then(|measurement| {
                                 if let Some(impulse_response) = impulse_responses
-                                    .get(&id)
+                                    .get(&measurement.id)
                                     .and_then(ui::impulse_response::State::computed)
                                 {
-                                    Some(compute_spectral_decay(id, impulse_response.clone()))
+                                    Some(compute_spectral_decay(
+                                        measurement.id,
+                                        impulse_response.clone(),
+                                    ))
                                 } else if let Some(loopback) =
                                     self.loopback.as_ref().and_then(ui::Loopback::loaded)
                                 {
                                     Some(compute_impulse_response(
-                                        id,
+                                        measurement.id,
                                         loopback.clone(),
-                                        measurement.clone(),
+                                        measurement.data.clone(),
                                     ))
                                 } else {
                                     None
@@ -324,7 +330,7 @@ impl Main {
                             }
                             Some(measurement::LoadedKind::Normal(measurement)) => self
                                 .measurements
-                                .push(ui::Measurement::from_data(measurement)),
+                                .push(ui::measurement::State::from_data(measurement)),
                             None => {}
                         }
 
@@ -355,7 +361,7 @@ impl Main {
                         window: Window::new(SampleRate::from(
                             self.loopback
                                 .as_ref()
-                                .and_then(|l| l.inner.loaded())
+                                .and_then(ui::Loopback::loaded)
                                 .map_or(44_100, |l| l.as_ref().sample_rate()),
                         ))
                         .into(),
@@ -684,7 +690,7 @@ impl Main {
                                         Some(ui::Loopback::new("Loopback".to_string(), loopback))
                                 }
                                 recording::Result::Measurement(measurement) => {
-                                    self.measurements.push(ui::Measurement::new(
+                                    self.measurements.push(ui::measurement::State::new(
                                         "Measurement".to_string(),
                                         measurement,
                                     ))
@@ -797,6 +803,7 @@ impl Main {
                 let measurements = self
                     .measurements
                     .iter()
+                    .flat_map(ui::measurement::State::loaded)
                     .flat_map(|m| m.path.clone())
                     .map(|path| project::Measurement { path })
                     .collect();
@@ -1092,9 +1099,11 @@ impl Main {
                         .as_ref()
                         .and_then(|l| l.loaded())
                         .map(AsRef::as_ref),
-                    measurement::Selected::Measurement(i) => {
-                        self.measurements.get(i).and_then(|m| m.inner.loaded())
-                    }
+                    measurement::Selected::Measurement(i) => self
+                        .measurements
+                        .get(i)
+                        .and_then(ui::measurement::State::loaded)
+                        .map(|m| &m.data),
                 })
                 .flatten()
             {
@@ -1132,7 +1141,7 @@ impl Main {
             let entries = self
                 .measurements
                 .iter()
-                .filter(|m| m.is_loaded())
+                .filter_map(ui::measurement::State::loaded)
                 .map(|measurement| (measurement, impulse_responses.get(&measurement.id)))
                 .map(|(measurement, ir)| {
                     let id = measurement.id;
@@ -1225,18 +1234,18 @@ impl Main {
         chart_settings: &'a frequency_response::ChartData,
     ) -> Element<'a, Message> {
         let sidebar = {
-            let entries =
-                self.measurements
-                    .iter()
-                    .filter(|m| m.is_loaded())
-                    .flat_map(|measurement| {
-                        let name = &measurement.name;
-                        frequency_responses.get(&measurement.id).map(|item| {
-                            item.view(name, |state| {
-                                Message::FrequencyResponseToggled(measurement.id, state)
-                            })
+            let entries = self
+                .measurements
+                .iter()
+                .filter_map(ui::measurement::State::loaded)
+                .flat_map(|measurement| {
+                    let name = &measurement.name;
+                    frequency_responses.get(&measurement.id).map(|item| {
+                        item.view(name, |state| {
+                            Message::FrequencyResponseToggled(measurement.id, state)
                         })
-                    });
+                    })
+                });
 
             container(column(entries).spacing(10).padding(8)).style(container::rounded_box)
         };
@@ -1339,7 +1348,7 @@ impl Main {
             let entries = self
                 .measurements
                 .iter()
-                .filter(|m| m.is_loaded())
+                .filter_map(ui::measurement::State::loaded)
                 .map(|measurement| (measurement, impulse_responses.get(&measurement.id)))
                 .map(|(measurement, ir)| {
                     let id = measurement.id;
@@ -1453,7 +1462,7 @@ impl Main {
             let entries = self
                 .measurements
                 .iter()
-                .filter(|m| m.is_loaded())
+                .filter_map(ui::measurement::State::loaded)
                 .map(|measurement| (measurement, impulse_responses.get(&measurement.id)))
                 .map(|(measurement, ir)| {
                     let id = measurement.id;
@@ -1566,26 +1575,28 @@ impl Main {
 
     fn analysing_possible(&self) -> bool {
         self.loopback.as_ref().is_some_and(ui::Loopback::is_loaded)
-            && self.measurements.iter().any(ui::Measurement::is_loaded)
+            && self
+                .measurements
+                .iter()
+                .any(ui::measurement::State::is_loaded)
     }
 
     fn compute_impulse_response(&self, id: ui::measurement::Id) -> Task<Message> {
         let loopback = self
             .loopback
             .as_ref()
-            .and_then(|l| l.inner.loaded())
+            .and_then(ui::Loopback::loaded)
             .unwrap()
             .clone();
 
         let measurement = self
             .measurements
             .iter()
+            .filter_map(ui::measurement::State::loaded)
             .find(|m| m.id == id)
-            .and_then(|m| m.inner.loaded())
-            .unwrap()
-            .clone();
+            .unwrap();
 
-        compute_impulse_response(id, loopback, measurement)
+        compute_impulse_response(id, loopback, measurement.data.clone())
     }
 }
 

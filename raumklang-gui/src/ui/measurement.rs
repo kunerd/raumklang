@@ -1,21 +1,17 @@
+pub mod loopback;
+
+pub use loopback::Loopback;
+
 use std::{
     fmt::Display,
     path::PathBuf,
     sync::atomic::{self, AtomicUsize},
 };
 
-use crate::data;
-
-#[derive(Debug, Clone)]
-pub struct Measurement {
-    pub id: Id,
-    pub name: String,
-    pub path: Option<PathBuf>,
-    pub inner: State<raumklang_core::Measurement>,
-}
+use crate::{data, ui};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Id(pub usize);
+pub struct Id(usize);
 
 impl Display for Id {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -24,26 +20,69 @@ impl Display for Id {
 }
 
 #[derive(Debug, Clone)]
-pub enum State<T> {
-    NotLoaded,
-    Loaded(T),
+pub enum State {
+    NotLoaded(NotLoaded),
+    Loaded(Loaded),
 }
 
-impl<T> State<T> {
-    pub(crate) fn loaded(&self) -> Option<&T> {
+impl State {
+    pub(crate) fn name(&self) -> &String {
         match self {
-            State::NotLoaded => None,
-            State::Loaded(ref inner) => Some(inner),
+            State::NotLoaded(not_loaded) => &not_loaded.name,
+            State::Loaded(loaded) => &loaded.name,
+        }
+    }
+
+    pub(crate) fn new(name: String, data: raumklang_core::Measurement) -> Self {
+        Self::Loaded(Loaded::new(name, data))
+    }
+
+    pub(crate) fn from_data(data: data::Measurement) -> Self {
+        Self::Loaded(Loaded::from_data(data))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NotLoaded {
+    id: Id,
+    name: String,
+    path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Loaded {
+    pub id: Id,
+    pub name: String,
+    pub path: Option<PathBuf>,
+    pub data: raumklang_core::Measurement,
+    analysis: Analysis,
+}
+
+#[derive(Debug, Clone)]
+pub enum Analysis {
+    None,
+    ComputingImpulseResponse,
+    ImpulseResponseComputed {
+        result: ui::ImpulseResponse,
+        frequency_response: Option<()>,
+    },
+}
+
+impl State {
+    pub(crate) fn loaded(&self) -> Option<&Loaded> {
+        match self {
+            State::NotLoaded(_) => None,
+            State::Loaded(l) => Some(l),
         }
     }
 
     pub fn is_loaded(&self) -> bool {
-        matches!(self, State::Loaded(_))
+        matches!(self, State::Loaded { .. })
     }
 }
 
-impl Measurement {
-    pub fn new(name: String, measurement: raumklang_core::Measurement) -> Self {
+impl Loaded {
+    pub fn new(name: String, data: raumklang_core::Measurement) -> Self {
         static ID: AtomicUsize = AtomicUsize::new(0);
 
         let id = Id(ID.fetch_add(1, atomic::Ordering::Relaxed));
@@ -52,7 +91,8 @@ impl Measurement {
             id,
             name,
             path: None,
-            inner: State::Loaded(measurement),
+            data,
+            analysis: Analysis::None,
         }
     }
 
@@ -65,48 +105,8 @@ impl Measurement {
             id,
             name: measurement.name,
             path: Some(measurement.path),
-            inner: State::Loaded(measurement.inner),
+            data: measurement.inner,
+            analysis: Analysis::None,
         }
-    }
-
-    pub fn is_loaded(&self) -> bool {
-        self.inner.is_loaded()
-    }
-
-    pub fn loaded(&self) -> Option<&raumklang_core::Measurement> {
-        self.inner.loaded()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Loopback {
-    pub name: String,
-    pub path: Option<PathBuf>,
-    pub inner: State<raumklang_core::Loopback>,
-}
-
-impl Loopback {
-    pub fn is_loaded(&self) -> bool {
-        self.inner.is_loaded()
-    }
-
-    pub(crate) fn new(name: String, inner: raumklang_core::Loopback) -> Self {
-        Self {
-            name,
-            path: None,
-            inner: State::Loaded(inner),
-        }
-    }
-
-    pub(crate) fn from_data(loopback: data::Loopback) -> Loopback {
-        Self {
-            name: loopback.name,
-            path: Some(loopback.path),
-            inner: State::Loaded(loopback.inner),
-        }
-    }
-
-    pub(crate) fn loaded(&self) -> Option<&raumklang_core::Loopback> {
-        self.inner.loaded()
     }
 }
