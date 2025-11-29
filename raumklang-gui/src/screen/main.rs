@@ -56,7 +56,6 @@ enum State {
         active_tab: Tab,
         window: Window<Samples>,
         selected_impulse_response: Option<ui::measurement::Id>,
-        impulse_responses: HashMap<ui::measurement::Id, ui::impulse_response::State>,
         frequency_responses: HashMap<ui::measurement::Id, frequency_response::Item>,
         spectral_decay: Option<SpectralDecay>,
         charts: Charts,
@@ -204,7 +203,6 @@ impl Main {
             Message::TabSelected(id) => {
                 let State::Analysing {
                     ref mut active_tab,
-                    ref impulse_responses,
                     ref frequency_responses,
                     ref window,
                     ..
@@ -244,9 +242,8 @@ impl Main {
                             .flat_map(ui::measurement::State::loaded)
                             .map(|measurement| {
                                 let id = measurement.id;
-                                if let Some(impulse_response) = impulse_responses
-                                    .get(&id)
-                                    .and_then(ui::impulse_response::State::computed)
+                                if let Some(impulse_response) =
+                                    measurement.analysis.impulse_response()
                                 {
                                     if frequency_responses
                                         .get(&id)
@@ -284,9 +281,8 @@ impl Main {
                             .and_then(|i| self.measurements.get(i))
                             .and_then(ui::measurement::State::loaded)
                             .and_then(|measurement| {
-                                if let Some(impulse_response) = impulse_responses
-                                    .get(&measurement.id)
-                                    .and_then(ui::impulse_response::State::computed)
+                                if let Some(impulse_response) =
+                                    measurement.analysis.impulse_response()
                                 {
                                     Some(compute_spectral_decay(
                                         measurement.id,
@@ -366,7 +362,6 @@ impl Main {
                         ))
                         .into(),
                         selected_impulse_response: None,
-                        impulse_responses: HashMap::new(),
                         frequency_responses: HashMap::new(),
                         charts: Charts::default(),
                         spectral_decay: None,
@@ -384,7 +379,6 @@ impl Main {
 
                 let State::Analysing {
                     ref mut selected_impulse_response,
-                    ref mut impulse_responses,
                     ref mut charts,
                     ..
                 } = self.state
@@ -398,17 +392,22 @@ impl Main {
                 // FIXME: this is a hack and should not be here
                 charts.spectrogram.cache.clear();
 
-                if impulse_responses.contains_key(&id) {
-                    Task::none()
-                } else {
+                if let Some(ui::measurement::Analysis::None) = self
+                    .measurements
+                    .iter()
+                    .filter_map(ui::measurement::State::loaded)
+                    .find(|m| m.id == id)
+                    .map(|measurement| &measurement.analysis)
+                {
                     self.compute_impulse_response(id)
+                } else {
+                    Task::none()
                 }
             }
             Message::ImpulseResponseComputed(id, impulse_response) => {
                 let State::Analysing {
                     window,
                     active_tab,
-                    impulse_responses,
                     selected_impulse_response,
                     charts,
                     ..
@@ -419,9 +418,16 @@ impl Main {
 
                 let impulse_response = ui::ImpulseResponse::from_data(impulse_response);
 
-                impulse_responses
-                    .entry(id)
-                    .and_modify(|ir| ir.set_computed(impulse_response.clone()));
+                if let Some(measurement) = self
+                    .measurements
+                    .iter_mut()
+                    .filter_map(ui::measurement::State::loaded_mut)
+                    .find(|m| m.id == id)
+                {
+                    measurement
+                        .analysis
+                        .set_impulse_response(impulse_response.clone());
+                }
 
                 if selected_impulse_response.is_some_and(|selected| selected == id) {
                     charts
@@ -595,16 +601,25 @@ impl Main {
             Message::ImpulseResponseEvent(id, event) => {
                 let State::Analysing {
                     ref mut frequency_responses,
-                    ref mut impulse_responses,
                     ..
                 } = self.state
                 else {
                     return Task::none();
                 };
 
+                let Some(measurement) = self
+                    .measurements
+                    .iter_mut()
+                    .filter_map(ui::measurement::State::loaded_mut)
+                    .find(|m| m.id == id)
+                else {
+                    return Task::none();
+                };
+
+                measurement.analysis.apply(event);
+
                 match event {
                     data::impulse_response::Event::ComputationStarted => {
-                        impulse_responses.insert(id, ui::impulse_response::State::Computing);
                         frequency_responses.insert(id, frequency_response::Item::default());
                     }
                 }
@@ -729,16 +744,18 @@ impl Main {
             Message::SaveImpulseResponse(id) => {
                 let State::Analysing {
                     active_tab: Tab::ImpulseResponses { .. },
-                    impulse_responses,
                     ..
                 } = &self.state
                 else {
                     return Task::none();
                 };
 
-                if let Some(impulse_response) = impulse_responses
-                    .get(&id)
-                    .and_then(ui::impulse_response::State::computed)
+                if let Some(impulse_response) = self
+                    .measurements
+                    .iter()
+                    .filter_map(ui::measurement::State::loaded)
+                    .find(|m| m.id == id)
+                    .and_then(|measurement| measurement.analysis.impulse_response())
                 {
                     Task::perform(
                         save_impulse_response(impulse_response.clone()),
@@ -952,7 +969,6 @@ impl Main {
             }
             State::Analysing {
                 active_tab,
-                impulse_responses,
                 selected_impulse_response,
                 frequency_responses,
                 spectral_decay,
@@ -971,7 +987,6 @@ impl Main {
                 } => self.impulse_responses_tab(
                     *selected_impulse_response,
                     &charts.impulse_responses,
-                    impulse_responses,
                     window_settings,
                 ),
                 Tab::FrequencyResponses => {
@@ -979,13 +994,11 @@ impl Main {
                 }
                 Tab::SpectralDecay => self.spectral_decay_tab(
                     *selected_impulse_response,
-                    &impulse_responses,
                     spectral_decay,
                     &charts.spectral_decay_cache,
                 ),
                 Tab::Spectrogram => self.spectrogram_tab(
                     *selected_impulse_response,
-                    &impulse_responses,
                     spectral_decay,
                     &charts.spectrogram,
                 ),
@@ -1128,7 +1141,6 @@ impl Main {
         &'a self,
         selected: Option<ui::measurement::Id>,
         chart: &'a impulse_response::Chart,
-        impulse_responses: &'a HashMap<ui::measurement::Id, ui::impulse_response::State>,
         window_settings: &'a WindowSettings,
     ) -> Element<'a, Message> {
         let sidebar = {
@@ -1142,8 +1154,7 @@ impl Main {
                 .measurements
                 .iter()
                 .filter_map(ui::measurement::State::loaded)
-                .map(|measurement| (measurement, impulse_responses.get(&measurement.id)))
-                .map(|(measurement, ir)| {
+                .map(|measurement| {
                     let id = measurement.id;
 
                     let entry = {
@@ -1186,15 +1197,12 @@ impl Main {
                         .into()
                     };
 
-                    if let Some(ir) = ir {
-                        match &ir {
-                            ui::impulse_response::State::Computing => {
-                                impulse_response::processing_overlay("Impulse Response", entry)
-                            }
-                            ui::impulse_response::State::Computed(_) => entry,
+                    match measurement.analysis {
+                        ui::measurement::Analysis::None => entry,
+                        ui::measurement::Analysis::ComputingImpulseResponse => {
+                            impulse_response::processing_overlay("Impulse Response", entry)
                         }
-                    } else {
-                        entry
+                        ui::measurement::Analysis::ImpulseResponseComputed { .. } => entry,
                     }
                 });
 
@@ -1207,10 +1215,12 @@ impl Main {
         };
 
         let content = {
-            if let Some(impulse_response) = selected
-                .as_ref()
-                .and_then(|id| impulse_responses.get(id))
-                .and_then(|state| state.computed())
+            if let Some(impulse_response) = self
+                .measurements
+                .iter()
+                .filter_map(ui::measurement::State::loaded)
+                .find(|m| Some(m.id) == selected)
+                .and_then(|measurement| measurement.analysis.impulse_response())
             {
                 chart
                     .view(impulse_response, window_settings)
@@ -1334,7 +1344,6 @@ impl Main {
     pub fn spectral_decay_tab<'a>(
         &'a self,
         selected: Option<ui::measurement::Id>,
-        impulse_responses: &'a HashMap<ui::measurement::Id, ui::impulse_response::State>,
         spectral_decay: &'a Option<SpectralDecay>,
         cache: &'a canvas::Cache,
     ) -> Element<'a, Message> {
@@ -1349,8 +1358,7 @@ impl Main {
                 .measurements
                 .iter()
                 .filter_map(ui::measurement::State::loaded)
-                .map(|measurement| (measurement, impulse_responses.get(&measurement.id)))
-                .map(|(measurement, ir)| {
+                .map(|measurement| {
                     let id = measurement.id;
 
                     let entry = {
@@ -1379,15 +1387,14 @@ impl Main {
                         container(btn).style(container::dark).padding(6).into()
                     };
 
-                    if let Some(ir) = ir {
-                        match &ir {
-                            ui::impulse_response::State::Computing => {
-                                impulse_response::processing_overlay("Impulse Response", entry)
-                            }
-                            ui::impulse_response::State::Computed(_) => entry,
+                    match measurement.analysis {
+                        ui::measurement::Analysis::None => {
+                            impulse_response::processing_overlay("Not computed, yet!", entry)
                         }
-                    } else {
-                        entry
+                        ui::measurement::Analysis::ComputingImpulseResponse => {
+                            impulse_response::processing_overlay("Impulse Response", entry)
+                        }
+                        ui::measurement::Analysis::ImpulseResponseComputed { .. } => entry,
                     }
                 });
 
@@ -1448,7 +1455,6 @@ impl Main {
     fn spectrogram_tab<'a>(
         &'a self,
         selected: Option<ui::measurement::Id>,
-        impulse_responses: &'a HashMap<ui::measurement::Id, ui::impulse_response::State>,
         spectral_decay: &'a Option<SpectralDecay>,
         spectrogram: &'a Spectrogram,
     ) -> Element<'a, Message> {
@@ -1463,8 +1469,7 @@ impl Main {
                 .measurements
                 .iter()
                 .filter_map(ui::measurement::State::loaded)
-                .map(|measurement| (measurement, impulse_responses.get(&measurement.id)))
-                .map(|(measurement, ir)| {
+                .map(|measurement| {
                     let id = measurement.id;
 
                     let entry = {
@@ -1493,15 +1498,14 @@ impl Main {
                         container(btn).style(container::dark).padding(6).into()
                     };
 
-                    if let Some(ir) = ir {
-                        match &ir {
-                            ui::impulse_response::State::Computing => {
-                                impulse_response::processing_overlay("Impulse Response", entry)
-                            }
-                            ui::impulse_response::State::Computed(_) => entry,
+                    match measurement.analysis {
+                        ui::measurement::Analysis::None => {
+                            impulse_response::processing_overlay("Not computed, yet!", entry)
                         }
-                    } else {
-                        entry
+                        ui::measurement::Analysis::ComputingImpulseResponse => {
+                            impulse_response::processing_overlay("Impulse Response", entry)
+                        }
+                        ui::measurement::Analysis::ImpulseResponseComputed { .. } => entry,
                     }
                 });
 
