@@ -72,6 +72,10 @@ impl Measurement {
     pub fn is_loaded(&self) -> bool {
         self.inner.is_loaded()
     }
+
+    pub fn loaded(&self) -> Option<&raumklang_core::Measurement> {
+        self.inner.loaded()
+    }
 }
 
 #[derive(Debug, Clone)]

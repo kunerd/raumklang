@@ -146,7 +146,7 @@ impl<'a> canvas::Program<Interaction, iced::Theme> for Spectrogram<'a> {
                     let y = plane.height
                         - x_axis.height
                         - si as f32 * pixels_per_unit_y
-                        - pixels_per_unit_x;
+                        - pixels_per_unit_y;
 
                     let log_scale = |p: f32| (p.log10() / x_axis.length.log10()) * x_axis.length;
 
