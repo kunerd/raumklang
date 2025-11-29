@@ -8,7 +8,10 @@ use std::{
     sync::atomic::{self, AtomicUsize},
 };
 
-use crate::{data, ui};
+use crate::{
+    data,
+    ui::{self, impulse_response},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Id(usize);
@@ -40,6 +43,24 @@ impl State {
     pub(crate) fn from_data(data: data::Measurement) -> Self {
         Self::Loaded(Loaded::from_data(data))
     }
+
+    pub(crate) fn loaded(&self) -> Option<&Loaded> {
+        match self {
+            State::NotLoaded(_) => None,
+            State::Loaded(l) => Some(l),
+        }
+    }
+
+    pub(crate) fn loaded_mut(&mut self) -> Option<&mut Loaded> {
+        match self {
+            State::NotLoaded(_) => None,
+            State::Loaded(l) => Some(l),
+        }
+    }
+
+    pub fn is_loaded(&self) -> bool {
+        matches!(self, State::Loaded { .. })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -55,7 +76,7 @@ pub struct Loaded {
     pub name: String,
     pub path: Option<PathBuf>,
     pub data: raumklang_core::Measurement,
-    analysis: Analysis,
+    pub analysis: Analysis,
 }
 
 #[derive(Debug, Clone)]
@@ -68,16 +89,24 @@ pub enum Analysis {
     },
 }
 
-impl State {
-    pub(crate) fn loaded(&self) -> Option<&Loaded> {
-        match self {
-            State::NotLoaded(_) => None,
-            State::Loaded(l) => Some(l),
+impl Analysis {
+    pub fn impulse_response(&self) -> Option<&ui::ImpulseResponse> {
+        let Analysis::ImpulseResponseComputed { result, .. } = self else {
+            return None;
+        };
+
+        Some(result)
+    }
+
+    pub(crate) fn set_impulse_response(&mut self, impulse_response: ui::ImpulseResponse) {
+        *self = Analysis::ImpulseResponseComputed {
+            result: impulse_response,
+            frequency_response: None,
         }
     }
 
-    pub fn is_loaded(&self) -> bool {
-        matches!(self, State::Loaded { .. })
+    pub(crate) fn apply(&mut self, event: data::impulse_response::Event) {
+        *self = Analysis::ComputingImpulseResponse;
     }
 }
 
