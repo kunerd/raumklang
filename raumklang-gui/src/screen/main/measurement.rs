@@ -1,6 +1,9 @@
 use crate::{
     data, icon,
-    ui::{measurement, Loopback, Measurement},
+    ui::{
+        measurement::{self, loopback},
+        Loopback,
+    },
 };
 
 use chrono::{DateTime, Utc};
@@ -51,10 +54,10 @@ pub enum LoadedKind {
 }
 
 pub fn loopback_entry<'a>(selected: Option<Selected>, signal: &Loopback) -> Element<'a, Message> {
-    let info: Element<_> = match &signal.inner {
-        measurement::State::NotLoaded => text("Error").style(text::danger).into(),
-        measurement::State::Loaded(inner) => {
-            let dt: DateTime<Utc> = inner.as_ref().modified.into();
+    let info: Element<_> = match &signal.loaded() {
+        None => text("Error").style(text::danger).into(),
+        Some(data) => {
+            let dt: DateTime<Utc> = data.as_ref().modified.into();
             column![
                 text("Last modified:").size(10),
                 text!("{}", dt.format("%x %X")).size(10)
@@ -85,12 +88,7 @@ pub fn loopback_entry<'a>(selected: Option<Selected>, signal: &Loopback) -> Elem
     };
 
     button(content)
-        .on_press_maybe(
-            signal
-                .inner
-                .loaded()
-                .map(|_| Message::Select(Selected::Loopback)),
-        )
+        .on_press_maybe(signal.loaded().map(|_| Message::Select(Selected::Loopback)))
         .style(style)
         .width(Length::Fill)
         .into()
@@ -99,12 +97,12 @@ pub fn loopback_entry<'a>(selected: Option<Selected>, signal: &Loopback) -> Elem
 pub fn list_entry<'a>(
     index: usize,
     selected: Option<Selected>,
-    signal: &'a Measurement,
+    signal: &'a measurement::State,
 ) -> Element<'a, Message> {
-    let info: Element<_> = match &signal.inner {
-        measurement::State::NotLoaded => text("Error").style(text::danger).into(),
-        measurement::State::Loaded(inner) => {
-            let dt: DateTime<Utc> = inner.modified.into();
+    let info: Element<_> = match &signal.loaded() {
+        None => text("Error").style(text::danger).into(),
+        Some(loaded) => {
+            let dt: DateTime<Utc> = loaded.data.modified.into();
             column![
                 text("Last modified:").size(10),
                 text!("{}", dt.format("%x %X")).size(10)
@@ -114,7 +112,7 @@ pub fn list_entry<'a>(
     };
 
     let content = column![
-        column![text(&signal.name).size(16),].push(info).spacing(5),
+        column![text(signal.name()).size(16),].push(info).spacing(5),
         rule::horizontal(2),
         row![
             space::horizontal(),
@@ -136,7 +134,6 @@ pub fn list_entry<'a>(
     button(content)
         .on_press_maybe(
             signal
-                .inner
                 .loaded()
                 .map(|_| Message::Select(Selected::Measurement(index))),
         )
