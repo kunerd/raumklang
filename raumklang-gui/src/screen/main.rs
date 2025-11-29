@@ -7,14 +7,13 @@ mod recording;
 use generic_overlay::generic_overlay::{dropdown_menu, dropdown_root};
 use impulse_response::{ChartOperation, WindowSettings};
 use recording::Recording;
-use rustfft::num_complex::Complex32;
 
 use crate::{
     data::{
         self, project, window, Project, RecentProjects, SampleRate, Samples, SpectralDecay, Window,
     },
     icon, load_project, log,
-    screen::main::chart::{spectrogram, waveform, Offset, Zoom},
+    screen::main::chart::{spectrogram, waveform},
     ui, PickAndLoadError,
 };
 
@@ -1363,7 +1362,7 @@ impl Main {
                 let len = fr.data.len() * 2 + 1;
                 let resolution = sample_rate as f32 / len as f32;
 
-                let closure = move |(i, s): (_, Complex32)| (i as f32 * resolution, dbfs(s.norm()));
+                let closure = move |(i, s)| (i as f32 * resolution, dbfs(s));
 
                 let color = gradient.eval_rational(fr_index, decay.len());
                 line_series(fr.data.iter().copied().enumerate().map(closure))

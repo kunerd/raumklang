@@ -7,7 +7,6 @@ use iced::{
     widget::canvas::{self},
     Event, Point, Rectangle, Renderer, Size, Vector,
 };
-use rustfft::num_complex::Complex32;
 
 #[derive(Debug, Clone)]
 pub enum Interaction {
@@ -94,12 +93,10 @@ impl<'a> canvas::Program<Interaction, iced::Theme> for Spectrogram<'a> {
         &self,
         _state: &Self::State,
         renderer: &Renderer,
-        theme: &iced::Theme,
+        _theme: &iced::Theme,
         bounds: Rectangle,
         _cursor: iced::advanced::mouse::Cursor,
     ) -> Vec<canvas::Geometry<Renderer>> {
-        let palette = theme.extended_palette();
-
         let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
             let frequency_responses = self.datapoints.iter();
 
@@ -142,7 +139,6 @@ impl<'a> canvas::Program<Interaction, iced::Theme> for Spectrogram<'a> {
                     .skip(min_index)
                     .take(max_index)
                     .copied()
-                    .map(Complex32::norm)
                     .enumerate()
                 {
                     let color = gradient.eval_continuous(s.into());
