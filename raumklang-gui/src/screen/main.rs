@@ -14,7 +14,7 @@ use crate::{
         self, project, window, Project, RecentProjects, SampleRate, Samples, SpectralDecay, Window,
     },
     icon, load_project, log,
-    screen::main::chart::waveform,
+    screen::main::chart::{spectrogram, waveform, Offset, Zoom},
     ui, PickAndLoadError,
 };
 
@@ -74,6 +74,7 @@ pub enum Tab {
     ImpulseResponses { window_settings: WindowSettings },
     FrequencyResponses,
     SpectralDecay,
+    Spectrogram,
 }
 
 #[derive(Debug, Default)]
@@ -81,6 +82,14 @@ struct Charts {
     impulse_responses: impulse_response::Chart,
     frequency_responses: frequency_response::ChartData,
     spectral_decay_cache: canvas::Cache,
+    spectrogram: Spectrogram,
+}
+
+#[derive(Debug, Default)]
+struct Spectrogram {
+    pub zoom: chart::Zoom,
+    pub offset: chart::Offset,
+    pub cache: canvas::Cache,
 }
 
 #[derive(Default, Debug)]
@@ -130,6 +139,7 @@ pub enum Message {
     ImpulseResponsesSaved(Option<PathBuf>),
     SpectralDecayEvent(ui::measurement::Id, data::spectral_decay::Event),
     SpectralDecayComputed(ui::measurement::Id, data::SpectralDecay),
+    Spectrogram(spectrogram::Interaction),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,6 +148,7 @@ pub enum TabId {
     ImpulseResponses,
     FrequencyResponses,
     SpectralDecay,
+    Spectrogram,
 }
 
 impl Main {
@@ -254,6 +265,7 @@ impl Main {
                         (Tab::FrequencyResponses, Task::batch(tasks))
                     }
                     (_, TabId::SpectralDecay) => (Tab::SpectralDecay, Task::none()),
+                    (_, TabId::Spectrogram) => (Tab::Spectrogram, Task::none()),
                 };
 
                 *active_tab = tab;
@@ -327,6 +339,8 @@ impl Main {
                 task.map(Message::Measurements)
             }
             Message::ImpulseResponseSelected(id) => {
+                log::debug!("Impulse response selected: {id}");
+
                 let State::Analysing {
                     ref mut selected_impulse_response,
                     ref mut impulse_responses,
@@ -339,6 +353,9 @@ impl Main {
 
                 *selected_impulse_response = Some(id);
                 charts.impulse_responses.data_cache.clear();
+
+                // FIXME: this is a hack and should not be here
+                charts.spectrogram.cache.clear();
 
                 if impulse_responses.contains_key(&id) {
                     Task::none()
@@ -377,6 +394,8 @@ impl Main {
                 if let Tab::FrequencyResponses { .. } = active_tab {
                     compute_frequency_response(id, impulse_response, window)
                 } else if let Tab::SpectralDecay { .. } = active_tab {
+                    compute_spectral_decay(id, impulse_response)
+                } else if let Tab::Spectrogram { .. } = active_tab {
                     compute_spectral_decay(id, impulse_response)
                 } else {
                     Task::none()
@@ -802,9 +821,33 @@ impl Main {
                     decay.len()
                 );
 
-                if let State::Analysing { spectral_decay, .. } = &mut self.state {
+                if let State::Analysing {
+                    spectral_decay,
+                    charts,
+                    ..
+                } = &mut self.state
+                {
+                    charts.spectral_decay_cache.clear();
                     *spectral_decay = Some(decay)
                 };
+
+                Task::none()
+            }
+            Message::Spectrogram(interaction) => {
+                log::debug!("Spectrogram chart: {interaction:?}.");
+
+                let State::Analysing { charts, .. } = &mut self.state else {
+                    return Task::none();
+                };
+
+                match interaction {
+                    spectrogram::Interaction::ZoomChanged(zoom) => charts.spectrogram.zoom = zoom,
+                    spectrogram::Interaction::OffsetChanged(offset) => {
+                        charts.spectrogram.offset = offset
+                    }
+                }
+
+                charts.spectrogram.cache.clear();
 
                 Task::none()
             }
@@ -897,6 +940,12 @@ impl Main {
                     &impulse_responses,
                     spectral_decay,
                     &charts.spectral_decay_cache,
+                ),
+                Tab::Spectrogram => self.spectrogram_tab(
+                    *selected_impulse_response,
+                    &impulse_responses,
+                    spectral_decay,
+                    &charts.spectrogram,
                 ),
             },
         };
@@ -1352,6 +1401,98 @@ impl Main {
         .into()
     }
 
+    fn spectrogram_tab<'a>(
+        &'a self,
+        selected: Option<ui::measurement::Id>,
+        impulse_responses: &'a HashMap<ui::measurement::Id, ui::impulse_response::State>,
+        spectral_decay: &'a Option<SpectralDecay>,
+        spectrogram: &'a Spectrogram,
+    ) -> Element<'a, Message> {
+        let sidebar = {
+            let header = {
+                column!(text("For Measurements"), rule::horizontal(1))
+                    .width(Length::Fill)
+                    .spacing(5)
+            };
+
+            let entries = self
+                .measurements
+                .iter()
+                .filter(|m| m.is_loaded())
+                .map(|measurement| (measurement, impulse_responses.get(&measurement.id)))
+                .map(|(measurement, ir)| {
+                    let id = measurement.id;
+
+                    let entry = {
+                        let btn = button(
+                            column![
+                                text(&measurement.name)
+                                    .size(16)
+                                    .wrapping(Wrapping::WordOrGlyph),
+                                text("10.12.2019 10:24:12").size(10)
+                            ]
+                            .clip(true)
+                            .padding(3)
+                            .spacing(6),
+                        )
+                        // FIXME: rename message
+                        .on_press_with(move || Message::ImpulseResponseSelected(id))
+                        .width(Length::Fill)
+                        .style(move |theme, status| {
+                            let status = match selected {
+                                Some(selected) if selected == id => button::Status::Hovered,
+                                _ => status,
+                            };
+                            button::secondary(theme, status)
+                        });
+
+                        container(btn).style(container::dark).padding(6).into()
+                    };
+
+                    if let Some(ir) = ir {
+                        match &ir {
+                            ui::impulse_response::State::Computing => {
+                                impulse_response::processing_overlay("Impulse Response", entry)
+                            }
+                            ui::impulse_response::State::Computed(_) => entry,
+                        }
+                    } else {
+                        entry
+                    }
+                });
+
+            container(scrollable(
+                column![header, column(entries).spacing(3)]
+                    .spacing(10)
+                    .padding(10),
+            ))
+            .style(container::rounded_box)
+        };
+
+        let content = if let Some(decay) = spectral_decay {
+            let chart = chart::spectrogram(
+                decay,
+                &spectrogram.cache,
+                spectrogram.zoom,
+                spectrogram.offset,
+            )
+            .map(Message::Spectrogram);
+
+            container(chart)
+        } else {
+            container(text("Please select a frequency respone."))
+        };
+
+        row![
+            container(sidebar)
+                .width(Length::FillPortion(3))
+                .style(container::bordered_box),
+            column![container(content).width(Length::FillPortion(10))].spacing(12)
+        ]
+        .spacing(10)
+        .into()
+    }
+
     pub fn subscription(&self) -> Subscription<Message> {
         let hotkeys_pressed = keyboard::on_key_press(|key, _modifiers| {
             use keyboard::key::{Key, Named};
@@ -1497,6 +1638,7 @@ impl TabId {
             TabId::ImpulseResponses,
             TabId::FrequencyResponses,
             TabId::SpectralDecay,
+            TabId::Spectrogram,
         ]
         .into_iter()
     }
@@ -1509,9 +1651,10 @@ impl TabId {
 
             let is_enabled = match tab {
                 TabId::Measurements => true,
-                TabId::ImpulseResponses | TabId::FrequencyResponses | TabId::SpectralDecay => {
-                    is_analysing
-                }
+                TabId::ImpulseResponses
+                | TabId::FrequencyResponses
+                | TabId::SpectralDecay
+                | TabId::Spectrogram => is_analysing,
             };
 
             let button = button(text(tab.to_string()).size(16))
@@ -1549,6 +1692,7 @@ impl Display for TabId {
             TabId::ImpulseResponses => "Impulse Responses",
             TabId::FrequencyResponses => "Frequency Responses",
             TabId::SpectralDecay => "Spectral Decay",
+            TabId::Spectrogram => "Spectorgram",
         };
 
         write!(f, "{}", label)
@@ -1562,6 +1706,7 @@ impl From<&Tab> for TabId {
             Tab::ImpulseResponses { .. } => TabId::ImpulseResponses,
             Tab::FrequencyResponses => TabId::FrequencyResponses,
             Tab::SpectralDecay => TabId::SpectralDecay,
+            Tab::Spectrogram => TabId::Spectrogram,
         }
     }
 }

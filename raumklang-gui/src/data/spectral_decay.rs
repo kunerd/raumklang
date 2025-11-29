@@ -1,4 +1,5 @@
-use std::fmt;
+use core::slice;
+use std::{collections, fmt};
 
 use iced::task::{sipper, Sipper};
 use raumklang_core::{FrequencyResponse, Window, WindowBuilder};
@@ -19,10 +20,24 @@ impl SpectralDecay {
         self.0.len()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &raumklang_core::FrequencyResponse> {
+    pub fn iter(&self) -> slice::Iter<raumklang_core::FrequencyResponse> {
         self.0.iter()
     }
+
+    pub fn into_iter(self) -> impl Iterator<Item = raumklang_core::FrequencyResponse> {
+        self.0.into_iter()
+    }
 }
+
+// impl IntoIterator for SpectralDecay {
+//     type Item = raumklang_core::FrequencyResponse;
+
+//     type IntoIter = Vec<raumklang_core::FrequencyResponse> as Iterator;
+
+//     fn into_iter(self) -> Self::IntoIter {
+//         self.0.into_iter()
+//     }
+// }
 
 impl fmt::Debug for SpectralDecay {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -37,7 +52,7 @@ pub(crate) fn compute(
         let sample_rate = ir.sample_rate;
         output.send(Event::ComputingStarted).await;
 
-        let shift = (0.020 * sample_rate as f32).floor() as usize;
+        let shift = (0.005 * sample_rate as f32).floor() as usize;
         let left_width = (0.1 * sample_rate as f32).floor() as usize;
         // TODO: check if 500 ms is right
         let right_width = (0.5 * sample_rate as f32).floor() as usize;

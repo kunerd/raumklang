@@ -1,11 +1,13 @@
 mod impulse_response;
 
+pub mod spectrogram;
 pub mod waveform;
 
 use waveform::Waveform;
 
 use crate::{
-    data::{chart, window::Handles, Samples, Window},
+    data::{self, chart, window::Handles, Samples, Window},
+    screen::main::chart::spectrogram::Spectrogram,
     ui,
 };
 
@@ -43,6 +45,34 @@ pub fn waveform<'a>(
         cmp: |a, b| a.total_cmp(b),
         y_to_float: |s| s,
         to_x_scale: move |i| i as f32,
+        // to_x_scale: move |i| match time_unit {
+        //     chart::TimeSeriesUnit::Time => time_scale(i, impulse_response.sample_rate.into()),
+        //     chart::TimeSeriesUnit::Samples => i as f32,
+        // },
+        // to_y_scale: move |s| match amplitude_unit {
+        //     chart::AmplitudeUnit::PercentFullScale => percent_full_scale(s),
+        //     chart::AmplitudeUnit::DezibelFullScale => db_full_scale(s),
+        // },
+        zoom,
+        offset,
+    })
+    .width(Fill)
+    .height(Fill)
+    .into()
+}
+
+pub fn spectrogram<'a>(
+    decay: &'a data::SpectralDecay,
+    cache: &'a canvas::Cache,
+    zoom: Zoom,
+    offset: Offset,
+) -> Element<'a, spectrogram::Interaction, iced::Theme> {
+    canvas::Canvas::new(Spectrogram {
+        datapoints: decay,
+        cache,
+        // cmp: |a, b| a.total_cmp(b),
+        // y_to_float: |s| s,
+        // to_x_scale: move |i| i as f32,
         // to_x_scale: move |i| match time_unit {
         //     chart::TimeSeriesUnit::Time => time_scale(i, impulse_response.sample_rate.into()),
         //     chart::TimeSeriesUnit::Samples => i as f32,
