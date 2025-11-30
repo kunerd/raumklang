@@ -17,7 +17,6 @@ use rand::Rng as _;
 pub struct FrequencyResponse {
     pub color: iced::Color,
     pub is_shown: bool,
-    // pub state: State,
     pub progress: Progress,
     pub data: Option<data::FrequencyResponse>,
     pub smoothed: Option<Box<[f32]>>,
