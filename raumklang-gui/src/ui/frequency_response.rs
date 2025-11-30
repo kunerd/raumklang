@@ -1,5 +1,6 @@
 use std::fmt::{self, Display};
 
+use crate::ui::impulse_response;
 use crate::{data, icon};
 
 use iced::widget::stack;
@@ -16,33 +17,33 @@ use rand::Rng as _;
 pub struct FrequencyResponse {
     pub color: iced::Color,
     pub is_shown: bool,
-    pub state: State,
+    // pub state: State,
+    pub progress: Progress,
+    pub data: Option<data::FrequencyResponse>,
     pub smoothed: Option<Box<[f32]>>,
 }
 
 impl FrequencyResponse {
-    pub fn new(state: State) -> Self {
+    pub fn new() -> Self {
         let color = random_color();
 
         Self {
             color,
             is_shown: true,
-            state,
+            progress: Progress::None,
+            data: None,
             smoothed: None,
         }
     }
 
-    pub fn computed(&self) -> Option<&data::FrequencyResponse> {
-        if let State::Computed(ref frequency_response) = self.state {
-            Some(frequency_response)
-        } else {
-            None
-        }
+    pub fn computed(&mut self, data: data::FrequencyResponse) {
+        self.data = Some(data);
     }
 
     pub fn view<'a, Message>(
         &'a self,
         measurement_name: &'a str,
+        impulse_response_progess: impulse_response::Progress,
         toggle_msg: impl Fn(bool) -> Message + 'a,
     ) -> Element<'a, Message>
     where
@@ -70,41 +71,52 @@ impl FrequencyResponse {
             container(content).style(container::rounded_box)
         };
 
-        match &self.state {
-            State::Computed(_) => item.into(),
-            state => processing_overlay(state.to_string(), item),
+        if self.data.is_some() {
+            item.into()
+        } else {
+            match impulse_response_progess {
+                impulse_response::Progress::None => item.into(),
+                impulse_response::Progress::Computing => {
+                    processing_overlay("Impulse Response", item)
+                }
+                impulse_response::Progress::Finished => {
+                    processing_overlay(self.progress.to_string(), item)
+                }
+            }
         }
     }
 
     pub(crate) fn apply(&mut self, event: data::frequency_response::Event) {
-        dbg!("Frequency response computing started.");
         match event {
             data::frequency_response::Event::ComputingStarted => {
-                self.state = State::ComputingImpulseResponse
+                self.progress = Progress::Computing
             }
         }
+    }
+
+    pub(crate) fn result(&self) -> Option<&data::FrequencyResponse> {
+        self.data.as_ref()
     }
 }
 
 impl Default for FrequencyResponse {
     fn default() -> Self {
-        Self::new(State::ComputingImpulseResponse)
+        Self::new()
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum State {
-    ComputingImpulseResponse,
-    ComputingFrequencyResponse,
-    Computed(data::FrequencyResponse),
+#[derive(Debug, Clone, Copy, Default)]
+pub enum Progress {
+    #[default]
+    None,
+    Computing,
 }
 
-impl Display for State {
+impl Display for Progress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let text = match self {
-            State::ComputingImpulseResponse => "Impulse Response",
-            State::ComputingFrequencyResponse => "Frequency Response",
-            State::Computed(_) => "Computed",
+            Self::None => "Not Started",
+            Self::Computing => "Impulse Response",
         };
 
         write!(f, "{}", text)
