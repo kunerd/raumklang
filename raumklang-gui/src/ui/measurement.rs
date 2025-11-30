@@ -10,7 +10,7 @@ use std::{
 
 use crate::{
     data,
-    ui::{self, frequency_response},
+    ui::{self, impulse_response},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -79,82 +79,26 @@ pub struct Loaded {
     pub analysis: Analysis,
 }
 
-#[derive(Debug, Clone)]
-pub enum Analysis {
-    None,
-    ComputingImpulseResponse,
-    ImpulseResponseComputed {
-        result: ui::ImpulseResponse,
-        frequency_response: ui::FrequencyResponse,
-    },
+#[derive(Debug, Clone, Default)]
+pub struct Analysis {
+    pub impulse_response: impulse_response::State,
+    pub frequency_response: ui::FrequencyResponse,
 }
 
 impl Analysis {
-    pub fn impulse_response(&self) -> Option<&ui::ImpulseResponse> {
-        let Analysis::ImpulseResponseComputed { result, .. } = self else {
-            return None;
-        };
-
-        Some(result)
-    }
-
-    pub(crate) fn set_impulse_response(&mut self, impulse_response: ui::ImpulseResponse) {
-        *self = Analysis::ImpulseResponseComputed {
-            result: impulse_response,
-            frequency_response: ui::FrequencyResponse::default(),
+    pub(crate) fn apply(&mut self, event: data::impulse_response::Event) {
+        match event {
+            data::impulse_response::Event::ComputationStarted => {
+                self.impulse_response = impulse_response::State::Computing
+            }
         }
     }
+}
 
-    pub fn frequency_response(&self) -> Option<&ui::FrequencyResponse> {
-        let Analysis::ImpulseResponseComputed {
-            frequency_response, ..
-        } = self
-        else {
-            return None;
-        };
-
-        Some(frequency_response)
-    }
-
-    pub(crate) fn frequency_response_mut(&mut self) -> Option<&mut ui::FrequencyResponse> {
-        let Analysis::ImpulseResponseComputed {
-            ref mut frequency_response,
-            ..
-        } = self
-        else {
-            return None;
-        };
-
-        Some(frequency_response)
-    }
-
-    pub(crate) fn set_frequency_response(&mut self, data: data::FrequencyResponse) {
-        let Analysis::ImpulseResponseComputed {
-            ref mut frequency_response,
-            ..
-        } = self
-        else {
-            return;
-        };
-
-        frequency_response.state = frequency_response::State::Computed(data);
-    }
-
-    pub(crate) fn reset_frequency_response(&mut self) {
-        let Analysis::ImpulseResponseComputed {
-            ref mut frequency_response,
-            ..
-        } = self
-        else {
-            return;
-        };
-
-        frequency_response.state = frequency_response::State::ComputingFrequencyResponse;
-    }
-
-    pub(crate) fn apply(&mut self, _event: data::impulse_response::Event) {
-        *self = Analysis::ComputingImpulseResponse;
-    }
+pub enum ImpulseResponseProgress {
+    None,
+    Computing,
+    Finished,
 }
 
 impl Loaded {
@@ -168,7 +112,7 @@ impl Loaded {
             name,
             path: None,
             data,
-            analysis: Analysis::None,
+            analysis: Analysis::default(),
         }
     }
 
@@ -182,7 +126,7 @@ impl Loaded {
             name: measurement.name,
             path: Some(measurement.path),
             data: measurement.inner,
-            analysis: Analysis::None,
+            analysis: Analysis::default(),
         }
     }
 }

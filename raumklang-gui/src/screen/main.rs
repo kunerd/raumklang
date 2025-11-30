@@ -14,7 +14,10 @@ use crate::{
         SpectralDecay, Window,
     },
     icon, load_project, log,
-    screen::main::chart::{spectrogram, waveform},
+    screen::main::{
+        chart::{spectrogram, waveform},
+        impulse_response::processing_overlay,
+    },
     ui, PickAndLoadError,
 };
 
@@ -241,14 +244,9 @@ impl Main {
                             .map(|measurement| {
                                 let id = measurement.id;
                                 if let Some(impulse_response) =
-                                    measurement.analysis.impulse_response()
+                                    measurement.analysis.impulse_response.result()
                                 {
-                                    if measurement
-                                        .analysis
-                                        .frequency_response()
-                                        .map(ui::FrequencyResponse::computed)
-                                        .is_some()
-                                    {
+                                    if measurement.analysis.frequency_response.result().is_some() {
                                         return Task::none();
                                     }
 
@@ -281,7 +279,7 @@ impl Main {
                             .and_then(ui::measurement::State::loaded)
                             .and_then(|measurement| {
                                 if let Some(impulse_response) =
-                                    measurement.analysis.impulse_response()
+                                    measurement.analysis.impulse_response.result()
                                 {
                                     Some(compute_spectral_decay(
                                         measurement.id,
@@ -390,12 +388,18 @@ impl Main {
                 // FIXME: this is a hack and should not be here
                 charts.spectrogram.cache.clear();
 
-                if let Some(ui::measurement::Analysis::None) = self
+                if self
                     .measurements
                     .iter()
                     .filter_map(ui::measurement::State::loaded)
                     .find(|m| m.id == id)
-                    .map(|measurement| &measurement.analysis)
+                    .filter(|ir| {
+                        matches!(
+                            ir.analysis.impulse_response,
+                            ui::impulse_response::State::Computed(_)
+                        )
+                    })
+                    .is_none()
                 {
                     self.compute_impulse_response(id)
                 } else {
@@ -424,7 +428,8 @@ impl Main {
                 {
                     measurement
                         .analysis
-                        .set_impulse_response(impulse_response.clone());
+                        .impulse_response
+                        .computed(impulse_response.clone());
                 }
 
                 if selected_impulse_response.is_some_and(|selected| selected == id) {
@@ -498,7 +503,8 @@ impl Main {
 
                 measurement
                     .analysis
-                    .set_frequency_response(frequency_response);
+                    .frequency_response
+                    .computed(frequency_response);
 
                 charts.frequency_responses.cache.clear();
 
@@ -514,7 +520,7 @@ impl Main {
                     .iter_mut()
                     .filter_map(ui::measurement::State::loaded_mut)
                     .find(|m| m.id == id)
-                    .and_then(|m| m.analysis.frequency_response_mut())
+                    .map(|m| &mut m.analysis.frequency_response)
                 else {
                     return Task::none();
                 };
@@ -539,8 +545,10 @@ impl Main {
                         .filter_map(ui::measurement::State::loaded)
                         .flat_map(|m| {
                             m.analysis
-                                .frequency_response()
-                                .and_then(|fr| fr.computed().map(|fr| (m.id, fr.clone())))
+                                .frequency_response
+                                .result()
+                                .cloned()
+                                .map(|fr| (m.id, fr))
                         })
                         .map(|(id, fr)| {
                             Task::perform(
@@ -554,7 +562,7 @@ impl Main {
                     self.measurements
                         .iter_mut()
                         .filter_map(ui::measurement::State::loaded_mut)
-                        .flat_map(|m| m.analysis.frequency_response_mut())
+                        .map(|m| &mut m.analysis.frequency_response)
                         .for_each(|fr| fr.smoothed = None);
 
                     charts.frequency_responses.cache.clear();
@@ -572,7 +580,7 @@ impl Main {
                     .iter_mut()
                     .filter_map(ui::measurement::State::loaded_mut)
                     .find(|m| m.id == id)
-                    .and_then(|m| m.analysis.frequency_response_mut())
+                    .map(|m| &mut m.analysis.frequency_response)
                 else {
                     return Task::none();
                 };
@@ -628,7 +636,7 @@ impl Main {
                     .iter_mut()
                     .filter_map(ui::measurement::State::loaded_mut)
                     .find(|m| m.id == id)
-                    .and_then(|m| m.analysis.frequency_response_mut())
+                    .map(|m| &mut m.analysis.frequency_response)
                 else {
                     return Task::none();
                 };
@@ -667,7 +675,10 @@ impl Main {
                         self.measurements
                             .iter_mut()
                             .filter_map(ui::measurement::State::loaded_mut)
-                            .for_each(|m| m.analysis.reset_frequency_response());
+                            .for_each(|m| {
+                                m.analysis.frequency_response = ui::FrequencyResponse::default()
+                            });
+
                         *window = window_settings.window.clone();
                     }
                 }
@@ -748,10 +759,11 @@ impl Main {
                     .iter()
                     .filter_map(ui::measurement::State::loaded)
                     .find(|m| m.id == id)
-                    .and_then(|measurement| measurement.analysis.impulse_response())
+                    .and_then(|m| m.analysis.impulse_response.result())
+                    .cloned()
                 {
                     Task::perform(
-                        save_impulse_response(impulse_response.clone()),
+                        save_impulse_response(impulse_response),
                         Message::ImpulseResponsesSaved,
                     )
                 } else {
@@ -1189,12 +1201,12 @@ impl Main {
                         .into()
                     };
 
-                    match measurement.analysis {
-                        ui::measurement::Analysis::None => entry,
-                        ui::measurement::Analysis::ComputingImpulseResponse => {
+                    match measurement.analysis.impulse_response.progress() {
+                        ui::impulse_response::Progress::None => entry,
+                        ui::impulse_response::Progress::Computing => {
                             impulse_response::processing_overlay("Impulse Response", entry)
                         }
-                        ui::measurement::Analysis::ImpulseResponseComputed { .. } => entry,
+                        ui::impulse_response::Progress::Finished => entry,
                     }
                 });
 
@@ -1212,7 +1224,7 @@ impl Main {
                 .iter()
                 .filter_map(ui::measurement::State::loaded)
                 .find(|m| Some(m.id) == selected)
-                .and_then(|measurement| measurement.analysis.impulse_response())
+                .and_then(|measurement| measurement.analysis.impulse_response.result())
             {
                 chart
                     .view(impulse_response, window_settings)
@@ -1240,11 +1252,13 @@ impl Main {
             .filter_map(ui::measurement::State::loaded);
 
         let sidebar = {
-            let entries = loaded_measurements.clone().flat_map(|measurement| {
+            let entries = loaded_measurements.clone().map(|measurement| {
                 let name = &measurement.name;
-                measurement.analysis.frequency_response().map(|item| {
-                    item.view(name, Message::FrequencyResponseToggled.with(measurement.id))
-                })
+                measurement.analysis.frequency_response.view(
+                    name,
+                    measurement.analysis.impulse_response.progress(),
+                    Message::FrequencyResponseToggled.with(measurement.id),
+                )
             });
 
             container(column(entries).spacing(10).padding(8)).style(container::rounded_box)
@@ -1259,15 +1273,15 @@ impl Main {
         };
 
         let enabled_frequency_responses =
-            loaded_measurements.flat_map(|m| m.analysis.frequency_response());
+            loaded_measurements.map(|m| &m.analysis.frequency_response);
 
         let content = if enabled_frequency_responses
             .clone()
-            .any(|fr| fr.is_shown && fr.computed().is_some())
+            .any(|fr| fr.is_shown && fr.result().is_some())
         {
             let series_list = enabled_frequency_responses
                 .flat_map(|item| {
-                    let Some(frequency_response) = item.computed() else {
+                    let Some(frequency_response) = item.result() else {
                         return [None, None];
                     };
 
@@ -1380,14 +1394,12 @@ impl Main {
                         container(btn).style(container::dark).padding(6).into()
                     };
 
-                    match measurement.analysis {
-                        ui::measurement::Analysis::None => {
-                            impulse_response::processing_overlay("Not computed, yet!", entry)
+                    match measurement.analysis.impulse_response.progress() {
+                        ui::impulse_response::Progress::None => entry,
+                        ui::impulse_response::Progress::Computing => {
+                            processing_overlay("Impulse Response", entry)
                         }
-                        ui::measurement::Analysis::ComputingImpulseResponse => {
-                            impulse_response::processing_overlay("Impulse Response", entry)
-                        }
-                        ui::measurement::Analysis::ImpulseResponseComputed { .. } => entry,
+                        ui::impulse_response::Progress::Finished => entry,
                     }
                 });
 
@@ -1491,14 +1503,15 @@ impl Main {
                         container(btn).style(container::dark).padding(6).into()
                     };
 
-                    match measurement.analysis {
-                        ui::measurement::Analysis::None => {
+                    match measurement.analysis.impulse_response.progress() {
+                        ui::impulse_response::Progress::None => {
                             impulse_response::processing_overlay("Not computed, yet!", entry)
                         }
-                        ui::measurement::Analysis::ComputingImpulseResponse => {
+                        ui::impulse_response::Progress::Computing => {
                             impulse_response::processing_overlay("Impulse Response", entry)
                         }
-                        ui::measurement::Analysis::ImpulseResponseComputed { .. } => entry,
+                        ui::impulse_response::Progress::Finished => entry,
+                        // TODO: add additional states
                     }
                 });
 
