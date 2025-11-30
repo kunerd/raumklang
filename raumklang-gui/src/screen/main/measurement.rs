@@ -1,9 +1,6 @@
 use crate::{
     data, icon,
-    ui::{
-        measurement::{self, loopback},
-        Loopback,
-    },
+    ui::{measurement, Loopback},
 };
 
 use chrono::{DateTime, Utc};

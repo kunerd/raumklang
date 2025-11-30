@@ -26,14 +26,14 @@ use iced::{
         button, canvas, center, column, container, opaque, pick_list, right, row, rule, scrollable,
         space, stack, text, text::Wrapping, Button,
     },
-    Alignment, Color, Element, Length, Subscription, Task, Theme,
+    Alignment, Color, Element, Function, Length, Subscription, Task, Theme,
 };
 
 use prism::{axis, line_series, Axis, Chart, Labels};
 
 use raumklang_core::dbfs;
 
-use std::{collections::HashMap, fmt::Display, path::PathBuf, sync::Arc};
+use std::{fmt::Display, path::PathBuf, sync::Arc};
 
 pub struct Main {
     state: State,
@@ -56,7 +56,6 @@ enum State {
         active_tab: Tab,
         window: Window<Samples>,
         selected_impulse_response: Option<ui::measurement::Id>,
-        frequency_responses: HashMap<ui::measurement::Id, frequency_response::Item>,
         spectral_decay: Option<SpectralDecay>,
         charts: Charts,
     },
@@ -203,7 +202,6 @@ impl Main {
             Message::TabSelected(id) => {
                 let State::Analysing {
                     ref mut active_tab,
-                    ref frequency_responses,
                     ref window,
                     ..
                 } = self.state
@@ -245,9 +243,10 @@ impl Main {
                                 if let Some(impulse_response) =
                                     measurement.analysis.impulse_response()
                                 {
-                                    if frequency_responses
-                                        .get(&id)
-                                        .and_then(|fr| fr.computed())
+                                    if measurement
+                                        .analysis
+                                        .frequency_response()
+                                        .map(ui::FrequencyResponse::computed)
                                         .is_some()
                                     {
                                         return Task::none();
@@ -362,7 +361,6 @@ impl Main {
                         ))
                         .into(),
                         selected_impulse_response: None,
-                        frequency_responses: HashMap::new(),
                         charts: Charts::default(),
                         spectral_decay: None,
                     },
@@ -483,79 +481,81 @@ impl Main {
                 Task::none()
             }
             Message::FrequencyResponseComputed(id, frequency_response) => {
-                let State::Analysing {
-                    ref mut frequency_responses,
-                    ref mut charts,
-                    ..
-                } = self.state
+                log::debug!("Frequency resposne computed: {id}");
+
+                let State::Analysing { ref mut charts, .. } = self.state else {
+                    return Task::none();
+                };
+
+                let Some(measurement) = self
+                    .measurements
+                    .iter_mut()
+                    .filter_map(ui::measurement::State::loaded_mut)
+                    .find(|m| m.id == id)
                 else {
                     return Task::none();
                 };
 
-                frequency_responses.entry(id).and_modify(|entry| {
-                    entry.state = frequency_response::State::Computed(frequency_response);
+                measurement
+                    .analysis
+                    .set_frequency_response(frequency_response);
 
-                    charts.frequency_responses.cache.clear();
-                });
+                charts.frequency_responses.cache.clear();
 
                 Task::none()
             }
             Message::FrequencyResponseToggled(id, state) => {
-                let State::Analysing {
-                    ref mut frequency_responses,
-                    ref mut charts,
-                    ..
-                } = self.state
+                let State::Analysing { ref mut charts, .. } = self.state else {
+                    return Task::none();
+                };
+
+                let Some(frequency_response) = self
+                    .measurements
+                    .iter_mut()
+                    .filter_map(ui::measurement::State::loaded_mut)
+                    .find(|m| m.id == id)
+                    .and_then(|m| m.analysis.frequency_response_mut())
                 else {
                     return Task::none();
                 };
 
-                frequency_responses
-                    .entry(id)
-                    .and_modify(|entry| entry.is_shown = state);
+                frequency_response.is_shown = state;
 
                 charts.frequency_responses.cache.clear();
 
                 Task::none()
             }
             Message::SmoothingChanged(smoothing) => {
-                let State::Analysing {
-                    ref mut frequency_responses,
-                    ref mut charts,
-                    ..
-                } = self.state
-                else {
+                let State::Analysing { ref mut charts, .. } = self.state else {
                     return Task::none();
                 };
 
                 self.smoothing = smoothing;
 
                 if let Some(fraction) = smoothing.fraction() {
-                    let tasks = frequency_responses
+                    let tasks = self
+                        .measurements
                         .iter()
-                        .flat_map(|(id, fr)| {
-                            if let frequency_response::State::Computed(fr) = &fr.state {
-                                Some((*id, fr.clone()))
-                            } else {
-                                None
-                            }
+                        .filter_map(ui::measurement::State::loaded)
+                        .flat_map(|m| {
+                            m.analysis
+                                .frequency_response()
+                                .and_then(|fr| fr.computed().map(|fr| (m.id, fr.clone())))
                         })
-                        .map(|(id, frequency_response)| {
+                        .map(|(id, fr)| {
                             Task::perform(
-                                frequency_response::smooth_frequency_response(
-                                    id,
-                                    frequency_response,
-                                    fraction,
-                                ),
+                                frequency_response::smooth_frequency_response(id, fr, fraction),
                                 Message::FrequencyResponseSmoothed,
                             )
                         });
 
                     Task::batch(tasks)
                 } else {
-                    frequency_responses
-                        .values_mut()
-                        .for_each(|entry| entry.smoothed = None);
+                    self.measurements
+                        .iter_mut()
+                        .filter_map(ui::measurement::State::loaded_mut)
+                        .flat_map(|m| m.analysis.frequency_response_mut())
+                        .for_each(|fr| fr.smoothed = None);
 
                     charts.frequency_responses.cache.clear();
 
@@ -563,19 +563,21 @@ impl Main {
                 }
             }
             Message::FrequencyResponseSmoothed((id, smoothed_data)) => {
-                let State::Analysing {
-                    ref mut frequency_responses,
-                    ref mut charts,
-                    ..
-                } = self.state
+                let State::Analysing { ref mut charts, .. } = self.state else {
+                    return Task::none();
+                };
+
+                let Some(frequency_response) = self
+                    .measurements
+                    .iter_mut()
+                    .filter_map(ui::measurement::State::loaded_mut)
+                    .find(|m| m.id == id)
+                    .and_then(|m| m.analysis.frequency_response_mut())
                 else {
                     return Task::none();
                 };
 
-                frequency_responses
-                    .entry(id)
-                    .and_modify(|entry| entry.smoothed = Some(smoothed_data));
-
+                frequency_response.smoothed = Some(smoothed_data);
                 charts.frequency_responses.cache.clear();
 
                 Task::none()
@@ -599,11 +601,7 @@ impl Main {
                 Task::none()
             }
             Message::ImpulseResponseEvent(id, event) => {
-                let State::Analysing {
-                    ref mut frequency_responses,
-                    ..
-                } = self.state
-                else {
+                let State::Analysing { .. } = self.state else {
                     return Task::none();
                 };
 
@@ -618,33 +616,24 @@ impl Main {
 
                 measurement.analysis.apply(event);
 
-                match event {
-                    data::impulse_response::Event::ComputationStarted => {
-                        frequency_responses.insert(id, frequency_response::Item::default());
-                    }
-                }
-
                 Task::none()
             }
             Message::FrequencyResponseEvent(id, event) => {
-                let State::Analysing {
-                    ref mut frequency_responses,
-                    ..
-                } = self.state
+                let State::Analysing { .. } = self.state else {
+                    return Task::none();
+                };
+
+                let Some(frequency_response) = self
+                    .measurements
+                    .iter_mut()
+                    .filter_map(ui::measurement::State::loaded_mut)
+                    .find(|m| m.id == id)
+                    .and_then(|m| m.analysis.frequency_response_mut())
                 else {
                     return Task::none();
                 };
 
-                match event {
-                    data::frequency_response::Event::ComputingStarted => {
-                        frequency_responses
-                            .entry(id)
-                            .and_modify(|fr| {
-                                fr.state = frequency_response::State::ComputingFrequencyResponse
-                            })
-                            .or_default();
-                    }
-                }
+                frequency_response.apply(event);
 
                 Task::none()
             }
@@ -655,7 +644,6 @@ impl Main {
 
                 let State::Analysing {
                     ref mut active_tab,
-                    ref mut frequency_responses,
                     ref mut window,
                     ..
                 } = self.state
@@ -663,21 +651,26 @@ impl Main {
                     return Task::none();
                 };
 
-                if let Tab::ImpulseResponses {
+                let Tab::ImpulseResponses {
                     ref mut window_settings,
                     ..
                 } = active_tab
-                {
-                    match action {
-                        ModalAction::Discard => {
-                            *window_settings = WindowSettings::new(window.clone());
-                        }
-                        ModalAction::Apply => {
-                            frequency_responses.clear();
-                            *window = window_settings.window.clone();
-                        }
-                    }
+                else {
+                    return Task::none();
                 };
+
+                match action {
+                    ModalAction::Discard => {
+                        *window_settings = WindowSettings::new(window.clone());
+                    }
+                    ModalAction::Apply => {
+                        self.measurements
+                            .iter_mut()
+                            .filter_map(ui::measurement::State::loaded_mut)
+                            .for_each(|m| m.analysis.reset_frequency_response());
+                        *window = window_settings.window.clone();
+                    }
+                }
 
                 Task::done(Message::TabSelected(goto_tab))
             }
@@ -970,7 +963,6 @@ impl Main {
             State::Analysing {
                 active_tab,
                 selected_impulse_response,
-                frequency_responses,
                 spectral_decay,
                 charts,
                 ..
@@ -990,7 +982,7 @@ impl Main {
                     window_settings,
                 ),
                 Tab::FrequencyResponses => {
-                    self.frequency_responses_tab(frequency_responses, &charts.frequency_responses)
+                    self.frequency_responses_tab(&charts.frequency_responses)
                 }
                 Tab::SpectralDecay => self.spectral_decay_tab(
                     *selected_impulse_response,
@@ -1240,22 +1232,20 @@ impl Main {
 
     fn frequency_responses_tab<'a>(
         &'a self,
-        frequency_responses: &'a HashMap<ui::measurement::Id, frequency_response::Item>,
         chart_settings: &'a frequency_response::ChartData,
     ) -> Element<'a, Message> {
+        let loaded_measurements = self
+            .measurements
+            .iter()
+            .filter_map(ui::measurement::State::loaded);
+
         let sidebar = {
-            let entries = self
-                .measurements
-                .iter()
-                .filter_map(ui::measurement::State::loaded)
-                .flat_map(|measurement| {
-                    let name = &measurement.name;
-                    frequency_responses.get(&measurement.id).map(|item| {
-                        item.view(name, |state| {
-                            Message::FrequencyResponseToggled(measurement.id, state)
-                        })
-                    })
-                });
+            let entries = loaded_measurements.clone().flat_map(|measurement| {
+                let name = &measurement.name;
+                measurement.analysis.frequency_response().map(|item| {
+                    item.view(name, Message::FrequencyResponseToggled.with(measurement.id))
+                })
+            });
 
             container(column(entries).spacing(10).padding(8)).style(container::rounded_box)
         };
@@ -1268,16 +1258,19 @@ impl Main {
             )]
         };
 
-        let content = if frequency_responses.values().any(|item| item.is_shown) {
-            let series_list = frequency_responses
-                .values()
-                .filter(|item| item.is_shown)
-                .filter(|item| matches!(item.state, frequency_response::State::Computed(_)))
+        let enabled_frequency_responses =
+            loaded_measurements.flat_map(|m| m.analysis.frequency_response());
+
+        let content = if enabled_frequency_responses
+            .clone()
+            .any(|fr| fr.is_shown && fr.computed().is_some())
+        {
+            let series_list = enabled_frequency_responses
                 .flat_map(|item| {
-                    let frequency_response::State::Computed(frequency_response) = &item.state
-                    else {
+                    let Some(frequency_response) = item.computed() else {
                         return [None, None];
                     };
+
                     let sample_rate = frequency_response.sample_rate;
                     let len = frequency_response.data.len() * 2 + 1;
                     let resolution = sample_rate as f32 / len as f32;
@@ -1309,7 +1302,7 @@ impl Main {
                     Axis::new(axis::Alignment::Horizontal)
                         .scale(axis::Scale::Log)
                         .x_tick_marks(
-                            [0, 20, 50, 100, 1000, 10_000, 20_000]
+                            [20, 50, 100, 1000, 10_000, 20_000]
                                 .into_iter()
                                 .map(|v| v as f32)
                                 .collect(),

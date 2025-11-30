@@ -1,25 +1,5 @@
 use crate::data::{self, SampleRate};
 
-#[derive(Debug, Default, Clone)]
-pub enum State {
-    #[default]
-    Computing,
-    Computed(ImpulseResponse),
-}
-
-impl State {
-    pub(crate) fn set_computed(&mut self, impulse_response: ImpulseResponse) {
-        *self = State::Computed(impulse_response)
-    }
-
-    pub fn computed(&self) -> Option<&ImpulseResponse> {
-        match self {
-            State::Computing => None,
-            State::Computed(ref impulse_response) => Some(impulse_response),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ImpulseResponse {
     pub sample_rate: SampleRate,

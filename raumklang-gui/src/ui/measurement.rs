@@ -10,7 +10,7 @@ use std::{
 
 use crate::{
     data,
-    ui::{self, impulse_response},
+    ui::{self, frequency_response},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -85,7 +85,7 @@ pub enum Analysis {
     ComputingImpulseResponse,
     ImpulseResponseComputed {
         result: ui::ImpulseResponse,
-        frequency_response: Option<()>,
+        frequency_response: ui::FrequencyResponse,
     },
 }
 
@@ -101,11 +101,58 @@ impl Analysis {
     pub(crate) fn set_impulse_response(&mut self, impulse_response: ui::ImpulseResponse) {
         *self = Analysis::ImpulseResponseComputed {
             result: impulse_response,
-            frequency_response: None,
+            frequency_response: ui::FrequencyResponse::default(),
         }
     }
 
-    pub(crate) fn apply(&mut self, event: data::impulse_response::Event) {
+    pub fn frequency_response(&self) -> Option<&ui::FrequencyResponse> {
+        let Analysis::ImpulseResponseComputed {
+            frequency_response, ..
+        } = self
+        else {
+            return None;
+        };
+
+        Some(frequency_response)
+    }
+
+    pub(crate) fn frequency_response_mut(&mut self) -> Option<&mut ui::FrequencyResponse> {
+        let Analysis::ImpulseResponseComputed {
+            ref mut frequency_response,
+            ..
+        } = self
+        else {
+            return None;
+        };
+
+        Some(frequency_response)
+    }
+
+    pub(crate) fn set_frequency_response(&mut self, data: data::FrequencyResponse) {
+        let Analysis::ImpulseResponseComputed {
+            ref mut frequency_response,
+            ..
+        } = self
+        else {
+            return;
+        };
+
+        frequency_response.state = frequency_response::State::Computed(data);
+    }
+
+    pub(crate) fn reset_frequency_response(&mut self) {
+        let Analysis::ImpulseResponseComputed {
+            ref mut frequency_response,
+            ..
+        } = self
+        else {
+            return;
+        };
+
+        frequency_response.state = frequency_response::State::ComputingFrequencyResponse;
+    }
+
+    pub(crate) fn apply(&mut self, _event: data::impulse_response::Event) {
         *self = Analysis::ComputingImpulseResponse;
     }
 }
