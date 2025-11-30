@@ -10,7 +10,7 @@ use std::{
 
 use crate::{
     data,
-    ui::{self, impulse_response},
+    ui::{self, impulse_response, spectral_decay, FrequencyResponse},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -82,7 +82,8 @@ pub struct Loaded {
 #[derive(Debug, Clone, Default)]
 pub struct Analysis {
     pub impulse_response: impulse_response::State,
-    pub frequency_response: ui::FrequencyResponse,
+    pub frequency_response: FrequencyResponse,
+    pub spectral_decay: spectral_decay::State,
 }
 
 impl Analysis {
@@ -91,6 +92,20 @@ impl Analysis {
             data::impulse_response::Event::ComputationStarted => {
                 self.impulse_response = impulse_response::State::Computing
             }
+        }
+    }
+
+    pub(crate) fn spectral_decay_progress(&self) -> spectral_decay::Progress {
+        match self.impulse_response {
+            impulse_response::State::None => spectral_decay::Progress::None,
+            impulse_response::State::Computing => {
+                spectral_decay::Progress::ComputingImpulseResponse
+            }
+            impulse_response::State::Computed(_) => match self.spectral_decay {
+                spectral_decay::State::None => spectral_decay::Progress::ComputingImpulseResponse,
+                spectral_decay::State::Computing => spectral_decay::Progress::Computing,
+                spectral_decay::State::Computed(_) => spectral_decay::Progress::Finished,
+            },
         }
     }
 }

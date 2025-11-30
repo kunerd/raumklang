@@ -1,6 +1,7 @@
 pub mod frequency_response;
 pub mod impulse_response;
 pub mod measurement;
+pub mod spectral_decay;
 
 pub use frequency_response::FrequencyResponse;
 pub use impulse_response::ImpulseResponse;

@@ -59,7 +59,6 @@ enum State {
         active_tab: Tab,
         window: Window<Samples>,
         selected_impulse_response: Option<ui::measurement::Id>,
-        spectral_decay: Option<SpectralDecay>,
         charts: Charts,
     },
 }
@@ -360,7 +359,6 @@ impl Main {
                         .into(),
                         selected_impulse_response: None,
                         charts: Charts::default(),
-                        spectral_decay: None,
                     },
                     (old_state, true) => old_state,
                     (State::Analysing { .. }, false) => {
@@ -867,14 +865,22 @@ impl Main {
                 Task::none()
             }
             Message::SpectralDecayEvent(id, event) => {
-                match event {
-                    data::spectral_decay::Event::ComputingStarted => {
-                        log::debug!(
-                            "Spectral decay computation for measurement (ID: {}) started",
-                            id
-                        );
-                    }
-                }
+                log::debug!(
+                    "Spectral decay event: {event:?} for measurement (ID: {})",
+                    id
+                );
+
+                let Some(spectral_decay) = self
+                    .measurements
+                    .iter_mut()
+                    .filter_map(ui::measurement::State::loaded_mut)
+                    .find(|m| m.id == id)
+                    .map(|m| &mut m.analysis.spectral_decay)
+                else {
+                    return Task::none();
+                };
+
+                spectral_decay.apply(event);
 
                 Task::none()
             }
@@ -885,14 +891,20 @@ impl Main {
                     decay.len()
                 );
 
-                if let State::Analysing {
-                    spectral_decay,
-                    charts,
-                    ..
-                } = &mut self.state
-                {
+                let Some(spectral_decay) = self
+                    .measurements
+                    .iter_mut()
+                    .filter_map(ui::measurement::State::loaded_mut)
+                    .find(|m| m.id == id)
+                    .map(|m| &mut m.analysis.spectral_decay)
+                else {
+                    return Task::none();
+                };
+
+                spectral_decay.computed(decay);
+
+                if let State::Analysing { charts, .. } = &mut self.state {
                     charts.spectral_decay_cache.clear();
-                    *spectral_decay = Some(decay)
                 };
 
                 Task::none()
@@ -975,7 +987,6 @@ impl Main {
             State::Analysing {
                 active_tab,
                 selected_impulse_response,
-                spectral_decay,
                 charts,
                 ..
             } => match active_tab {
@@ -996,16 +1007,11 @@ impl Main {
                 Tab::FrequencyResponses => {
                     self.frequency_responses_tab(&charts.frequency_responses)
                 }
-                Tab::SpectralDecay => self.spectral_decay_tab(
-                    *selected_impulse_response,
-                    spectral_decay,
-                    &charts.spectral_decay_cache,
-                ),
-                Tab::Spectrogram => self.spectrogram_tab(
-                    *selected_impulse_response,
-                    spectral_decay,
-                    &charts.spectrogram,
-                ),
+                Tab::SpectralDecay => self
+                    .spectral_decay_tab(*selected_impulse_response, &charts.spectral_decay_cache),
+                Tab::Spectrogram => {
+                    self.spectrogram_tab(*selected_impulse_response, &charts.spectrogram)
+                }
             },
         };
 
@@ -1351,7 +1357,6 @@ impl Main {
     pub fn spectral_decay_tab<'a>(
         &'a self,
         selected: Option<ui::measurement::Id>,
-        spectral_decay: &'a Option<SpectralDecay>,
         cache: &'a canvas::Cache,
     ) -> Element<'a, Message> {
         let sidebar = {
@@ -1394,12 +1399,15 @@ impl Main {
                         container(btn).style(container::dark).padding(6).into()
                     };
 
-                    match measurement.analysis.impulse_response.progress() {
-                        ui::impulse_response::Progress::None => entry,
-                        ui::impulse_response::Progress::Computing => {
+                    match measurement.analysis.spectral_decay_progress() {
+                        ui::spectral_decay::Progress::None => entry,
+                        ui::spectral_decay::Progress::ComputingImpulseResponse => {
                             processing_overlay("Impulse Response", entry)
                         }
-                        ui::impulse_response::Progress::Finished => entry,
+                        ui::spectral_decay::Progress::Computing => {
+                            processing_overlay("Spectral Decay", entry)
+                        }
+                        ui::spectral_decay::Progress::Finished => entry,
                     }
                 });
 
@@ -1411,7 +1419,13 @@ impl Main {
             .style(container::rounded_box)
         };
 
-        let content = if let Some(decay) = spectral_decay {
+        let content = if let Some(decay) = self
+            .measurements
+            .iter()
+            .filter_map(ui::measurement::State::loaded)
+            .find(|m| Some(m.id) == selected)
+            .and_then(|m| m.analysis.spectral_decay.result())
+        {
             let gradient = colorous::MAGMA;
 
             let series_list = decay.iter().enumerate().map(|(fr_index, fr)| {
@@ -1460,7 +1474,6 @@ impl Main {
     fn spectrogram_tab<'a>(
         &'a self,
         selected: Option<ui::measurement::Id>,
-        spectral_decay: &'a Option<SpectralDecay>,
         spectrogram: &'a Spectrogram,
     ) -> Element<'a, Message> {
         let sidebar = {
@@ -1503,15 +1516,15 @@ impl Main {
                         container(btn).style(container::dark).padding(6).into()
                     };
 
-                    match measurement.analysis.impulse_response.progress() {
-                        ui::impulse_response::Progress::None => {
-                            impulse_response::processing_overlay("Not computed, yet!", entry)
+                    match measurement.analysis.spectral_decay_progress() {
+                        ui::spectral_decay::Progress::None => entry,
+                        ui::spectral_decay::Progress::ComputingImpulseResponse => {
+                            processing_overlay("Impulse Response", entry)
                         }
-                        ui::impulse_response::Progress::Computing => {
-                            impulse_response::processing_overlay("Impulse Response", entry)
+                        ui::spectral_decay::Progress::Computing => {
+                            processing_overlay("Spectral Decay", entry)
                         }
-                        ui::impulse_response::Progress::Finished => entry,
-                        // TODO: add additional states
+                        ui::spectral_decay::Progress::Finished => entry,
                     }
                 });
 
@@ -1523,7 +1536,13 @@ impl Main {
             .style(container::rounded_box)
         };
 
-        let content = if let Some(decay) = spectral_decay {
+        let content = if let Some(decay) = self
+            .measurements
+            .iter()
+            .filter_map(ui::measurement::State::loaded)
+            .find(|m| Some(m.id) == selected)
+            .and_then(|m| m.analysis.spectral_decay.result())
+        {
             let chart = chart::spectrogram(
                 decay,
                 &spectrogram.cache,
