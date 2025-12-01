@@ -10,7 +10,7 @@ use std::{
 
 use crate::{
     data,
-    ui::{impulse_response, spectral_decay, FrequencyResponse},
+    ui::{impulse_response, spectral_decay, spectrogram, FrequencyResponse},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -84,6 +84,7 @@ pub struct Analysis {
     pub impulse_response: impulse_response::State,
     pub frequency_response: FrequencyResponse,
     pub spectral_decay: spectral_decay::State,
+    pub spectrogram: spectrogram::State,
 }
 
 impl Analysis {
@@ -105,6 +106,18 @@ impl Analysis {
                 spectral_decay::State::None => spectral_decay::Progress::None,
                 spectral_decay::State::Computing => spectral_decay::Progress::Computing,
                 spectral_decay::State::Computed(_) => spectral_decay::Progress::Finished,
+            },
+        }
+    }
+
+    pub(crate) fn spectrogram_progress(&self) -> spectrogram::Progress {
+        match self.impulse_response {
+            impulse_response::State::None => spectrogram::Progress::None,
+            impulse_response::State::Computing => spectrogram::Progress::ComputingImpulseResponse,
+            impulse_response::State::Computed(_) => match self.spectrogram {
+                spectrogram::State::None => spectrogram::Progress::None,
+                spectrogram::State::Computing => spectrogram::Progress::Computing,
+                spectrogram::State::Computed(_) => spectrogram::Progress::Finished,
             },
         }
     }

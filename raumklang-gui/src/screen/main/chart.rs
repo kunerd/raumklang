@@ -62,13 +62,13 @@ pub fn waveform<'a>(
 }
 
 pub fn spectrogram<'a>(
-    decay: &'a data::SpectralDecay,
+    data: &'a data::Spectrogram,
     cache: &'a canvas::Cache,
     zoom: Zoom,
     offset: Offset,
 ) -> Element<'a, spectrogram::Interaction, iced::Theme> {
     canvas::Canvas::new(Spectrogram {
-        datapoints: decay,
+        datapoints: data,
         cache,
         // cmp: |a, b| a.total_cmp(b),
         // y_to_float: |s| s,
