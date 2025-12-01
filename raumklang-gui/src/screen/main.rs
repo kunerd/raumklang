@@ -10,8 +10,7 @@ use recording::Recording;
 
 use crate::{
     data::{
-        self, project, spectral_decay, window, Project, RecentProjects, SampleRate, Samples,
-        SpectralDecay, Window,
+        self, project, spectral_decay, window, Project, RecentProjects, SampleRate, Samples, Window,
     },
     icon, load_project, log,
     screen::main::{
@@ -374,6 +373,7 @@ impl Main {
                 let State::Analysing {
                     ref mut selected_impulse_response,
                     ref mut charts,
+                    ref active_tab,
                     ..
                 } = self.state
                 else {
@@ -383,25 +383,31 @@ impl Main {
                 *selected_impulse_response = Some(id);
 
                 charts.impulse_responses.data_cache.clear();
-                // FIXME: this is a hack and should not be here
-                charts.spectrogram.cache.clear();
 
-                if self
+                let impulse_response = self
                     .measurements
                     .iter()
                     .filter_map(ui::measurement::State::loaded)
                     .find(|m| m.id == id)
-                    .filter(|ir| {
-                        matches!(
-                            ir.analysis.impulse_response,
-                            ui::impulse_response::State::Computed(_)
-                        )
-                    })
-                    .is_none()
-                {
-                    self.compute_impulse_response(id)
-                } else {
-                    Task::none()
+                    .and_then(|ir| ir.analysis.impulse_response.result());
+
+                match active_tab {
+                    Tab::Measurements { .. } => Task::none(),
+                    Tab::ImpulseResponses { .. } => {
+                        if impulse_response.is_none() {
+                            self.compute_impulse_response(id)
+                        } else {
+                            Task::none()
+                        }
+                    }
+                    Tab::FrequencyResponses => Task::none(),
+                    Tab::SpectralDecay | Tab::Spectrogram => {
+                        if let Some(impulse_response) = impulse_response {
+                            compute_spectral_decay(id, impulse_response.clone())
+                        } else {
+                            self.compute_impulse_response(id)
+                        }
+                    }
                 }
             }
             Message::ImpulseResponseComputed(id, impulse_response) => {
@@ -905,6 +911,7 @@ impl Main {
 
                 if let State::Analysing { charts, .. } = &mut self.state {
                     charts.spectral_decay_cache.clear();
+                    charts.spectrogram.cache.clear();
                 };
 
                 Task::none()

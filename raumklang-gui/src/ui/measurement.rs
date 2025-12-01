@@ -10,7 +10,7 @@ use std::{
 
 use crate::{
     data,
-    ui::{self, impulse_response, spectral_decay, FrequencyResponse},
+    ui::{impulse_response, spectral_decay, FrequencyResponse},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -102,18 +102,12 @@ impl Analysis {
                 spectral_decay::Progress::ComputingImpulseResponse
             }
             impulse_response::State::Computed(_) => match self.spectral_decay {
-                spectral_decay::State::None => spectral_decay::Progress::ComputingImpulseResponse,
+                spectral_decay::State::None => spectral_decay::Progress::None,
                 spectral_decay::State::Computing => spectral_decay::Progress::Computing,
                 spectral_decay::State::Computed(_) => spectral_decay::Progress::Finished,
             },
         }
     }
-}
-
-pub enum ImpulseResponseProgress {
-    None,
-    Computing,
-    Finished,
 }
 
 impl Loaded {
