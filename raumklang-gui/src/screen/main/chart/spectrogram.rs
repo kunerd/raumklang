@@ -1,4 +1,4 @@
-use crate::data::SpectralDecay;
+use crate::data;
 
 use super::{HorizontalAxis, Offset, VerticalAxis, Zoom};
 
@@ -15,7 +15,7 @@ pub enum Interaction {
 }
 
 pub struct Spectrogram<'a> {
-    pub datapoints: &'a SpectralDecay,
+    pub datapoints: &'a data::Spectrogram,
     pub cache: &'a canvas::Cache,
     // pub cmp: fn(&Y, &Y) -> Ordering,
     // pub y_to_float: fn(Y) -> f32,
