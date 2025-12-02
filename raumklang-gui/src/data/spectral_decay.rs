@@ -1,7 +1,6 @@
 use core::slice;
 use std::{fmt, sync::Arc, time::Duration};
 
-use iced::task::{sipper, Sipper};
 use raumklang_core::{Window, WindowBuilder};
 use rustfft::{num_complex::Complex, FftPlanner};
 

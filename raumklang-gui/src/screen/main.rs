@@ -148,7 +148,6 @@ pub enum Message {
     SpectralDecayComputed(ui::measurement::Id, data::SpectralDecay),
 
     Spectrogram(chart::spectrogram::Interaction),
-    SpectrogramEvent(ui::measurement::Id, spectrogram::Event),
     SpectrogramComputed(ui::measurement::Id, data::Spectrogram),
 
     Modal(ModalAction),
@@ -351,13 +350,7 @@ impl Main {
                         compute_spectral_decay(self.loopback.as_ref().unwrap(), measurement)
                     }
                     Tab::Spectrogram => {
-                        if let Some(impulse_response) =
-                            measurement.analysis.impulse_response.result()
-                        {
-                            compute_spectrogram(id, impulse_response.clone())
-                        } else {
-                            self.compute_impulse_response(id)
-                        }
+                        compute_spectrogram(self.loopback.as_ref().unwrap(), measurement)
                     }
                 }
             }
@@ -403,7 +396,7 @@ impl Main {
                 } else if let Tab::SpectralDecay { .. } = active_tab {
                     compute_spectral_decay(self.loopback.as_ref().unwrap(), measurement)
                 } else if let Tab::Spectrogram { .. } = active_tab {
-                    compute_spectrogram(id, impulse_response)
+                    compute_spectrogram(self.loopback.as_ref().unwrap(), measurement)
                 } else {
                     Task::none()
                 }
@@ -828,27 +821,6 @@ impl Main {
                 }
 
                 charts.spectrogram.cache.clear();
-
-                Task::none()
-            }
-
-            Message::SpectrogramEvent(id, event) => {
-                log::debug!(
-                    "Spectrogram decay event: {event:?} for measurement (ID: {})",
-                    id
-                );
-
-                let Some(spectrogram) = self
-                    .measurements
-                    .iter_mut()
-                    .filter_map(ui::measurement::State::loaded_mut)
-                    .find(|m| m.id == id)
-                    .map(|m| &mut m.analysis.spectrogram)
-                else {
-                    return Task::none();
-                };
-
-                spectrogram.apply(event);
 
                 Task::none()
             }
@@ -1672,14 +1644,22 @@ fn compute_spectral_decay(
 }
 
 fn compute_spectrogram(
-    id: ui::measurement::Id,
-    impulse_response: ui::ImpulseResponse,
+    loopback: &ui::Loopback,
+    measurement: &mut ui::measurement::Loaded,
 ) -> Task<Message> {
-    Task::sip(
-        data::spectrogram::compute(impulse_response.origin, spectrogram::Preferences::default()),
-        Message::SpectrogramEvent.with(id),
-        Message::SpectrogramComputed.with(id),
-    )
+    if let Some(impulse_response) = measurement.analysis.impulse_response.result() {
+        measurement.analysis.spectrogram = ui::spectrogram::State::Computing;
+
+        Task::perform(
+            data::spectrogram::compute(
+                impulse_response.origin.clone(),
+                spectrogram::Preferences::default(),
+            ),
+            Message::SpectrogramComputed.with(measurement.id),
+        )
+    } else {
+        compute_impulse_response(loopback, measurement)
+    }
 }
 
 impl TabId {
