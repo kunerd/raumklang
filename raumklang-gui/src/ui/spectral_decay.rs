@@ -21,12 +21,6 @@ impl State {
         *self = State::Computed(decay)
     }
 
-    pub(crate) fn apply(&mut self, event: data::spectral_decay::Event) {
-        match event {
-            data::spectral_decay::Event::ComputingStarted => *self = State::Computing,
-        }
-    }
-
     pub(crate) fn result(&self) -> Option<&data::SpectralDecay> {
         let State::Computed(spectral_decay) = self else {
             return None;
