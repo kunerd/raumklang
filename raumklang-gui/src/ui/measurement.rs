@@ -65,9 +65,9 @@ impl State {
 
 #[derive(Debug, Clone)]
 pub struct NotLoaded {
-    id: Id,
-    name: String,
-    path: Option<PathBuf>,
+    pub id: Id,
+    pub name: String,
+    pub path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -88,14 +88,6 @@ pub struct Analysis {
 }
 
 impl Analysis {
-    pub(crate) fn apply(&mut self, event: data::impulse_response::Event) {
-        match event {
-            data::impulse_response::Event::ComputationStarted => {
-                self.impulse_response = impulse_response::State::Computing
-            }
-        }
-    }
-
     pub(crate) fn spectral_decay_progress(&self) -> spectral_decay::Progress {
         match self.impulse_response {
             impulse_response::State::None => spectral_decay::Progress::None,

@@ -141,7 +141,6 @@ pub enum Message {
     ShiftKeyPressed,
     ShiftKeyReleased,
 
-    ImpulseResponseEvent(ui::measurement::Id, data::impulse_response::Event),
     ImpulseResponseComputed(ui::measurement::Id, data::ImpulseResponse),
 
     Recording(recording::Message),
@@ -210,8 +209,7 @@ impl Main {
                     return Task::none();
                 };
 
-                let cur_tab = std::mem::take(active_tab);
-                let (tab, tasks) = match (cur_tab, id) {
+                let (tab, tasks) = match (std::mem::take(active_tab), id) {
                     (Tab::Measurements { .. }, TabId::Measurements)
                     | (Tab::ImpulseResponses { .. }, TabId::ImpulseResponses)
                     | (Tab::FrequencyResponses, TabId::FrequencyResponses) => return Task::none(),
@@ -237,66 +235,18 @@ impl Main {
                     (_, TabId::FrequencyResponses) => {
                         let tasks = self
                             .measurements
-                            .iter()
-                            .flat_map(ui::measurement::State::loaded)
+                            .iter_mut()
+                            .flat_map(ui::measurement::State::loaded_mut)
                             .map(|measurement| {
-                                let id = measurement.id;
-                                if let Some(impulse_response) =
-                                    measurement.analysis.impulse_response.result()
-                                {
-                                    if measurement.analysis.frequency_response.result().is_some() {
-                                        return Task::none();
-                                    }
-
-                                    compute_frequency_response(id, impulse_response.clone(), window)
-                                } else {
-                                    let loopback = self
-                                        .loopback
-                                        .as_ref()
-                                        .and_then(ui::Loopback::loaded)
-                                        .unwrap();
-
-                                    compute_impulse_response(
-                                        id,
-                                        loopback.clone(),
-                                        measurement.data.clone(),
-                                    )
-                                }
+                                compute_frequency_response(
+                                    self.loopback.as_ref().unwrap(),
+                                    measurement,
+                                    window,
+                                )
                             });
-
                         (Tab::FrequencyResponses, Task::batch(tasks))
                     }
-                    (_, TabId::SpectralDecay) => {
-                        let task = self
-                            .selected
-                            .and_then(|s| match s {
-                                measurement::Selected::Loopback => None,
-                                measurement::Selected::Measurement(i) => Some(i),
-                            })
-                            .and_then(|i| self.measurements.get(i))
-                            .and_then(ui::measurement::State::loaded)
-                            .and_then(|measurement| {
-                                if let Some(impulse_response) =
-                                    measurement.analysis.impulse_response.result()
-                                {
-                                    Some(compute_spectral_decay(
-                                        measurement.id,
-                                        impulse_response.clone(),
-                                    ))
-                                } else if let Some(loopback) =
-                                    self.loopback.as_ref().and_then(ui::Loopback::loaded)
-                                {
-                                    Some(compute_impulse_response(
-                                        measurement.id,
-                                        loopback.clone(),
-                                        measurement.data.clone(),
-                                    ))
-                                } else {
-                                    None
-                                }
-                            });
-                        (Tab::SpectralDecay, task.unwrap_or(Task::none()))
-                    }
+                    (_, TabId::SpectralDecay) => (Tab::SpectralDecay, Task::none()),
                     (_, TabId::Spectrogram) => (Tab::Spectrogram, Task::none()),
                 };
 
@@ -431,17 +381,19 @@ impl Main {
 
                 let impulse_response = ui::ImpulseResponse::from_data(impulse_response);
 
-                if let Some(measurement) = self
+                let Some(measurement) = self
                     .measurements
                     .iter_mut()
                     .filter_map(ui::measurement::State::loaded_mut)
                     .find(|m| m.id == id)
-                {
-                    measurement
-                        .analysis
-                        .impulse_response
-                        .computed(impulse_response.clone());
-                }
+                else {
+                    return Task::none();
+                };
+
+                measurement
+                    .analysis
+                    .impulse_response
+                    .computed(impulse_response.clone());
 
                 if selected_impulse_response.is_some_and(|selected| selected == id) {
                     charts
@@ -453,7 +405,7 @@ impl Main {
                 }
 
                 if let Tab::FrequencyResponses { .. } = active_tab {
-                    compute_frequency_response(id, impulse_response, window)
+                    compute_frequency_response(self.loopback.as_ref().unwrap(), measurement, window)
                 } else if let Tab::SpectralDecay { .. } = active_tab {
                     compute_spectral_decay(id, impulse_response)
                 } else if let Tab::Spectrogram { .. } = active_tab {
@@ -616,24 +568,6 @@ impl Main {
                 };
 
                 charts.impulse_responses.shift_key_released();
-
-                Task::none()
-            }
-            Message::ImpulseResponseEvent(id, event) => {
-                let State::Analysing { .. } = self.state else {
-                    return Task::none();
-                };
-
-                let Some(measurement) = self
-                    .measurements
-                    .iter_mut()
-                    .filter_map(ui::measurement::State::loaded_mut)
-                    .find(|m| m.id == id)
-                else {
-                    return Task::none();
-                };
-
-                measurement.analysis.apply(event);
 
                 Task::none()
             }
@@ -1671,23 +1605,34 @@ impl Main {
                 .any(ui::measurement::State::is_loaded)
     }
 
-    fn compute_impulse_response(&self, id: ui::measurement::Id) -> Task<Message> {
-        let loopback = self
-            .loopback
-            .as_ref()
-            .and_then(ui::Loopback::loaded)
-            .unwrap()
-            .clone();
+    fn compute_impulse_response(&mut self, id: ui::measurement::Id) -> Task<Message> {
+        let loopback = self.loopback.as_ref().unwrap();
 
         let measurement = self
             .measurements
-            .iter()
-            .filter_map(ui::measurement::State::loaded)
+            .iter_mut()
+            .filter_map(ui::measurement::State::loaded_mut)
             .find(|m| m.id == id)
             .unwrap();
 
-        compute_impulse_response(id, loopback, measurement.data.clone())
+        compute_impulse_response(loopback, measurement)
     }
+}
+
+fn compute_impulse_response(
+    loopback: &ui::Loopback,
+    measurement: &mut ui::measurement::Loaded,
+) -> Task<Message> {
+    let Some(loopback) = loopback.loaded() else {
+        return Task::none();
+    };
+
+    measurement.analysis.impulse_response = ui::impulse_response::State::Computing;
+
+    Task::perform(
+        data::impulse_response::compute(loopback.clone(), measurement.data.clone()),
+        Message::ImpulseResponseComputed.with(measurement.id),
+    )
 }
 
 impl Default for Main {
@@ -1732,28 +1677,22 @@ async fn save_impulse_response(impulse_response: ui::ImpulseResponse) -> Option<
     Some(path.to_path_buf())
 }
 
-fn compute_impulse_response(
-    id: ui::measurement::Id,
-    loopback: raumklang_core::Loopback,
-    measurement: raumklang_core::Measurement,
-) -> Task<Message> {
-    Task::sip(
-        data::impulse_response::compute(loopback, measurement),
-        move |event| Message::ImpulseResponseEvent(id, event),
-        move |ir| Message::ImpulseResponseComputed(id, ir),
-    )
-}
-
 fn compute_frequency_response(
-    id: ui::measurement::Id,
-    impulse_response: ui::ImpulseResponse,
+    loopback: &ui::Loopback,
+    measurement: &mut ui::measurement::Loaded,
     window: &Window<Samples>,
 ) -> Task<Message> {
-    Task::sip(
-        data::frequency_response::compute(impulse_response.origin, window.clone()),
-        move |event| Message::FrequencyResponseEvent(id, event),
-        move |frequency_response| Message::FrequencyResponseComputed(id, frequency_response),
-    )
+    let id = measurement.id;
+
+    if let Some(impulse_response) = measurement.analysis.impulse_response.result() {
+        Task::sip(
+            data::frequency_response::compute(impulse_response.origin.clone(), window.clone()),
+            move |event| Message::FrequencyResponseEvent(id, event),
+            move |frequency_response| Message::FrequencyResponseComputed(id, frequency_response),
+        )
+    } else {
+        compute_impulse_response(loopback, measurement)
+    }
 }
 
 fn compute_spectral_decay(
