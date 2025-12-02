@@ -85,14 +85,6 @@ impl FrequencyResponse {
         }
     }
 
-    pub(crate) fn apply(&mut self, event: data::frequency_response::Event) {
-        match event {
-            data::frequency_response::Event::ComputingStarted => {
-                self.progress = Progress::Computing
-            }
-        }
-    }
-
     pub(crate) fn result(&self) -> Option<&data::FrequencyResponse> {
         self.data.as_ref()
     }
