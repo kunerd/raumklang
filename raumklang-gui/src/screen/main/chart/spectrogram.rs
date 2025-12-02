@@ -106,13 +106,19 @@ impl<'a> canvas::Program<Interaction, iced::Theme> for Spectrogram<'a> {
             };
 
             let max_bin = first.data.iter().count();
-            let first = first.data.iter().take(max_bin);
+            let sample_rate = first.sample_rate;
+            let len = max_bin * 2 + 1;
+            let resolution = sample_rate as f32 / len as f32;
+            dbg!(resolution);
 
             let x_min = f32::from(self.offset) * f32::from(self.zoom);
             let x_max = (max_bin as f32 + f32::from(self.offset)) * f32::from(self.zoom);
 
             let min_index = x_min.floor() as usize;
             let max_index = x_max.floor() as usize;
+
+            let x_min = x_min * resolution;
+            let x_max = x_max * resolution;
 
             dbg!(min_index);
 
@@ -140,6 +146,8 @@ impl<'a> canvas::Program<Interaction, iced::Theme> for Spectrogram<'a> {
 
             let gradient = colorous::TURBO;
 
+            let log_scale = |p: f32| (p.log10() / x_axis.length.log10()) * x_axis.length;
+
             for (si, fr) in frequency_responses.enumerate() {
                 for (i, s) in fr
                     .data
@@ -158,13 +166,11 @@ impl<'a> canvas::Program<Interaction, iced::Theme> for Spectrogram<'a> {
                         - si as f32 * pixels_per_unit_y
                         - pixels_per_unit_y;
 
-                    let log_scale = |p: f32| (p.log10() / x_axis.length.log10()) * x_axis.length;
-
                     let width = log_scale((i + 1) as f32)
                         - log_scale(i as f32).clamp(0.0, f32::MAX) * pixels_per_unit_x;
 
                     let pixel = Rectangle {
-                        x: log_scale(i as f32) * pixels_per_unit_x,
+                        x: log_scale(i as f32 * resolution) * pixels_per_unit_x,
                         y,
                         width,
                         height: pixels_per_unit_y,
