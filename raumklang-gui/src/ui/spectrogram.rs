@@ -9,12 +9,6 @@ pub enum State {
 }
 
 impl State {
-    pub(crate) fn apply(&mut self, event: data::spectrogram::Event) {
-        match event {
-            data::spectrogram::Event::ComputingStarted => *self = State::Computing,
-        }
-    }
-
     pub(crate) fn computed(&mut self, data: data::Spectrogram) {
         *self = State::Computed(data)
     }

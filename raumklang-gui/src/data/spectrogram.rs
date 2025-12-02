@@ -1,19 +1,12 @@
 use core::slice;
 use std::{fmt, sync::Arc, time::Duration};
 
-use iced::task::{sipper, Sipper};
-use raumklang_core::{dbfs, Window, WindowBuilder};
 use rustfft::{
     num_complex::{Complex, Complex32},
     FftPlanner,
 };
 
 use crate::data::{SampleRate, Samples};
-
-#[derive(Debug, Clone)]
-pub enum Event {
-    ComputingStarted,
-}
 
 pub struct Preferences {
     // shift: Duration,
@@ -36,90 +29,85 @@ impl Spectrogram {
     }
 }
 
-pub(crate) fn compute(
+pub(crate) async fn compute(
     ir: raumklang_core::ImpulseResponse,
     preferences: Preferences,
-) -> impl Sipper<Spectrogram, Event> {
-    sipper(move |mut output| async move {
-        let sample_rate = SampleRate::from(ir.sample_rate);
+) -> Spectrogram {
+    let sample_rate = SampleRate::from(ir.sample_rate);
 
-        output.send(Event::ComputingStarted).await;
+    let window_size: usize = Samples::from_duration(preferences.window_width, sample_rate).into();
 
-        let window_size: usize =
-            Samples::from_duration(preferences.window_width, sample_rate).into();
+    // Gaussian window
+    let half_window_size = (window_size / 2) as f32;
+    let sig = 0.3;
+    let window: Vec<_> = (0..window_size)
+        .into_iter()
+        .map(|n| (n as f32 - half_window_size) / ((sig * window_size as f32) / 2.0))
+        .map(|w| f32::powi(w, 2))
+        .map(|s| f32::exp(-0.5 * s))
+        .collect();
 
-        // Gaussian window
-        let half_window_size = (window_size / 2) as f32;
-        let sig = 0.3;
-        let window: Vec<_> = (0..window_size)
-            .into_iter()
-            .map(|n| (n as f32 - half_window_size) / ((sig * window_size as f32) / 2.0))
-            .map(|w| f32::powi(w, 2))
-            .map(|s| f32::exp(-0.5 * s))
-            .collect();
+    let span_before_peak = Samples::from_duration(preferences.span_before_peak, sample_rate);
+    let span_after_peak = Samples::from_duration(preferences.span_after_peak, sample_rate);
 
-        let span_before_peak = Samples::from_duration(preferences.span_before_peak, sample_rate);
-        let span_after_peak = Samples::from_duration(preferences.span_after_peak, sample_rate);
+    // ir.data.rotate_right(window_size);
 
-        // ir.data.rotate_right(window_size);
+    // let ir: Vec<_> = ir.data.into_iter().collect();
+    // zero padding
+    dbg!(span_before_peak);
+    dbg!(span_after_peak);
+    let ir: Vec<_> = (0..window_size)
+        .into_iter()
+        .map(|_| Complex32::from(0.0))
+        .chain(
+            ir.data
+                .into_iter()
+                .take(window_size + usize::from(span_after_peak)),
+        )
+        .collect();
 
-        // let ir: Vec<_> = ir.data.into_iter().collect();
-        // zero padding
-        dbg!(span_before_peak);
-        dbg!(span_after_peak);
-        let ir: Vec<_> = (0..window_size)
-            .into_iter()
-            .map(|_| Complex32::from(0.0))
-            .chain(
-                ir.data
-                    .into_iter()
-                    .take(window_size + usize::from(span_after_peak)),
-            )
-            .collect();
+    let slices = 200;
+    let analysed_with = span_before_peak + span_after_peak;
+    let shift = usize::from(analysed_with) / (slices - 1);
+    dbg!(shift);
 
-        let slices = 200;
-        let analysed_with = span_before_peak + span_after_peak;
-        let shift = usize::from(analysed_with) / (slices - 1);
-        dbg!(shift);
+    let mut start = 0;
+    tokio::task::spawn_blocking(move || {
+        let mut frequency_responses = Vec::with_capacity(slices);
 
-        let mut start = 0;
-        tokio::task::spawn_blocking(move || {
-            let mut frequency_responses = Vec::with_capacity(slices);
+        let mut planner = FftPlanner::<f32>::new();
+        let fft = planner.plan_fft_forward(window_size);
 
-            let mut planner = FftPlanner::<f32>::new();
-            let fft = planner.plan_fft_forward(window_size);
+        while start < analysed_with.into() {
+            let ir_slice = &ir[start..start + window_size];
+            let mut windowed_impulse_response: Vec<_> = ir_slice
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(i, s)| s * window[i])
+                .collect();
 
-            while start < analysed_with.into() {
-                let ir_slice = &ir[start..start + window_size];
-                let mut windowed_impulse_response: Vec<_> = ir_slice
-                    .iter()
-                    .copied()
-                    .enumerate()
-                    .map(|(i, s)| s * window[i])
-                    .collect();
+            fft.process(&mut windowed_impulse_response);
 
-                fft.process(&mut windowed_impulse_response);
+            let data_len = windowed_impulse_response.len() / 2 - 1;
+            let data: Vec<_> = windowed_impulse_response
+                .into_iter()
+                .take(data_len)
+                .map(Complex::norm)
+                .collect();
 
-                let data_len = windowed_impulse_response.len() / 2 - 1;
-                let data: Vec<_> = windowed_impulse_response
-                    .into_iter()
-                    .take(data_len)
-                    .map(Complex::norm)
-                    .collect();
+            frequency_responses.push(super::FrequencyResponse {
+                sample_rate: sample_rate.into(),
+                data: Arc::new(data),
+            });
 
-                frequency_responses.push(super::FrequencyResponse {
-                    sample_rate: sample_rate.into(),
-                    data: Arc::new(data),
-                });
+            start += shift;
+        }
 
-                start += shift;
-            }
-
-            Spectrogram(frequency_responses)
-        })
-        .await
-        .unwrap()
+        Spectrogram(frequency_responses)
     })
+    .await
+    .unwrap()
 }
 
 impl fmt::Debug for Spectrogram {
