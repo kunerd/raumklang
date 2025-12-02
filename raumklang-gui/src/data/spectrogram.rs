@@ -38,11 +38,11 @@ pub(crate) async fn compute(
     let window_size: usize = Samples::from_duration(preferences.window_width, sample_rate).into();
 
     // Gaussian window
-    let half_window_size = (window_size / 2) as f32;
+    let half_window_size = window_size / 2;
     let sig = 0.3;
     let window: Vec<_> = (0..window_size)
         .into_iter()
-        .map(|n| (n as f32 - half_window_size) / ((sig * window_size as f32) / 2.0))
+        .map(|n| (n as f32 - half_window_size as f32) / ((sig * window_size as f32) / 2.0))
         .map(|w| f32::powi(w, 2))
         .map(|s| f32::exp(-0.5 * s))
         .collect();
@@ -56,7 +56,7 @@ pub(crate) async fn compute(
     // zero padding
     dbg!(span_before_peak);
     dbg!(span_after_peak);
-    let ir: Vec<_> = (0..window_size)
+    let ir: Vec<_> = (0..half_window_size + usize::from(span_before_peak))
         .into_iter()
         .map(|_| Complex32::from(0.0))
         .chain(
@@ -78,7 +78,7 @@ pub(crate) async fn compute(
         let mut planner = FftPlanner::<f32>::new();
         let fft = planner.plan_fft_forward(window_size);
 
-        while start < analysed_with.into() {
+        while start + half_window_size < analysed_with.into() {
             let ir_slice = &ir[start..start + window_size];
             let mut windowed_impulse_response: Vec<_> = ir_slice
                 .iter()
