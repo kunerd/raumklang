@@ -114,9 +114,11 @@ impl<'a> canvas::Program<Interaction, iced::Theme> for Spectrogram<'a> {
             let min_index = x_min.floor() as usize;
             let max_index = x_max.floor() as usize;
 
+            dbg!(min_index);
+
             let x_range = x_min..=x_max;
 
-            let labels = [20, 50, 100, 1000, 10_000, 20_000]
+            let labels = [0, 20, 50, 100, 1000, 10_000, 20_000]
                 .into_iter()
                 .map(|l| l as f32);
 
@@ -137,15 +139,6 @@ impl<'a> canvas::Program<Interaction, iced::Theme> for Spectrogram<'a> {
             let pixels_per_unit_y = plane.height / y_axis.length;
 
             let gradient = colorous::TURBO;
-            // let gradient = colorous::VIRIDIS;
-            // let gradient = colorous::MAGMA;
-            //
-            let max = frequency_responses
-                .clone()
-                .into_iter()
-                .flat_map(|fr| fr.data.iter().copied().max_by(f32::total_cmp))
-                .max_by(f32::total_cmp)
-                .unwrap();
 
             for (si, fr) in frequency_responses.enumerate() {
                 for (i, s) in fr
@@ -158,7 +151,6 @@ impl<'a> canvas::Program<Interaction, iced::Theme> for Spectrogram<'a> {
                     .map(|s| 1.0 - s.clamp(-50.0, 0.0) / -40.0)
                     .enumerate()
                 {
-                    // let color = gradient.eval_continuous(s.into());
                     let color = gradient.eval_continuous(s.into());
 
                     let y = plane.height
@@ -168,10 +160,13 @@ impl<'a> canvas::Program<Interaction, iced::Theme> for Spectrogram<'a> {
 
                     let log_scale = |p: f32| (p.log10() / x_axis.length.log10()) * x_axis.length;
 
+                    let width = log_scale((i + 1) as f32)
+                        - log_scale(i as f32).clamp(0.0, f32::MAX) * pixels_per_unit_x;
+
                     let pixel = Rectangle {
                         x: log_scale(i as f32) * pixels_per_unit_x,
                         y,
-                        width: log_scale(i as f32) * pixels_per_unit_x,
+                        width,
                         height: pixels_per_unit_y,
                     };
 
