@@ -7,6 +7,7 @@ use iced::{
     widget::canvas::{self},
     Event, Point, Rectangle, Renderer, Size, Vector,
 };
+use raumklang_core::dbfs;
 
 #[derive(Debug, Clone)]
 pub enum Interaction {
@@ -132,6 +133,16 @@ impl<'a> canvas::Program<Interaction, iced::Theme> for Spectrogram<'a> {
             let pixels_per_unit_y = plane.height / y_axis.length;
 
             let gradient = colorous::TURBO;
+            // let gradient = colorous::VIRIDIS;
+            // let gradient = colorous::MAGMA;
+            //
+            let max = frequency_responses
+                .clone()
+                .into_iter()
+                .flat_map(|fr| fr.data.iter().copied().max_by(f32::total_cmp))
+                .max_by(f32::total_cmp)
+                .unwrap();
+
             for (si, fr) in frequency_responses.enumerate() {
                 for (i, s) in fr
                     .data
@@ -139,8 +150,11 @@ impl<'a> canvas::Program<Interaction, iced::Theme> for Spectrogram<'a> {
                     .skip(min_index)
                     .take(max_index)
                     .copied()
+                    .map(dbfs)
+                    .map(|s| 1.0 - s.clamp(-50.0, 0.0) / -40.0)
                     .enumerate()
                 {
+                    // let color = gradient.eval_continuous(s.into());
                     let color = gradient.eval_continuous(s.into());
 
                     let y = plane.height
