@@ -131,7 +131,6 @@ pub enum Message {
     FrequencyResponseToggled(ui::measurement::Id, bool),
     SmoothingChanged(frequency_response::Smoothing),
     FrequencyResponseSmoothed((ui::measurement::Id, Box<[f32]>)),
-    FrequencyResponseEvent(ui::measurement::Id, data::frequency_response::Event),
     FrequencyResponseComputed(ui::measurement::Id, data::FrequencyResponse),
 
     ImpulseResponses(impulse_response::Message),
@@ -568,25 +567,6 @@ impl Main {
                 };
 
                 charts.impulse_responses.shift_key_released();
-
-                Task::none()
-            }
-            Message::FrequencyResponseEvent(id, event) => {
-                let State::Analysing { .. } = self.state else {
-                    return Task::none();
-                };
-
-                let Some(frequency_response) = self
-                    .measurements
-                    .iter_mut()
-                    .filter_map(ui::measurement::State::loaded_mut)
-                    .find(|m| m.id == id)
-                    .map(|m| &mut m.analysis.frequency_response)
-                else {
-                    return Task::none();
-                };
-
-                frequency_response.apply(event);
 
                 Task::none()
             }
@@ -1685,10 +1665,12 @@ fn compute_frequency_response(
     let id = measurement.id;
 
     if let Some(impulse_response) = measurement.analysis.impulse_response.result() {
-        Task::sip(
+        measurement.analysis.frequency_response.progress =
+            ui::frequency_response::Progress::Computing;
+
+        Task::perform(
             data::frequency_response::compute(impulse_response.origin.clone(), window.clone()),
-            move |event| Message::FrequencyResponseEvent(id, event),
-            move |frequency_response| Message::FrequencyResponseComputed(id, frequency_response),
+            Message::FrequencyResponseComputed.with(id),
         )
     } else {
         compute_impulse_response(loopback, measurement)
