@@ -731,9 +731,49 @@ struct HorizontalAxis<'a> {
     length: f32,
     height: f32,
     labels: Vec<Label<'a>>,
+    scale: Scale,
+    range: RangeInclusive<f32>,
+}
+
+#[derive(Default, Clone, Copy)]
+pub enum Scale {
+    #[default]
+    Linear,
+    Log,
 }
 
 impl<'a> HorizontalAxis<'a> {
+    pub fn with_labels<F: Fn(f32) -> f32, I: IntoIterator<Item = f32>>(
+        range: RangeInclusive<f32>,
+        to_scale: F,
+        labels: I,
+    ) -> Self {
+        let length = range.end() - range.start();
+
+        let labels: Vec<_> = labels
+            .into_iter()
+            .map(|t| {
+                let l = (to_scale)(t);
+                Label::new(t, format!("{:.0}", l), 12.0)
+            })
+            .collect();
+
+        let min_label_height = labels
+            .iter()
+            .map(|l| l.min_height())
+            .min_by(f32::total_cmp)
+            .unwrap();
+
+        Self {
+            min: *range.start(),
+            length,
+            height: min_label_height,
+            labels,
+            scale: Scale::default(),
+            range,
+        }
+    }
+
     pub fn new<F: Fn(f32) -> f32>(
         range: RangeInclusive<f32>,
         to_scale: F,
@@ -746,29 +786,39 @@ impl<'a> HorizontalAxis<'a> {
         let offset = -min % tick_distance;
         let labels = (0..=tick_amount)
             .into_iter()
-            .map(|t| offset + min + t as f32 * tick_distance)
-            .map(|t| {
-                let l = (to_scale)(t);
-                Label::new(t, format!("{:.0}", l), 12.0)
-            });
+            .map(|t| offset + min + t as f32 * tick_distance);
+        // .map(|t| {
+        //     let l = (to_scale)(t);
+        //     Label::new(t, format!("{:.0}", l), 12.0)
+        // });
 
-        let min_label_height = labels.clone().next().map(|l| l.min_height()).unwrap();
+        // let min_label_height = labels.clone().next().map(|l| l.min_height()).unwrap();
 
-        Self {
-            min: *range.start(),
-            length,
-            height: min_label_height,
-            labels: labels.collect(),
-        }
+        Self::with_labels(range, to_scale, labels)
+    }
+
+    pub fn scale(mut self, scale: Scale) -> Self {
+        self.scale = scale;
+        self
     }
 
     pub fn draw(&self, frame: &mut Frame, target_length: f32) {
-        // let tick_distance = target_length / self.tick_amount as f32;
         let pixels_per_unit = target_length / self.length;
 
         for label in self.labels.iter() {
-            // let x = i as f32 * tick_distance;
-            let x = (label.value - self.min) * pixels_per_unit;
+            let value = label.value - self.min;
+
+            if !self.range.contains(&value) {
+                continue;
+            }
+
+            let value = if let Scale::Log = self.scale {
+                self.log_scale(value)
+            } else {
+                value
+            };
+
+            let x = value * pixels_per_unit;
             let y = frame.height() - self.height;
 
             let position = Point::new(x, y);
@@ -783,6 +833,14 @@ impl<'a> HorizontalAxis<'a> {
                 font: Font::MONOSPACE,
                 ..canvas::Text::default()
             });
+        }
+    }
+
+    fn log_scale(&self, value: f32) -> f32 {
+        if value == 0.0 {
+            0.0
+        } else {
+            (value.log10() / self.length.log10()) * self.length
         }
     }
 }

@@ -1,4 +1,4 @@
-use crate::data;
+use crate::{data, screen::main::chart::Scale};
 
 use super::{HorizontalAxis, Offset, VerticalAxis, Zoom};
 
@@ -109,14 +109,18 @@ impl<'a> canvas::Program<Interaction, iced::Theme> for Spectrogram<'a> {
             let first = first.data.iter().take(max_bin);
 
             let x_min = f32::from(self.offset) * f32::from(self.zoom);
-            let x_max =
-                (first.clone().count() as f32 + f32::from(self.offset)) * f32::from(self.zoom);
+            let x_max = (max_bin as f32 + f32::from(self.offset)) * f32::from(self.zoom);
 
-            let min_index = self.offset.0.clamp(0, isize::MAX) as usize;
-            let max_index = min_index + first.clone().count().saturating_add_signed(self.offset.0);
+            let min_index = x_min.floor() as usize;
+            let max_index = x_max.floor() as usize;
 
             let x_range = x_min..=x_max;
-            let x_axis = HorizontalAxis::new(x_range, &|s| s, 10);
+
+            let labels = [20, 50, 100, 1000, 10_000, 20_000]
+                .into_iter()
+                .map(|l| l as f32);
+
+            let x_axis = HorizontalAxis::with_labels(x_range, &|s| s, labels).scale(Scale::Log);
 
             let y_min = 0.0;
             let y_max = self.datapoints.iter().count() as f32;

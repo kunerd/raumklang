@@ -1373,7 +1373,7 @@ impl Main {
                                 .collect(),
                         ),
                 )
-                .x_range(20.0..=2000.0)
+                // .x_range(20.0..=2000.0)
                 .y_labels(Labels::default().format(&|v| format!("{v:.0}")))
                 .extend_series(series_list)
                 .cache(&cache);
@@ -1458,7 +1458,7 @@ impl Main {
             .style(container::rounded_box)
         };
 
-        let content = if let Some(decay) = self
+        let content = if let Some(data) = self
             .measurements
             .iter()
             .filter_map(ui::measurement::State::loaded)
@@ -1466,7 +1466,7 @@ impl Main {
             .and_then(|m| m.analysis.spectrogram.result())
         {
             let chart = chart::spectrogram(
-                decay,
+                data,
                 &spectrogram.cache,
                 spectrogram.zoom,
                 spectrogram.offset,
