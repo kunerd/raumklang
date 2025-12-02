@@ -7,6 +7,8 @@ mod recent_projects;
 pub mod recording;
 mod sample_rate;
 mod samples;
+pub mod spectral_decay;
+pub mod spectrogram;
 pub mod window;
 
 pub use frequency_response::FrequencyResponse;
@@ -16,6 +18,8 @@ pub use project::Project;
 pub use recent_projects::RecentProjects;
 pub use sample_rate::SampleRate;
 pub use samples::Samples;
+pub use spectral_decay::SpectralDecay;
+pub use spectrogram::Spectrogram;
 pub use window::Window;
 
 use ndarray::{concatenate, Array, Array1, ArrayView, Axis};

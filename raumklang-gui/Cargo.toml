@@ -35,6 +35,7 @@ ndarray-stats = "0.6.0"
 chrono = "0.4.42"
 
 generic_overlay = { package = "widgets", git = "https://github.com/A-Disruption/widgets.git", version = "0.1.0" }
+colorous = "1.0.16"
 
 [dependencies.iced]
 version = "0.14.0-dev"
