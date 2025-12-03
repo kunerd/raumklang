@@ -1,5 +1,3 @@
-mod impulse_response;
-
 pub mod spectrogram;
 pub mod waveform;
 
