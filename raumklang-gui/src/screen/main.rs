@@ -206,7 +206,7 @@ impl Main {
                     return Task::none();
                 };
 
-                let (tab, tasks) = match (std::mem::take(active_tab), id) {
+                let (tab, tasks) = match (&active_tab, id) {
                     (Tab::Measurements { .. }, TabId::Measurements)
                     | (Tab::ImpulseResponses { .. }, TabId::ImpulseResponses)
                     | (Tab::FrequencyResponses, TabId::FrequencyResponses) => return Task::none(),
