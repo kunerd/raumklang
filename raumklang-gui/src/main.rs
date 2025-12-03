@@ -1,5 +1,6 @@
 mod audio;
 mod data;
+#[rustfmt::skip]
 mod icon;
 mod log;
 mod screen;
