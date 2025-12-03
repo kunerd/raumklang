@@ -1,5 +1,3 @@
-mod impulse_response;
-
 pub mod waveform;
 
 use waveform::Waveform;
