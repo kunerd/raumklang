@@ -787,12 +787,6 @@ impl<'a> HorizontalAxis<'a> {
         let labels = (0..=tick_amount)
             .into_iter()
             .map(|t| offset + min + t as f32 * tick_distance);
-        // .map(|t| {
-        //     let l = (to_scale)(t);
-        //     Label::new(t, format!("{:.0}", l), 12.0)
-        // });
-
-        // let min_label_height = labels.clone().next().map(|l| l.min_height()).unwrap();
 
         Self::with_labels(range, to_scale, labels)
     }
@@ -808,9 +802,9 @@ impl<'a> HorizontalAxis<'a> {
         for label in self.labels.iter() {
             let value = label.value - self.min;
 
-            if !self.range.contains(&value) {
-                continue;
-            }
+            // if !self.range.contains(&value) {
+            //     continue;
+            // }
 
             let value = if let Scale::Log = self.scale {
                 self.log_scale(value)
