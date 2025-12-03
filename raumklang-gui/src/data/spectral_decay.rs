@@ -2,7 +2,10 @@ use core::slice;
 use std::{fmt, sync::Arc, time::Duration};
 
 use raumklang_core::{Window, WindowBuilder};
-use rustfft::{num_complex::Complex, FftPlanner};
+use rustfft::{
+    num_complex::{Complex, Complex32},
+    FftPlanner,
+};
 
 use crate::data::{smooth_fractional_octave, SampleRate, Samples};
 
@@ -27,7 +30,7 @@ impl SpectralDecay {
 }
 
 pub(crate) async fn compute(
-    mut ir: raumklang_core::ImpulseResponse,
+    ir: raumklang_core::ImpulseResponse,
     preferences: Preferences,
 ) -> SpectralDecay {
     let sample_rate = SampleRate::from(ir.sample_rate);
@@ -35,6 +38,7 @@ pub(crate) async fn compute(
     let shift: usize = Samples::from_duration(preferences.shift, sample_rate).into();
     let left_width = Samples::from_duration(preferences.left_window_width, sample_rate);
     let right_width = Samples::from_duration(preferences.right_window_width, sample_rate);
+    let analysis_width = Samples::from_duration(Duration::from_millis(300), sample_rate);
 
     let window = WindowBuilder::new(
         Window::Hann,
@@ -44,19 +48,30 @@ pub(crate) async fn compute(
     );
     let window = window.build();
 
-    ir.data.rotate_right(left_width.into());
+    let ir: Vec<_> = (0..usize::from(left_width))
+        .into_iter()
+        .map(|_| Complex32::from(0.0))
+        .chain(
+            ir.data
+                .into_iter()
+                .take(usize::from(analysis_width + right_width)),
+        )
+        .collect();
 
     let mut start = 0;
     let window_size = usize::from(left_width + right_width);
 
+    let analysis_width: usize = analysis_width.into();
+
     tokio::task::spawn_blocking(move || {
-        let mut frequency_responses = Vec::with_capacity(window_size / shift);
+        let mut frequency_responses =
+            Vec::with_capacity(dbg!((analysis_width - usize::from(left_width)) / shift));
 
         let mut planner = FftPlanner::<f32>::new();
         let fft = planner.plan_fft_forward(window_size);
 
-        while start < window_size.into() {
-            let ir_slice = &ir.data[start..start + window_size];
+        while start + usize::from(left_width) < analysis_width {
+            let ir_slice = &ir[start..start + window_size];
             let mut windowed_impulse_response: Vec<_> = ir_slice
                 .iter()
                 .copied()
@@ -75,9 +90,8 @@ pub(crate) async fn compute(
 
             let data = smooth_fractional_octave(&data, preferences.smoothing_fraction);
 
-            let sample_rate = ir.sample_rate;
             frequency_responses.push(super::FrequencyResponse {
-                sample_rate,
+                sample_rate: u32::from(sample_rate),
                 data: Arc::new(data),
             });
 

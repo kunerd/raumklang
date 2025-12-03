@@ -9,23 +9,25 @@ use rustfft::{
 use crate::data::{SampleRate, Samples};
 
 pub struct Preferences {
-    // shift: Duration,
     span_before_peak: Duration,
     span_after_peak: Duration,
     window_width: Duration,
-    // smoothing_fraction: u8,
 }
 
 #[derive(Clone)]
-pub struct Spectrogram(Vec<super::FrequencyResponse>);
+pub struct Spectrogram {
+    pub span_before_peak: Samples,
+    pub span_after_peak: Samples,
+    slices: Vec<super::FrequencyResponse>,
+}
 
 impl Spectrogram {
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.slices.len()
     }
 
     pub fn iter(&self) -> slice::Iter<'_, super::FrequencyResponse> {
-        self.0.iter()
+        self.slices.iter()
     }
 }
 
@@ -69,11 +71,12 @@ pub(crate) async fn compute(
     let slices = 200;
     let analysed_with = span_before_peak + span_after_peak;
     let shift = usize::from(analysed_with) / (slices - 1);
+
     dbg!(shift);
 
     let mut start = 0;
     tokio::task::spawn_blocking(move || {
-        let mut frequency_responses = Vec::with_capacity(slices);
+        let mut slices = Vec::with_capacity(slices);
 
         let mut planner = FftPlanner::<f32>::new();
         let fft = planner.plan_fft_forward(window_size);
@@ -96,7 +99,7 @@ pub(crate) async fn compute(
                 .map(Complex::norm)
                 .collect();
 
-            frequency_responses.push(super::FrequencyResponse {
+            slices.push(super::FrequencyResponse {
                 sample_rate: sample_rate.into(),
                 data: Arc::new(data),
             });
@@ -104,7 +107,11 @@ pub(crate) async fn compute(
             start += shift;
         }
 
-        Spectrogram(frequency_responses)
+        Spectrogram {
+            span_before_peak,
+            span_after_peak,
+            slices,
+        }
     })
     .await
     .unwrap()
@@ -112,7 +119,7 @@ pub(crate) async fn compute(
 
 impl fmt::Debug for Spectrogram {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Spectral Decay of size: {} slices", self.0.len())
+        write!(f, "Spectral Decay of size: {} slices", self.len())
     }
 }
 

@@ -1,4 +1,9 @@
-use crate::{data, screen::main::chart::Scale};
+use std::time::Duration;
+
+use crate::{
+    data::{self, Samples},
+    screen::main::chart::Scale,
+};
 
 use super::{HorizontalAxis, Offset, VerticalAxis, Zoom};
 
@@ -61,7 +66,7 @@ impl<'a> canvas::Program<Interaction, iced::Theme> for Spectrogram<'a> {
                 };
 
                 if state.shift_pressed {
-                    let diff = (f32::from(self.zoom) * 1000.0).ceil() as isize;
+                    let diff = (f32::from(self.zoom) * 100.0).ceil() as isize;
 
                     let new_offset = if y.is_sign_positive() {
                         self.offset.saturating_add(diff)
@@ -130,8 +135,8 @@ impl<'a> canvas::Program<Interaction, iced::Theme> for Spectrogram<'a> {
 
             let x_axis = HorizontalAxis::with_labels(x_range, &|s| s, labels).scale(Scale::Log);
 
-            let y_min = 0.0;
-            let y_max = self.datapoints.iter().count() as f32;
+            let y_min = -(Duration::from(self.datapoints.span_before_peak).as_millis() as f32);
+            let y_max = Duration::from(self.datapoints.span_after_peak).as_millis() as f32;
 
             let y_range = y_min..=y_max;
             let y_axis = VerticalAxis::new(y_range, 10);
@@ -142,7 +147,8 @@ impl<'a> canvas::Program<Interaction, iced::Theme> for Spectrogram<'a> {
             );
 
             let pixels_per_unit_x = plane.width / x_axis.length;
-            let pixels_per_unit_y = plane.height / y_axis.length;
+            // let pixels_per_unit_y = plane.height / y_axis.length;
+            let pixels_per_unit_y = plane.height / frequency_responses.clone().count() as f32;
 
             let gradient = colorous::TURBO;
 
@@ -170,7 +176,7 @@ impl<'a> canvas::Program<Interaction, iced::Theme> for Spectrogram<'a> {
                         - log_scale(i as f32).clamp(0.0, f32::MAX) * pixels_per_unit_x;
 
                     let pixel = Rectangle {
-                        x: log_scale(i as f32 * resolution) * pixels_per_unit_x,
+                        x: log_scale(i as f32 * resolution) * pixels_per_unit_x + y_axis.width,
                         y,
                         width,
                         height: pixels_per_unit_y,
@@ -190,7 +196,7 @@ impl<'a> canvas::Program<Interaction, iced::Theme> for Spectrogram<'a> {
                 x_axis.draw(frame, plane.width);
             });
 
-            // y_axis.draw(frame, plane.height);
+            y_axis.draw(frame, plane.height);
         });
 
         vec![geometry]
