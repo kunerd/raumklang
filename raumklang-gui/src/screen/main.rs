@@ -7,7 +7,6 @@ mod recording;
 use generic_overlay::generic_overlay::{dropdown_menu, dropdown_root};
 use impulse_response::{ChartOperation, WindowSettings};
 use recording::Recording;
-use rfd::FileHandle;
 
 use crate::{
     data::{
@@ -18,6 +17,8 @@ use crate::{
     screen::main::{chart::waveform, impulse_response::processing_overlay},
     ui, PickAndLoadError,
 };
+
+use raumklang_core::dbfs;
 
 use iced::{
     alignment::{Horizontal, Vertical},
@@ -31,8 +32,6 @@ use iced::{
 };
 
 use prism::{axis, line_series, Axis, Chart, Labels};
-
-use raumklang_core::dbfs;
 
 use std::{
     fmt::Display,

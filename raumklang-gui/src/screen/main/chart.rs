@@ -730,7 +730,6 @@ struct HorizontalAxis<'a> {
     height: f32,
     labels: Vec<Label<'a>>,
     scale: Scale,
-    range: RangeInclusive<f32>,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -768,7 +767,6 @@ impl<'a> HorizontalAxis<'a> {
             height: min_label_height,
             labels,
             scale: Scale::default(),
-            range,
         }
     }
 

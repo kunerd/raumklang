@@ -50,7 +50,10 @@ pub enum LoadedKind {
     Normal(data::Measurement),
 }
 
-pub fn loopback_entry<'a>(selected: Option<Selected>, signal: &Loopback) -> Element<'a, Message> {
+pub fn loopback_entry<'a>(
+    selected: Option<Selected>,
+    signal: &'a Loopback,
+) -> Element<'a, Message> {
     let info: Element<_> = match &signal.loaded() {
         None => text("Error").style(text::danger).into(),
         Some(data) => {
@@ -64,7 +67,7 @@ pub fn loopback_entry<'a>(selected: Option<Selected>, signal: &Loopback) -> Elem
     };
 
     let content = column![
-        column![text("Loopback").size(16)].push(info).spacing(5),
+        column![text(&signal.name).size(16)].push(info).spacing(5),
         rule::horizontal(2),
         row![
             space::horizontal(),

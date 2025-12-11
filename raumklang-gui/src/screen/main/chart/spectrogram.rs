@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::{
-    data::{self, Samples},
+    data::{self},
     screen::main::chart::Scale,
 };
 

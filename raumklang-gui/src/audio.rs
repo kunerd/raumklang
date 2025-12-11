@@ -245,7 +245,8 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                             let (producer, consumer) = measurement::create(buf_size);
 
                             let process_msg = ProcessHandlerMessage::Measurement(producer);
-                            process_tx.try_push(process_msg);
+                            // TODO refactor
+                            let _ = process_tx.try_push(process_msg);
 
                             let test_process = Test::new(sender);
                             std::thread::spawn(move || {
@@ -303,7 +304,9 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                             let (producer, consumer) = measurement::create(buf_size);
 
                             let process_msg = ProcessHandlerMessage::Measurement(producer);
-                            process_tx.try_push(process_msg);
+
+                            // TODO: refactor
+                            let _ = process_tx.try_push(process_msg);
 
                             let loudness = loudness::Test::new(loudness_sender);
                             let measurement = Measurement::new(loudness, data_sender);

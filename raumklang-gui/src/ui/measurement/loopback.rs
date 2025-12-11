@@ -11,7 +11,6 @@ pub struct Loopback {
 
 #[derive(Debug, Clone)]
 pub enum State {
-    NotLoaded,
     Loaded(raumklang_core::Loopback),
 }
 
@@ -38,7 +37,6 @@ impl Loopback {
 
     pub(crate) fn loaded(&self) -> Option<&raumklang_core::Loopback> {
         match &self.state {
-            State::NotLoaded => None,
             State::Loaded(loopback) => Some(loopback),
         }
     }

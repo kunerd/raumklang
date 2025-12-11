@@ -24,14 +24,12 @@ impl Display for Id {
 
 #[derive(Debug, Clone)]
 pub enum State {
-    NotLoaded(NotLoaded),
     Loaded(Loaded),
 }
 
 impl State {
     pub(crate) fn name(&self) -> &String {
         match self {
-            State::NotLoaded(not_loaded) => &not_loaded.name,
             State::Loaded(loaded) => &loaded.name,
         }
     }
@@ -46,14 +44,12 @@ impl State {
 
     pub(crate) fn loaded(&self) -> Option<&Loaded> {
         match self {
-            State::NotLoaded(_) => None,
             State::Loaded(l) => Some(l),
         }
     }
 
     pub(crate) fn loaded_mut(&mut self) -> Option<&mut Loaded> {
         match self {
-            State::NotLoaded(_) => None,
             State::Loaded(l) => Some(l),
         }
     }
@@ -61,13 +57,6 @@ impl State {
     pub fn is_loaded(&self) -> bool {
         matches!(self, State::Loaded { .. })
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct NotLoaded {
-    pub id: Id,
-    pub name: String,
-    pub path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
