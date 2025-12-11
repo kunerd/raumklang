@@ -7,6 +7,7 @@ mod recording;
 use generic_overlay::generic_overlay::{dropdown_menu, dropdown_root};
 use impulse_response::{ChartOperation, WindowSettings};
 use recording::Recording;
+use rfd::FileHandle;
 
 use crate::{
     data::{
@@ -33,7 +34,11 @@ use prism::{axis, line_series, Axis, Chart, Labels};
 
 use raumklang_core::dbfs;
 
-use std::{fmt::Display, path::PathBuf, sync::Arc};
+use std::{
+    fmt::Display,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 pub struct Main {
     state: State,
@@ -134,8 +139,9 @@ pub enum Message {
     FrequencyResponseComputed(ui::measurement::Id, data::FrequencyResponse),
 
     ImpulseResponses(impulse_response::Message),
-    SaveImpulseResponse(ui::measurement::Id),
-    ImpulseResponsesSaved(Option<PathBuf>),
+    SaveImpulseResponseFileDialog(ui::measurement::Id),
+    SaveImpulseResponse(ui::measurement::Id, Arc<Path>),
+    ImpulseResponsesSaved(Arc<Path>),
 
     ShiftKeyPressed,
     ShiftKeyReleased,
@@ -670,7 +676,12 @@ impl Main {
 
                 Task::none()
             }
-            Message::SaveImpulseResponse(id) => {
+            Message::SaveImpulseResponseFileDialog(id) => {
+                Task::future(choose_impulse_response_file_path())
+                    .and_then(Task::done)
+                    .map(Message::SaveImpulseResponse.with(id))
+            }
+            Message::SaveImpulseResponse(id, path) => {
                 let State::Analysing {
                     active_tab: Tab::ImpulseResponses { .. },
                     ..
@@ -688,20 +699,16 @@ impl Main {
                     .cloned()
                 {
                     Task::perform(
-                        save_impulse_response(impulse_response),
-                        Message::ImpulseResponsesSaved,
+                        save_impulse_response(path.clone(), impulse_response),
+                        |_| Message::ImpulseResponsesSaved(path),
                     )
                 } else {
                     self.compute_impulse_response(id)
-                        .chain(Task::done(Message::SaveImpulseResponse(id)))
+                        .chain(Task::done(Message::SaveImpulseResponse(id, path)))
                 }
             }
             Message::ImpulseResponsesSaved(path) => {
-                if let Some(path) = path {
-                    log::debug!("Impulse response saved to: {}", path.display());
-                } else {
-                    log::debug!("Save impulse response file dialog closed.");
-                }
+                log::debug!("Impulse response saved to: {}", path.display());
 
                 Task::none()
             }
@@ -1104,7 +1111,7 @@ impl Main {
                     let entry = {
                         let save_btn = button(icon::download().size(10))
                             .style(button::secondary)
-                            .on_press_with(move || Message::SaveImpulseResponse(id));
+                            .on_press_with(move || Message::SaveImpulseResponseFileDialog(id));
 
                         let ir_btn = button(
                             column![
@@ -1595,29 +1602,34 @@ impl Default for Main {
     }
 }
 
-async fn save_impulse_response(impulse_response: ui::ImpulseResponse) -> Option<PathBuf> {
-    let handle = rfd::AsyncFileDialog::new()
+async fn choose_impulse_response_file_path() -> Option<Arc<Path>> {
+    rfd::AsyncFileDialog::new()
         .set_title("Save Impulse Response ...")
         .add_filter("wav", &["wav", "wave"])
         .add_filter("all", &["*"])
         .save_file()
-        .await?;
+        .await
+        .as_ref()
+        .map(|h| h.path().to_path_buf().into())
+}
 
-    let spec = hound::WavSpec {
-        channels: 1,
-        sample_rate: impulse_response.sample_rate.into(),
-        bits_per_sample: 32,
-        sample_format: hound::SampleFormat::Float,
-    };
+async fn save_impulse_response(path: Arc<Path>, impulse_response: ui::ImpulseResponse) {
+    tokio::task::spawn_blocking(move || {
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: impulse_response.sample_rate.into(),
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
 
-    let path = handle.path();
-    let mut writer = hound::WavWriter::create(path, spec).unwrap();
-    for s in impulse_response.data.iter().copied() {
-        writer.write_sample(s).unwrap();
-    }
-    writer.finalize().unwrap();
-
-    Some(path.to_path_buf())
+        let mut writer = hound::WavWriter::create(path, spec).unwrap();
+        for s in impulse_response.data.iter().copied() {
+            writer.write_sample(s).unwrap();
+        }
+        writer.finalize().unwrap();
+    })
+    .await
+    .unwrap();
 }
 
 fn compute_frequency_response(
