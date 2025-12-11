@@ -133,7 +133,7 @@ impl<'a> canvas::Program<Interaction, iced::Theme> for Spectrogram<'a> {
                 .into_iter()
                 .map(|l| l as f32);
 
-            let x_axis = HorizontalAxis::with_labels(x_range, &|s| s, labels).scale(Scale::Log);
+            let x_axis = HorizontalAxis::with_labels(x_range, |s| s, labels).scale(Scale::Log);
 
             let y_min = -(Duration::from(self.datapoints.span_before_peak).as_millis() as f32);
             let y_max = Duration::from(self.datapoints.span_after_peak).as_millis() as f32;

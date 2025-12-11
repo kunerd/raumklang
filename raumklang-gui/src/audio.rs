@@ -185,10 +185,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                         };
                     }
                     Err(err) => {
-                        state = State::Retrying {
-                            err: err.into(),
-                            retry_count,
-                        };
+                        state = State::Retrying { err, retry_count };
                     }
                 }
             }
@@ -198,7 +195,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                 mut process_tx,
                 is_server_shutdown,
             } => {
-                while is_server_shutdown.load(std::sync::atomic::Ordering::Relaxed) != true {
+                while !is_server_shutdown.load(std::sync::atomic::Ordering::Relaxed) {
                     // FIXME: wrong channel type
                     match command_rx.try_recv() {
                         Ok(Command::ConnectOutPort(dest)) => {
@@ -294,11 +291,11 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                                 .enumerate()
                                 .map(move |(i, s)| s * window[i]);
 
+                            // TODO: make configurable
                             let sweep = (0..22_000)
-                                .into_iter()
                                 .map(|_| 0.0)
                                 .chain(sweep)
-                                .chain((0..20_000).into_iter().map(|_| 0.0));
+                                .chain((0..20_000).map(|_| 0.0));
 
                             let buf_size = client.as_client().buffer_size() as usize;
                             let (producer, consumer) = measurement::create(buf_size);

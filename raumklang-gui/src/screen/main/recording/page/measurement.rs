@@ -69,7 +69,7 @@ impl Measurement {
                 None
             }
             Message::RecordingFinished => {
-                let data = std::mem::replace(&mut self.data, Vec::new());
+                let data = std::mem::take(&mut self.data);
 
                 Some(raumklang_core::Measurement::new(
                     self.sample_rate.into(),

@@ -10,8 +10,9 @@ use crate::{audio, data::recording::port};
 
 use iced::task;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub enum Page {
+    #[default]
     PortSetup,
     LoudnessTest {
         config: port::Config,
@@ -23,10 +24,4 @@ pub enum Page {
         page: signal_setup::SignalSetup,
     },
     Measurement(Measurement),
-}
-
-impl Default for Page {
-    fn default() -> Self {
-        Self::PortSetup
-    }
 }

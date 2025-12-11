@@ -43,7 +43,6 @@ pub(crate) async fn compute(
     let half_window_size = window_size / 2;
     let sig = 0.3;
     let window: Vec<_> = (0..window_size)
-        .into_iter()
         .map(|n| (n as f32 - half_window_size as f32) / ((sig * window_size as f32) / 2.0))
         .map(|w| f32::powi(w, 2))
         .map(|s| f32::exp(-0.5 * s))
@@ -59,7 +58,6 @@ pub(crate) async fn compute(
     dbg!(span_before_peak);
     dbg!(span_after_peak);
     let ir: Vec<_> = (0..half_window_size + usize::from(span_before_peak))
-        .into_iter()
         .map(|_| Complex32::from(0.0))
         .chain(
             ir.data

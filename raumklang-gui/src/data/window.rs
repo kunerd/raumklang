@@ -43,12 +43,12 @@ impl Window<Duration> {
 
     pub fn update(&mut self, handles: Handles) {
         let left_width = handles.center.x() - handles.left.x();
-        self.left_width = Duration::from_millis(left_width as u64).into();
+        self.left_width = Duration::from_millis(left_width as u64);
 
-        self.position = Duration::from_millis(handles.center.x() as u64).into();
+        self.position = Duration::from_millis(handles.center.x() as u64);
 
         let right_width = handles.right.x() - handles.center.x();
-        self.right_width = Duration::from_millis(right_width as u64).into();
+        self.right_width = Duration::from_millis(right_width as u64);
     }
 }
 

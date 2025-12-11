@@ -52,6 +52,7 @@ pub struct Main {
     project_path: Option<PathBuf>,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum State {
     CollectingMeasuremnts {
         recording: Option<Recording>,
@@ -70,6 +71,7 @@ impl Default for State {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum Tab {
     Measurements { recording: Option<Recording> },
     ImpulseResponses { window_settings: WindowSettings },
@@ -390,16 +392,16 @@ impl Main {
                     charts
                         .impulse_responses
                         .x_range
-                        .get_or_insert_with(|| 0.0..=impulse_response.data.len() as f32);
+                        .get_or_insert(0.0..=impulse_response.data.len() as f32);
 
                     charts.impulse_responses.data_cache.clear();
                 }
 
-                if let Tab::FrequencyResponses { .. } = active_tab {
+                if let Tab::FrequencyResponses = active_tab {
                     compute_frequency_response(self.loopback.as_ref().unwrap(), measurement, window)
-                } else if let Tab::SpectralDecay { .. } = active_tab {
+                } else if let Tab::SpectralDecay = active_tab {
                     compute_spectral_decay(self.loopback.as_ref().unwrap(), measurement)
-                } else if let Tab::Spectrogram { .. } = active_tab {
+                } else if let Tab::Spectrogram = active_tab {
                     compute_spectrogram(self.loopback.as_ref().unwrap(), measurement)
                 } else {
                     Task::none()
@@ -983,7 +985,7 @@ impl Main {
                     .style(container::bordered_box)
             };
 
-            modal(content, pending_window).into()
+            modal(content, pending_window)
         } else {
             content.into()
         }
@@ -1054,9 +1056,8 @@ impl Main {
                 .into()
             };
 
-            let content = if let Some(measurement) = self
-                .selected
-                .map(|selected| match selected {
+            let content = if let Some(measurement) =
+                self.selected.and_then(|selected| match selected {
                     measurement::Selected::Loopback => self
                         .loopback
                         .as_ref()
@@ -1067,10 +1068,8 @@ impl Main {
                         .get(i)
                         .and_then(ui::measurement::State::loaded)
                         .map(|m| &m.data),
-                })
-                .flatten()
-            {
-                chart::waveform(&measurement, &self.signal_cache, self.zoom, self.offset)
+                }) {
+                chart::waveform(measurement, &self.signal_cache, self.zoom, self.offset)
                     .map(Message::MeasurementChart)
             } else {
                 welcome_text(text("Select a signal to view its data."))
@@ -1394,7 +1393,7 @@ impl Main {
                 // .x_range(20.0..=2000.0)
                 .y_labels(Labels::default().format(&|v| format!("{v:.0}")))
                 .extend_series(series_list)
-                .cache(&cache);
+                .cache(cache);
 
             container(chart)
         } else {
@@ -1852,7 +1851,7 @@ where
         .align_y(Alignment::Center);
 
         column!(header, rule::horizontal(1))
-            .extend(self.entries.into_iter())
+            .extend(self.entries)
             .width(Length::Fill)
             .spacing(5)
             .into()
