@@ -328,7 +328,6 @@ impl Main {
                 };
 
                 *selected_impulse_response = Some(id);
-
                 charts.impulse_responses.data_cache.clear();
 
                 let Some(measurement) = self
@@ -589,7 +588,9 @@ impl Main {
                             .iter_mut()
                             .filter_map(ui::measurement::State::loaded_mut)
                             .for_each(|m| {
-                                m.analysis.frequency_response = ui::FrequencyResponse::default()
+                                m.analysis.frequency_response = ui::FrequencyResponse::default();
+                                m.analysis.spectral_decay = ui::spectral_decay::State::default();
+                                m.analysis.spectrogram = ui::spectrogram::State::default();
                             });
 
                         *window = window_settings.window.clone();
@@ -1554,6 +1555,10 @@ fn compute_impulse_response(
         return Task::none();
     };
 
+    if measurement.analysis.impulse_response.result().is_some() {
+        return Task::none();
+    }
+
     measurement.analysis.impulse_response = ui::impulse_response::State::Computing;
 
     Task::perform(
@@ -1628,6 +1633,10 @@ fn compute_spectral_decay(
     loopback: &ui::Loopback,
     measurement: &mut ui::measurement::Loaded,
 ) -> Task<Message> {
+    if measurement.analysis.spectral_decay.result().is_some() {
+        return Task::none();
+    }
+
     if let Some(impulse_response) = measurement.analysis.impulse_response.result() {
         measurement.analysis.spectral_decay = ui::spectral_decay::State::Computing;
 
@@ -1647,6 +1656,10 @@ fn compute_spectrogram(
     loopback: &ui::Loopback,
     measurement: &mut ui::measurement::Loaded,
 ) -> Task<Message> {
+    if measurement.analysis.spectrogram.result().is_some() {
+        return Task::none();
+    }
+
     if let Some(impulse_response) = measurement.analysis.impulse_response.result() {
         measurement.analysis.spectrogram = ui::spectrogram::State::Computing;
 
