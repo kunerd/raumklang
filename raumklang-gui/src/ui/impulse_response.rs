@@ -1,23 +1,40 @@
 use crate::data::{self, SampleRate};
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum State {
     #[default]
+    None,
     Computing,
     Computed(ImpulseResponse),
 }
 
 impl State {
-    pub(crate) fn set_computed(&mut self, impulse_response: ImpulseResponse) {
+    pub fn progress(&self) -> Progress {
+        match self {
+            State::None => Progress::None,
+            State::Computing => Progress::Computing,
+            State::Computed(_) => Progress::Finished,
+        }
+    }
+
+    pub(crate) fn computed(&mut self, impulse_response: ImpulseResponse) {
         *self = State::Computed(impulse_response)
     }
 
-    pub fn computed(&self) -> Option<&ImpulseResponse> {
-        match self {
-            State::Computing => None,
-            State::Computed(ref impulse_response) => Some(impulse_response),
-        }
+    pub(crate) fn result(&self) -> Option<&ImpulseResponse> {
+        let State::Computed(ir) = self else {
+            return None;
+        };
+
+        Some(ir)
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum Progress {
+    None,
+    Computing,
+    Finished,
 }
 
 #[derive(Debug, Clone)]

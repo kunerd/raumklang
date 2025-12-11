@@ -5,7 +5,7 @@
 An open source room impulse response measurement software using the sine sweep
 method.
 
-![Screenshot](/assets/demo.gif "Raumklang - Demo")
+<img alt="Raumklang - Demo" src="assets/demo.gif" width="70%">
 
 </div>
 

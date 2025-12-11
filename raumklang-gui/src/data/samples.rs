@@ -1,5 +1,5 @@
 use std::{
-    ops::{AddAssign, Sub},
+    ops::{Add, AddAssign, Div, Sub},
     time::Duration,
 };
 
@@ -49,11 +49,27 @@ impl AddAssign for Samples {
     }
 }
 
+impl Add for Samples {
+    type Output = Samples;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0 + rhs.0, self.1)
+    }
+}
+
 impl Sub for Samples {
     type Output = Samples;
 
     fn sub(self, rhs: Self) -> Self::Output {
         Self(self.0.saturating_sub(rhs.0), self.1)
+    }
+}
+
+impl Div for Samples {
+    type Output = Samples;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        Self(self.0 / rhs.0, self.1)
     }
 }
 
