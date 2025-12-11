@@ -435,7 +435,7 @@ impl Main {
                 Task::none()
             }
             Message::FrequencyResponseComputed(id, frequency_response) => {
-                log::debug!("Frequency resposne computed: {id}");
+                log::debug!("Frequency response computed: {id}");
 
                 let State::Analysing { ref mut charts, .. } = self.state else {
                     return Task::none();
@@ -453,11 +453,22 @@ impl Main {
                 measurement
                     .analysis
                     .frequency_response
-                    .computed(frequency_response);
+                    .computed(frequency_response.clone());
 
                 charts.frequency_responses.cache.clear();
 
-                Task::none()
+                if let Some(fraction) = self.smoothing.fraction() {
+                    Task::perform(
+                        frequency_response::smooth_frequency_response(
+                            id,
+                            frequency_response,
+                            fraction,
+                        ),
+                        Message::FrequencyResponseSmoothed,
+                    )
+                } else {
+                    Task::none()
+                }
             }
             Message::FrequencyResponseToggled(id, state) => {
                 let State::Analysing { ref mut charts, .. } = self.state else {
