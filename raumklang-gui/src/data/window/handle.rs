@@ -29,12 +29,6 @@ impl Handle {
 
 impl From<Alignment> for f32 {
     fn from(alignment: Alignment) -> Self {
-        Into::into(&alignment)
-    }
-}
-
-impl From<&Alignment> for f32 {
-    fn from(alignment: &Alignment) -> Self {
         match alignment {
             Alignment::Bottom => 0.0,
             Alignment::Center => 0.5,
@@ -42,6 +36,7 @@ impl From<&Alignment> for f32 {
         }
     }
 }
+
 impl SubAssign<f32> for Handle {
     fn sub_assign(&mut self, offset: f32) {
         self.x -= offset;

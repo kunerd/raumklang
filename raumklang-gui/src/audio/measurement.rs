@@ -61,8 +61,8 @@ pub struct State {
 
 impl Producer {
     #[must_use]
-    pub fn play_signal_chunk<'a>(
-        &'a mut self,
+    pub fn play_signal_chunk(
+        &mut self,
         out_port: &mut [f32],
         amplitude: f32,
     ) -> Option<SignalState> {
@@ -98,7 +98,6 @@ impl Producer {
         }
     }
 
-    #[must_use]
     pub fn record_chunk(&mut self, chunk: &[f32]) -> Result<(), Error> {
         if self.state.consumer_dropped.load(atomic::Ordering::Acquire) {
             return Err(Error::ConsumerDropped);
@@ -149,7 +148,6 @@ impl Consumer {
                 .state
                 .producer_dropped
                 .load(std::sync::atomic::Ordering::Acquire)
-                == true
                 && data.is_empty()
             {
                 log::debug!("All real-time audio data consumed.");

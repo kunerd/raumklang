@@ -49,7 +49,6 @@ pub(crate) async fn compute(
     let window = window.build();
 
     let ir: Vec<_> = (0..usize::from(left_width))
-        .into_iter()
         .map(|_| Complex32::from(0.0))
         .chain(
             ir.data

@@ -31,7 +31,7 @@ impl From<Samples> for f32 {
 
 impl From<Samples> for usize {
     fn from(samples: Samples) -> Self {
-        samples.0 as usize
+        samples.0
     }
 }
 

@@ -9,6 +9,7 @@ use iced::{
     Element, Length,
 };
 
+#[allow(clippy::large_enum_variant)]
 pub enum Screen {
     Loading,
     Landing,

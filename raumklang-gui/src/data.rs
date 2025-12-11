@@ -42,7 +42,7 @@ pub fn smooth_fractional_octave(signal: &[f32], num_fractions: u8) -> Vec<f32> {
 
     // linearly and logarithmically spaced frequency bins ----------------------
     let len = signal.len() as f32;
-    let n_lin = Array::range(0., len as f32, 1.0);
+    let n_lin = Array::range(0., len, 1.0);
     let n_log = n_lin.mapv(|n| n / (len - 1.0)).mapv(|n| len.powf(n));
 
     // frequency bin spacing in octaves: log2(n_log[n]/n_log[n-1])
@@ -105,21 +105,21 @@ pub fn smooth_fractional_octave(signal: &[f32], num_fractions: u8) -> Vec<f32> {
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum Error {
     #[error("io operation failed: {0}")]
-    IOFailed(Arc<io::Error>),
+    IO(Arc<io::Error>),
     #[error("deserialization failed: {0}")]
-    SerdeFailed(Arc<serde_json::Error>),
+    Serde(Arc<serde_json::Error>),
     #[error("impulse response computation failed")]
-    ImpulseResponseComputationFailed,
+    ImpulseResponseComputation,
 }
 
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Self {
-        Self::IOFailed(Arc::new(error))
+        Self::IO(Arc::new(error))
     }
 }
 
 impl From<serde_json::Error> for Error {
     fn from(error: serde_json::Error) -> Self {
-        Self::SerdeFailed(Arc::new(error))
+        Self::Serde(Arc::new(error))
     }
 }

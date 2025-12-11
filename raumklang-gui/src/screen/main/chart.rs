@@ -1,5 +1,3 @@
-mod impulse_response;
-
 pub mod spectrogram;
 pub mod waveform;
 
@@ -44,7 +42,7 @@ pub fn waveform<'a>(
         cache,
         cmp: |a, b| a.total_cmp(b),
         y_to_float: |s| s,
-        to_x_scale: move |i| i as f32,
+        to_x_scale: |i| i,
         // to_x_scale: move |i| match time_unit {
         //     chart::TimeSeriesUnit::Time => time_scale(i, impulse_response.sample_rate.into()),
         //     chart::TimeSeriesUnit::Samples => i as f32,
@@ -89,6 +87,7 @@ pub fn spectrogram<'a>(
     .into()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn impulse_response<'a>(
     window: &'a Window<Samples>,
     impulse_response: &'a ui::ImpulseResponse,
@@ -111,7 +110,7 @@ pub fn impulse_response<'a>(
             cmp: |a, b| a.total_cmp(b),
             to_x_scale: move |i| match time_unit {
                 chart::TimeSeriesUnit::Time => time_scale(i, impulse_response.sample_rate.into()),
-                chart::TimeSeriesUnit::Samples => i as f32,
+                chart::TimeSeriesUnit::Samples => i,
             },
             y_to_float: |s| s,
             to_y_scale: move |s| match amplitude_unit {
@@ -160,8 +159,9 @@ impl From<Zoom> for f32 {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub struct Offset(isize);
+
 impl Offset {
     fn saturating_add(&self, rhs: isize) -> Offset {
         Offset(self.0.saturating_add(rhs))
@@ -169,12 +169,6 @@ impl Offset {
 
     fn saturating_sub(&self, rhs: isize) -> Offset {
         Offset(self.0.saturating_sub(rhs))
-    }
-}
-
-impl Default for Offset {
-    fn default() -> Self {
-        Self(0)
     }
 }
 
@@ -254,10 +248,11 @@ where
         cursor: mouse::Cursor,
     ) -> Option<canvas::Action<Interaction>> {
         if let Event::Window(window::Event::RedrawRequested(_)) = event {
-            let x_min = 0.250 * 44_100 as f32 * f32::from(self.zoom);
+            // FIXME: hardcoded values
+            let x_min = 0.250 * 44_100.0 * f32::from(self.zoom);
             let x_min = -x_min + self.offset as f32;
 
-            let x_max = 0.6 * 44_100 as f32 * f32::from(self.zoom);
+            let x_max = 0.6 * 44_100.0 * f32::from(self.zoom);
             let x_max = x_max.ceil() as u64;
 
             let datapoints = self
@@ -272,13 +267,8 @@ where
 
             let datapoints = datapoints.clone().map(|(_i, datapoint)| datapoint);
 
-            let Some(min) = datapoints.clone().min_by(self.cmp) else {
-                return None;
-            };
-
-            let Some(max) = datapoints.clone().max_by(self.cmp) else {
-                return None;
-            };
+            let min = datapoints.clone().min_by(self.cmp)?;
+            let max = datapoints.clone().max_by(self.cmp)?;
 
             let min_value = (self.to_y_scale)((self.y_to_float)(min));
             let max_value = (self.to_y_scale)((self.y_to_float)(max)) + 10.0;
@@ -591,10 +581,11 @@ where
         let pixels_per_unit = y_target_length / y_axis.length;
 
         let data = self.data_cache.draw(renderer, bounds.size(), |frame| {
-            let x_min = 0.250 * 44_100 as f32 * f32::from(self.zoom);
+            // FIXME: hard-coded values
+            let x_min = 0.250 * 44_100.0 * f32::from(self.zoom);
             let x_min = -x_min + self.offset as f32;
 
-            let x_max = 0.6 * 44_100 as f32 * f32::from(self.zoom);
+            let x_max = 0.6 * 44_100.0 * f32::from(self.zoom);
             let x_max = x_max.ceil() as u64;
 
             let datapoints = self
@@ -732,7 +723,6 @@ struct HorizontalAxis<'a> {
     height: f32,
     labels: Vec<Label<'a>>,
     scale: Scale,
-    range: RangeInclusive<f32>,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -770,7 +760,6 @@ impl<'a> HorizontalAxis<'a> {
             height: min_label_height,
             labels,
             scale: Scale::default(),
-            range,
         }
     }
 
@@ -784,9 +773,7 @@ impl<'a> HorizontalAxis<'a> {
 
         let min = *range.start();
         let offset = -min % tick_distance;
-        let labels = (0..=tick_amount)
-            .into_iter()
-            .map(|t| offset + min + t as f32 * tick_distance);
+        let labels = (0..=tick_amount).map(|t| offset + min + t as f32 * tick_distance);
 
         Self::with_labels(range, to_scale, labels)
     }
@@ -856,7 +843,6 @@ impl<'a> VerticalAxis<'a> {
         let min = *range.start();
         let offset = -min % tick_distance;
         let labels = (0..=tick_amount)
-            .into_iter()
             .map(|t| offset + min + t as f32 * tick_distance)
             .map(|l| Label::new(l, format!("{:.0}", l), 12.0));
 
@@ -885,10 +871,7 @@ impl<'a> VerticalAxis<'a> {
 
             frame.fill_text(canvas::Text {
                 content: label.content.to_string(),
-                position: Point::new(
-                    f32::from(self.width),
-                    target_length + self.min_label_height * 0.5 - y,
-                ),
+                position: Point::new(self.width, target_length + self.min_label_height * 0.5 - y),
                 size: Pixels(12.0),
                 color: iced::Color::WHITE,
                 align_x: text::Alignment::Right,

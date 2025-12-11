@@ -1,0 +1,27 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hecrj/setup-rust-action@v2
+        with:
+          components: clippy      
+      - run: sudo apt-get -y update && sudo apt-get -y install libgtk-3-dev libjack-jackd2-dev
+      - run: cargo clippy -- -D warnings
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hecrj/setup-rust-action@v2
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hecrj/setup-rust-action@v2
+      - run: sudo apt-get -y update && sudo apt-get -y install libgtk-3-dev libjack-jackd2-dev
+      - run: cargo test --verbose --workspace
