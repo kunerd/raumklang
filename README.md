@@ -2,6 +2,10 @@
 
 # Raumklang
 
+[![GitHub License](https://img.shields.io/github/license/kunerd/raumklang)](https://github.com/kunerd/raumklang/LICENSE)
+[![CI](https://github.com/kunerd/raumklang/actions/workflows/rust.yml/badge.svg)](https://github.com/kunerd/raumklang/actions/workflows/rust.yml)
+[![Made with iced](https://iced.rs/badge.svg)](https://github.com/iced-rs/iced)
+
 An open source room impulse response measurement software using the sine sweep
 method.
 
