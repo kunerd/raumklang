@@ -21,6 +21,63 @@ use iced::{
 use core::panic;
 use std::{collections::HashMap, ops::RangeInclusive, time::Duration};
 
+pub fn item() {
+    let id = measurement.id;
+
+    let entry = {
+        let dt: DateTime<Utc> = measurement.data.modified.into();
+        let ir_btn = button(
+            column![
+                text(&measurement.name)
+                    .size(14)
+                    .wrapping(Wrapping::WordOrGlyph),
+                text!("{}", dt.format("%x %X")).size(10)
+            ]
+            .clip(true)
+            .spacing(6),
+        )
+        .on_press_with(move || Message::ImpulseResponseSelected(id))
+        .width(Length::Fill)
+        .style(move |theme: &Theme, status| {
+            let background = theme.extended_palette().background;
+            let base = button::subtle(theme, status);
+
+            if Some(id) == selected {
+                base.with_background(background.weak.color)
+            } else {
+                base
+            }
+        });
+
+        let save_btn = button(icon::download().size(10))
+            .style(button::secondary)
+            .on_press_with(move || Message::SaveImpulseResponseFileDialog(id));
+
+        container(row![
+            ir_btn,
+            rule::vertical(1.0),
+            right(save_btn).width(Length::Shrink).padding([0, 6])
+        ])
+        .style(move |theme| {
+            container::rounded_box(theme).background(if Some(id) == selected {
+                theme.extended_palette().background.weak.color
+            } else {
+                theme.extended_palette().background.weakest.color
+            })
+        })
+        .padding([6, 0])
+        .into()
+    };
+
+    match measurement.analysis.impulse_response.progress() {
+        ui::impulse_response::Progress::None => entry,
+        ui::impulse_response::Progress::Computing => {
+            impulse_response::processing_overlay("Impulse Response", entry)
+        }
+        ui::impulse_response::Progress::Finished => entry,
+    }
+}
+
 pub struct ImpulseReponses {
     selected: Option<measurement::Id>,
     window_settings: WindowSettings,

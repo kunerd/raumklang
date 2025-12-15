@@ -4,6 +4,7 @@ mod impulse_response;
 mod measurement;
 mod recording;
 
+use chrono::{DateTime, Utc};
 use generic_overlay::generic_overlay::{dropdown_menu, dropdown_root};
 use impulse_response::{ChartOperation, WindowSettings};
 use recording::Recording;
@@ -15,7 +16,9 @@ use crate::{
     },
     icon, load_project, log,
     screen::main::{chart::waveform, impulse_response::processing_overlay},
-    ui, PickAndLoadError,
+    ui,
+    widget::sidebar,
+    PickAndLoadError,
 };
 
 use raumklang_core::dbfs;
@@ -957,7 +960,7 @@ impl Main {
             },
         };
 
-        let content = container(column![header, container(content).padding(5)].spacing(10));
+        let content = container(column![header, container(content).padding(10)]);
 
         if let Modal::PendingWindow { .. } = self.modal {
             let pending_window = {
@@ -1093,95 +1096,40 @@ impl Main {
         window_settings: &'a WindowSettings,
     ) -> Element<'a, Message> {
         let sidebar = {
-            let header = {
-                column!(text("For Measurements"), rule::horizontal(1))
-                    .width(Length::Fill)
-                    .spacing(5)
-            };
+            let header = sidebar::header("Impulse Responses");
 
             let entries = self
                 .measurements
                 .iter()
                 .filter_map(ui::measurement::State::loaded)
-                .map(|measurement| {
-                    let id = measurement.id;
+                .map(|measurement| impulse_response_item(selected, measurement));
 
-                    let entry = {
-                        let save_btn = button(icon::download().size(10))
-                            .style(button::secondary)
-                            .on_press_with(move || Message::SaveImpulseResponseFileDialog(id));
-
-                        let ir_btn = button(
-                            column![
-                                text(&measurement.name)
-                                    .size(16)
-                                    .wrapping(Wrapping::WordOrGlyph),
-                                text("10.12.2019 10:24:12").size(10)
-                            ]
-                            .clip(true)
-                            .padding(3)
-                            .spacing(6),
-                        )
-                        .on_press_with(move || Message::ImpulseResponseSelected(id))
-                        .width(Length::Fill)
-                        .style(move |theme, status| {
-                            let status = match selected {
-                                Some(selected) if selected == id => button::Status::Hovered,
-                                _ => status,
-                            };
-                            button::secondary(theme, status)
-                        });
-
-                        container(
-                            row![
-                                ir_btn,
-                                rule::vertical(1.0),
-                                right(save_btn).width(Length::Shrink)
-                            ]
-                            .height(Length::Shrink)
-                            .spacing(6),
-                        )
-                        .style(container::dark)
-                        .padding(6)
-                        .into()
-                    };
-
-                    match measurement.analysis.impulse_response.progress() {
-                        ui::impulse_response::Progress::None => entry,
-                        ui::impulse_response::Progress::Computing => {
-                            impulse_response::processing_overlay("Impulse Response", entry)
-                        }
-                        ui::impulse_response::Progress::Finished => entry,
-                    }
-                });
-
-            container(scrollable(
-                column![header, column(entries).spacing(3)]
-                    .spacing(10)
-                    .padding(10),
-            ))
-            .style(container::rounded_box)
+            container(column![header, scrollable(column(entries))].spacing(6))
+                .padding(6)
+                .style(|theme| {
+                    container::rounded_box(theme)
+                        .background(theme.extended_palette().background.weakest.color)
+                })
         };
 
         let content = {
-            if let Some(impulse_response) = self
-                .measurements
+            let placeholder = container(text("Impulse response not computed, yet.")).into();
+
+            self.measurements
                 .iter()
                 .filter_map(ui::measurement::State::loaded)
                 .find(|m| Some(m.id) == selected)
                 .and_then(|measurement| measurement.analysis.impulse_response.result())
-            {
-                chart
-                    .view(impulse_response, window_settings)
-                    .map(Message::ImpulseResponses)
-            } else {
-                container(text("Impulse response not computed, yet.")).into()
-            }
+                .map_or(placeholder, |impulse_response| {
+                    chart
+                        .view(impulse_response, window_settings)
+                        .map(Message::ImpulseResponses)
+                })
         };
 
         row![
-            container(sidebar).width(Length::FillPortion(1)),
-            container(content).center(Length::FillPortion(4))
+            container(sidebar).width(Length::FillPortion(2)),
+            container(content).center(Length::FillPortion(5))
         ]
         .spacing(10)
         .into()
@@ -1560,6 +1508,60 @@ impl Main {
             .unwrap();
 
         compute_impulse_response(loopback, measurement)
+    }
+}
+
+fn impulse_response_item(
+    selected: Option<ui::measurement::Id>,
+    measurement: &ui::measurement::Loaded,
+) -> Element<'_, Message> {
+    let id = measurement.id;
+    let is_active = selected.is_some_and(|selected| selected == id);
+
+    let entry = {
+        let dt: DateTime<Utc> = measurement.data.modified.into();
+        let ir_btn = button(
+            column![
+                text(&measurement.name)
+                    .size(14)
+                    .wrapping(Wrapping::WordOrGlyph),
+                text!("{}", dt.format("%x %X")).size(10)
+            ]
+            .clip(true)
+            .spacing(6),
+        )
+        .on_press_with(move || Message::ImpulseResponseSelected(id))
+        .width(Length::Fill)
+        .style(move |theme: &Theme, status| {
+            let background = theme.extended_palette().background;
+            let base = button::subtle(theme, status);
+
+            if is_active {
+                base.with_background(background.weak.color)
+            } else {
+                base
+            }
+        });
+
+        let save_btn = button(icon::download().size(10))
+            .style(button::secondary)
+            .on_press_with(move || Message::SaveImpulseResponseFileDialog(id));
+
+        let content = row![
+            ir_btn,
+            rule::vertical(1.0),
+            right(save_btn).width(Length::Shrink).padding([0, 6])
+        ];
+
+        sidebar::item(content, is_active)
+    };
+
+    match measurement.analysis.impulse_response.progress() {
+        ui::impulse_response::Progress::None => entry,
+        ui::impulse_response::Progress::Computing => {
+            impulse_response::processing_overlay("Impulse Response", entry)
+        }
+        ui::impulse_response::Progress::Finished => entry,
     }
 }
 
