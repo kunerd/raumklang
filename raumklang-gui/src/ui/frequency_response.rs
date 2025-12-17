@@ -43,38 +43,32 @@ impl FrequencyResponse {
         &'a self,
         measurement_name: &'a str,
         impulse_response_progess: impulse_response::Progress,
-        toggle_msg: impl Fn(bool) -> Message + 'a,
+        on_toggle: impl Fn(bool) -> Message + 'a,
     ) -> Element<'a, Message>
     where
         Message: 'a,
     {
-        let item = {
-            let content = column![
-                row![
-                    icon::record().color(self.color).align_y(Alignment::Center),
-                    text(measurement_name)
-                        .align_y(Alignment::Center)
-                        .wrapping(text::Wrapping::Glyph),
-                ]
-                .align_y(Alignment::Center)
-                .spacing(8),
-                container(
-                    toggler(self.is_shown)
-                        .on_toggle(toggle_msg)
-                        .width(Length::Shrink)
-                )
-                .align_right(Length::Fill)
-            ]
-            .spacing(8);
-
-            container(content).style(container::rounded_box)
-        };
+        let item = row![
+            icon::record().color(self.color).align_y(Alignment::Center),
+            container(
+                text(measurement_name)
+                    .align_y(Alignment::Center)
+                    .wrapping(text::Wrapping::Glyph),
+            )
+            .width(Length::Fill)
+            .clip(true),
+            container(toggler(self.is_shown).on_toggle(on_toggle)).align_right(Length::Shrink)
+        ]
+        .align_y(Alignment::Center)
+        .spacing(10)
+        .padding(6)
+        .into();
 
         if self.data.is_some() {
-            item.into()
+            item
         } else {
             match impulse_response_progess {
-                impulse_response::Progress::None => item.into(),
+                impulse_response::Progress::None => item,
                 impulse_response::Progress::Computing => {
                     processing_overlay("Impulse Response", item)
                 }

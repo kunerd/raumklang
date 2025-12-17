@@ -1,12 +1,15 @@
 use crate::{
     data, icon,
     ui::{measurement, Loopback},
+    widget::sidebar,
 };
 
 use chrono::{DateTime, Utc};
 use iced::{
-    widget::{button, column, row, rule, space, text},
-    Element, Length,
+    widget::{button, column, right, row, rule, text},
+    Alignment::Center,
+    Element,
+    Length::{self, Fill},
 };
 use raumklang_core::WavLoadError;
 use rfd::FileHandle;
@@ -21,7 +24,7 @@ pub enum Message {
     Remove(usize),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub enum Selected {
     Loopback,
     Measurement(usize),
@@ -54,6 +57,8 @@ pub fn loopback_entry<'a>(
     selected: Option<Selected>,
     signal: &'a Loopback,
 ) -> Element<'a, Message> {
+    let is_active = selected.is_some_and(|s| matches!(s, Selected::Loopback));
+
     let info: Element<_> = match &signal.loaded() {
         None => text("Error").style(text::danger).into(),
         Some(data) => {
@@ -66,32 +71,33 @@ pub fn loopback_entry<'a>(
         .into(),
     };
 
-    let content = column![
-        column![text(&signal.name).size(16)].push(info).spacing(5),
-        rule::horizontal(2),
-        row![
-            space::horizontal(),
-            button("...").style(button::secondary),
-            button(icon::delete())
-                // .on_press(Message::RemoveLoopback)
-                .style(button::danger)
-        ]
-        .spacing(3),
-    ]
-    .clip(true)
-    .spacing(5);
-
-    let style = if let Some(Selected::Loopback) = selected {
-        button::primary
-    } else {
-        button::secondary
-    };
-
-    button(content)
+    let measurement_btn = button(column![text(&signal.name).size(16)].push(info).spacing(5))
         .on_press_maybe(signal.loaded().map(|_| Message::Select(Selected::Loopback)))
-        .style(style)
-        .width(Length::Fill)
-        .into()
+        .style(move |theme, status| {
+            let background = theme.extended_palette().background;
+            let base = button::subtle(theme, status);
+
+            if is_active {
+                base.with_background(background.weak.color)
+            } else {
+                base
+            }
+        })
+        .width(Fill);
+
+    let delete_btn = button(icon::delete())
+        // .on_press(Message::RemoveLoopback)
+        .width(30)
+        .height(30)
+        .style(button::danger);
+
+    let content = row![
+        measurement_btn,
+        rule::vertical(1.0),
+        right(delete_btn).width(Length::Shrink).padding([0, 6])
+    ];
+
+    sidebar::item(content, is_active)
 }
 
 pub fn list_entry<'a>(
@@ -99,10 +105,12 @@ pub fn list_entry<'a>(
     selected: Option<Selected>,
     signal: &'a measurement::State,
 ) -> Element<'a, Message> {
+    let is_active = selected.is_some_and(|s| s == Selected::Measurement(index));
+
     let info: Element<_> = match &signal.loaded() {
         None => text("Error").style(text::danger).into(),
-        Some(loaded) => {
-            let dt: DateTime<Utc> = loaded.data.modified.into();
+        Some(signal) => {
+            let dt: DateTime<Utc> = signal.data.modified.into();
             column![
                 text("Last modified:").size(10),
                 text!("{}", dt.format("%x %X")).size(10)
@@ -111,35 +119,42 @@ pub fn list_entry<'a>(
         .into(),
     };
 
-    let content = column![
-        column![text(signal.name()).size(16),].push(info).spacing(5),
-        rule::horizontal(2),
-        row![
-            space::horizontal(),
-            button("...").style(button::secondary),
-            button(icon::delete())
-                .on_press(Message::Remove(index))
-                .style(button::danger)
-        ]
-        .spacing(3),
-    ]
-    .clip(true)
-    .spacing(5);
+    let measurement_btn = button(
+        column![text(signal.name()).wrapping(text::Wrapping::WordOrGlyph)]
+            .push(info)
+            .spacing(5),
+    )
+    .on_press_maybe(
+        signal
+            .loaded()
+            .map(|_| Message::Select(Selected::Measurement(index))),
+    )
+    .style(move |theme, status| {
+        let background = theme.extended_palette().background;
+        let base = button::subtle(theme, status);
 
-    let style = match selected {
-        Some(Selected::Measurement(selected)) if selected == index => button::primary,
-        _ => button::secondary,
-    };
+        if is_active {
+            base.with_background(background.weak.color)
+        } else {
+            base
+        }
+    })
+    .width(Fill)
+    .clip(true);
 
-    button(content)
-        .on_press_maybe(
-            signal
-                .loaded()
-                .map(|_| Message::Select(Selected::Measurement(index))),
-        )
-        .width(Length::Fill)
-        .style(style)
-        .into()
+    let delete_btn = button(icon::delete().align_x(Center).align_y(Center))
+        .on_press_with(move || Message::Remove(index))
+        .width(30)
+        .height(30)
+        .style(button::danger);
+
+    let content = row![
+        measurement_btn,
+        rule::vertical(1.0),
+        right(delete_btn).width(Length::Shrink).padding([0, 6])
+    ];
+
+    sidebar::item(content, is_active)
 }
 
 pub async fn load_measurement(

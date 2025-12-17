@@ -26,7 +26,7 @@ use raumklang_core::dbfs;
 use iced::{
     alignment::{Horizontal, Vertical},
     futures::{FutureExt, TryFutureExt},
-    keyboard,
+    keyboard, padding,
     widget::{
         button, canvas, center, column, container, opaque, pick_list, right, row, rule, scrollable,
         space, stack, text, text::Wrapping, Button,
@@ -1035,7 +1035,10 @@ impl Main {
             container(scrollable(
                 column![loopback, measurements].spacing(20).padding(10),
             ))
-            .style(container::rounded_box)
+            .style(|theme| {
+                container::rounded_box(theme)
+                    .background(theme.extended_palette().background.weakest.color)
+            })
         };
 
         let content: Element<_> = {
@@ -1082,8 +1085,8 @@ impl Main {
         };
 
         column!(row![
-            container(sidebar).width(Length::FillPortion(1)),
-            container(content).width(Length::FillPortion(4))
+            container(sidebar).width(Length::FillPortion(2)),
+            container(content).width(Length::FillPortion(5))
         ])
         .spacing(10)
         .into()
@@ -1127,9 +1130,17 @@ impl Main {
                 })
         };
 
+        // row![
+        //     container(sidebar).width(Length::FillPortion(2)),
+        //     container(content).center(Length::FillPortion(5))
+        // ]
+        // .spacing(10)
+        // .into()
         row![
-            container(sidebar).width(Length::FillPortion(2)),
-            container(content).center(Length::FillPortion(5))
+            container(sidebar)
+                .width(Length::FillPortion(2))
+                .style(container::bordered_box),
+            container(content).width(Length::FillPortion(5))
         ]
         .spacing(10)
         .into()
@@ -1145,16 +1156,24 @@ impl Main {
             .filter_map(ui::measurement::State::loaded);
 
         let sidebar = {
+            let header = sidebar::header("Frequency Responses");
+
             let entries = loaded_measurements.clone().map(|measurement| {
-                let name = &measurement.name;
-                measurement.analysis.frequency_response.view(
-                    name,
+                let content = measurement.analysis.frequency_response.view(
+                    &measurement.name,
                     measurement.analysis.impulse_response.progress(),
                     Message::FrequencyResponseToggled.with(measurement.id),
-                )
+                );
+
+                sidebar::item(content, false)
             });
 
-            container(column(entries).spacing(10).padding(8)).style(container::rounded_box)
+            container(column![header, scrollable(column(entries).spacing(6))].spacing(6))
+                .padding(6)
+                .style(|theme| {
+                    container::rounded_box(theme)
+                        .background(theme.extended_palette().background.weakest.color)
+                })
         };
 
         let header = {
@@ -1165,14 +1184,15 @@ impl Main {
             )]
         };
 
-        let enabled_frequency_responses =
-            loaded_measurements.map(|m| &m.analysis.frequency_response);
+        let frequency_responses = loaded_measurements
+            .map(|m| &m.analysis.frequency_response)
+            .filter(|fr| fr.is_shown);
 
-        let content = if enabled_frequency_responses
+        let content = if frequency_responses
             .clone()
             .any(|fr| fr.is_shown && fr.result().is_some())
         {
-            let series_list = enabled_frequency_responses
+            let series_list = frequency_responses
                 .flat_map(|item| {
                     let Some(frequency_response) = item.result() else {
                         return [None, None];
@@ -1228,14 +1248,14 @@ impl Main {
 
             container(chart)
         } else {
-            container(text("Please select a frequency respone."))
+            container(text("Please select a frequency respone.")).center(Length::Fill)
         };
 
         row![
             container(sidebar)
-                .width(Length::FillPortion(3))
+                .width(Length::FillPortion(2))
                 .style(container::bordered_box),
-            column![header, container(content).width(Length::FillPortion(10))].spacing(12)
+            column![header, container(content).width(Length::FillPortion(5))].spacing(12)
         ]
         .spacing(10)
         .into()
@@ -1247,11 +1267,7 @@ impl Main {
         cache: &'a canvas::Cache,
     ) -> Element<'a, Message> {
         let sidebar = {
-            let header = {
-                column!(text("For Measurements"), rule::horizontal(1))
-                    .width(Length::Fill)
-                    .spacing(5)
-            };
+            let header = sidebar::header("Spectral Decays");
 
             let entries = self
                 .measurements
@@ -1259,31 +1275,35 @@ impl Main {
                 .filter_map(ui::measurement::State::loaded)
                 .map(|measurement| {
                     let id = measurement.id;
+                    let is_active = selected.is_some_and(|s| s == id);
 
                     let entry = {
+                        // TODO: refactor, basically the same btn as IR and Spectrogram
+                        let dt: DateTime<Utc> = measurement.data.modified.into();
                         let btn = button(
                             column![
                                 text(&measurement.name)
-                                    .size(16)
+                                    .size(14)
                                     .wrapping(Wrapping::WordOrGlyph),
-                                text("10.12.2019 10:24:12").size(10)
+                                text!("{}", dt.format("%x %X")).size(10)
                             ]
                             .clip(true)
-                            .padding(3)
                             .spacing(6),
                         )
-                        // FIXME: rename message
                         .on_press_with(move || Message::ImpulseResponseSelected(id))
                         .width(Length::Fill)
-                        .style(move |theme, status| {
-                            let status = match selected {
-                                Some(selected) if selected == id => button::Status::Hovered,
-                                _ => status,
-                            };
-                            button::secondary(theme, status)
+                        .style(move |theme: &Theme, status| {
+                            let base = button::subtle(theme, status);
+                            let background = theme.extended_palette().background;
+
+                            if is_active {
+                                base.with_background(background.weak.color)
+                            } else {
+                                base
+                            }
                         });
 
-                        container(btn).style(container::dark).padding(6).into()
+                        sidebar::item(btn, is_active)
                     };
 
                     match measurement.analysis.spectral_decay_progress() {
@@ -1298,12 +1318,12 @@ impl Main {
                     }
                 });
 
-            container(scrollable(
-                column![header, column(entries).spacing(3)]
-                    .spacing(10)
-                    .padding(10),
-            ))
-            .style(container::rounded_box)
+            container(column![header, scrollable(column(entries))].spacing(6))
+                .padding(6)
+                .style(|theme| {
+                    container::rounded_box(theme)
+                        .background(theme.extended_palette().background.weakest.color)
+                })
         };
 
         let content = if let Some(decay) = self
@@ -1350,9 +1370,9 @@ impl Main {
 
         row![
             container(sidebar)
-                .width(Length::FillPortion(3))
+                .width(Length::FillPortion(2))
                 .style(container::bordered_box),
-            column![container(content).width(Length::FillPortion(10))].spacing(12)
+            container(content).width(Length::FillPortion(5))
         ]
         .spacing(10)
         .into()
@@ -1364,11 +1384,7 @@ impl Main {
         spectrogram: &'a Spectrogram,
     ) -> Element<'a, Message> {
         let sidebar = {
-            let header = {
-                column!(text("For Measurements"), rule::horizontal(1))
-                    .width(Length::Fill)
-                    .spacing(5)
-            };
+            let header = sidebar::header("Spectrograms");
 
             let entries = self
                 .measurements
@@ -1376,31 +1392,34 @@ impl Main {
                 .filter_map(ui::measurement::State::loaded)
                 .map(|measurement| {
                     let id = measurement.id;
+                    let is_active = selected.is_some_and(|selected| selected == id);
 
                     let entry = {
+                        let dt: DateTime<Utc> = measurement.data.modified.into();
                         let btn = button(
                             column![
                                 text(&measurement.name)
-                                    .size(16)
+                                    .size(14)
                                     .wrapping(Wrapping::WordOrGlyph),
-                                text("10.12.2019 10:24:12").size(10)
+                                text!("{}", dt.format("%x %X")).size(10)
                             ]
                             .clip(true)
-                            .padding(3)
                             .spacing(6),
                         )
-                        // FIXME: rename message
                         .on_press_with(move || Message::ImpulseResponseSelected(id))
                         .width(Length::Fill)
-                        .style(move |theme, status| {
-                            let status = match selected {
-                                Some(selected) if selected == id => button::Status::Hovered,
-                                _ => status,
-                            };
-                            button::secondary(theme, status)
+                        .style(move |theme: &Theme, status| {
+                            let base = button::subtle(theme, status);
+                            let background = theme.extended_palette().background;
+
+                            if is_active {
+                                base.with_background(background.weak.color)
+                            } else {
+                                base
+                            }
                         });
 
-                        container(btn).style(container::dark).padding(6).into()
+                        sidebar::item(btn, is_active)
                     };
 
                     match measurement.analysis.spectrogram_progress() {
@@ -1415,12 +1434,12 @@ impl Main {
                     }
                 });
 
-            container(scrollable(
-                column![header, column(entries).spacing(3)]
-                    .spacing(10)
-                    .padding(10),
-            ))
-            .style(container::rounded_box)
+            container(column![header, scrollable(column(entries))].spacing(6))
+                .padding(6)
+                .style(|theme| {
+                    container::rounded_box(theme)
+                        .background(theme.extended_palette().background.weakest.color)
+                })
         };
 
         let content = if let Some(data) = self
@@ -1445,9 +1464,9 @@ impl Main {
 
         row![
             container(sidebar)
-                .width(Length::FillPortion(3))
+                .width(Length::FillPortion(2))
                 .style(container::bordered_box),
-            column![container(content).width(Length::FillPortion(10))].spacing(12)
+            container(content).width(Length::FillPortion(5))
         ]
         .spacing(10)
         .into()
@@ -1844,15 +1863,13 @@ where
     }
 
     pub fn view(self) -> Element<'a, Message> {
-        let header = row![container(text(self.title).wrapping(Wrapping::WordOrGlyph))
-            .width(Length::Fill)
-            .clip(true),]
-        .extend(self.buttons.into_iter().map(|btn| btn.width(30).into()))
-        .spacing(5)
-        .padding(5)
-        .align_y(Alignment::Center);
+        let header = row![sidebar::header(self.title),]
+            .padding(padding::right(6))
+            .extend(self.buttons.into_iter().map(|btn| btn.width(30).into()))
+            .spacing(6)
+            .align_y(Alignment::Center);
 
-        column!(header, rule::horizontal(1))
+        column!(header)
             .extend(self.entries)
             .width(Length::Fill)
             .spacing(5)
