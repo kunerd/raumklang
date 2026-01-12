@@ -51,12 +51,6 @@ pub(crate) async fn compute(
     let span_before_peak = Samples::from_duration(preferences.span_before_peak, sample_rate);
     let span_after_peak = Samples::from_duration(preferences.span_after_peak, sample_rate);
 
-    // ir.data.rotate_right(window_size);
-
-    // let ir: Vec<_> = ir.data.into_iter().collect();
-    // zero padding
-    dbg!(span_before_peak);
-    dbg!(span_after_peak);
     let ir: Vec<_> = (0..half_window_size + usize::from(span_before_peak))
         .map(|_| Complex32::from(0.0))
         .chain(
@@ -69,8 +63,6 @@ pub(crate) async fn compute(
     let slices = 200;
     let analysed_with = span_before_peak + span_after_peak;
     let shift = usize::from(analysed_with) / (slices - 1);
-
-    dbg!(shift);
 
     let mut start = 0;
     tokio::task::spawn_blocking(move || {

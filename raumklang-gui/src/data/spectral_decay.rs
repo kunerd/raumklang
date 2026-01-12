@@ -64,7 +64,7 @@ pub(crate) async fn compute(
 
     tokio::task::spawn_blocking(move || {
         let mut frequency_responses =
-            Vec::with_capacity(dbg!((analysis_width - usize::from(left_width)) / shift));
+            Vec::with_capacity((analysis_width - usize::from(left_width)) / shift);
 
         let mut planner = FftPlanner::<f32>::new();
         let fft = planner.plan_fft_forward(window_size);

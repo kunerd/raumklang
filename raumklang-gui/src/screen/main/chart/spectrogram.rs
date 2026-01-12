@@ -114,7 +114,6 @@ impl<'a> canvas::Program<Interaction, iced::Theme> for Spectrogram<'a> {
             let sample_rate = first.sample_rate;
             let len = max_bin * 2 + 1;
             let resolution = sample_rate as f32 / len as f32;
-            dbg!(resolution);
 
             let x_min = f32::from(self.offset) * f32::from(self.zoom);
             let x_max = (max_bin as f32 + f32::from(self.offset)) * f32::from(self.zoom);
@@ -124,8 +123,6 @@ impl<'a> canvas::Program<Interaction, iced::Theme> for Spectrogram<'a> {
 
             let x_min = x_min * resolution;
             let x_max = x_max * resolution;
-
-            dbg!(min_index);
 
             let x_range = x_min..=x_max;
 

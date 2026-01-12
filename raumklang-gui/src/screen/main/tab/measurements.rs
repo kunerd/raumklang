@@ -102,7 +102,7 @@ impl Measurements {
                 None => Action::None,
             },
             Message::LoopbackSignalLoaded(Err(err)) => {
-                dbg!(err);
+                log::error(err);
                 Action::None
             }
             Message::AddMeasurement => Action::Task(Task::perform(
@@ -115,7 +115,7 @@ impl Measurements {
                 None => Action::None,
             },
             Message::MeasurementSignalLoaded(Err(err)) => {
-                dbg!(err);
+                log::error(err);
                 Action::None
             }
             Message::Select(selected) => {
