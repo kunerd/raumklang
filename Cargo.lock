@@ -1769,7 +1769,6 @@ dependencies = [
  "hound",
  "iced",
  "iced_fontello",
- "interpolation",
  "jack",
  "ndarray 0.16.1",
  "ndarray-interp",
@@ -1785,7 +1784,6 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tokio-stream",
- "toml",
  "tracing",
  "tracing-subscriber",
  "widgets",
@@ -2422,12 +2420,6 @@ checksum = "879f10e63c20629ecabbb64a8010319738c66a5cd0c29b02d63d272b03751d01"
 dependencies = [
  "generic-array",
 ]
-
-[[package]]
-name = "interpolation"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9c13ae9d91148fcb4aab6654c4c2a7d02a15395ea9e23f65170f175f8b269ce"
 
 [[package]]
 name = "ipnet"
