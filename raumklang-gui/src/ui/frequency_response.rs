@@ -52,6 +52,15 @@ impl FrequencyResponse {
             icon::record().color(self.color).align_y(Alignment::Center),
             container(
                 text(measurement_name)
+                    .size(16)
+                    .style(|theme| {
+                        let mut base = text::default(&theme);
+
+                        let text_color = theme.extended_palette().background.weakest.text;
+                        base.color = Some(text_color);
+
+                        base
+                    })
                     .align_y(Alignment::Center)
                     .wrapping(text::Wrapping::Glyph),
             )

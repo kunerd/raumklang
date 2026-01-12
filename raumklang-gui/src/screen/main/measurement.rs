@@ -120,9 +120,11 @@ pub fn list_entry<'a>(
     };
 
     let measurement_btn = button(
-        column![text(signal.name()).wrapping(text::Wrapping::WordOrGlyph)]
-            .push(info)
-            .spacing(5),
+        column![
+            text(signal.name()).wrapping(text::Wrapping::WordOrGlyph),
+            info
+        ]
+        .spacing(5),
     )
     .on_press_maybe(
         signal

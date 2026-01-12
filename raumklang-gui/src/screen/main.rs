@@ -210,6 +210,7 @@ impl Main {
                 let State::Analysing {
                     ref mut active_tab,
                     ref window,
+                    ref mut selected_impulse_response,
                     ..
                 } = self.state
                 else {
@@ -258,6 +259,7 @@ impl Main {
                 };
 
                 *active_tab = tab;
+                *selected_impulse_response = None;
 
                 tasks
             }
@@ -1283,7 +1285,7 @@ impl Main {
                         let btn = button(
                             column![
                                 text(&measurement.name)
-                                    .size(14)
+                                    .size(16)
                                     .wrapping(Wrapping::WordOrGlyph),
                                 text!("{}", dt.format("%x %X")).size(10)
                             ]
@@ -1399,7 +1401,7 @@ impl Main {
                         let btn = button(
                             column![
                                 text(&measurement.name)
-                                    .size(14)
+                                    .size(16)
                                     .wrapping(Wrapping::WordOrGlyph),
                                 text!("{}", dt.format("%x %X")).size(10)
                             ]
@@ -1542,7 +1544,7 @@ fn impulse_response_item(
         let ir_btn = button(
             column![
                 text(&measurement.name)
-                    .size(14)
+                    .size(16)
                     .wrapping(Wrapping::WordOrGlyph),
                 text!("{}", dt.format("%x %X")).size(10)
             ]
