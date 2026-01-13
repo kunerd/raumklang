@@ -54,7 +54,7 @@ impl FrequencyResponse {
                 text(measurement_name)
                     .size(16)
                     .style(|theme| {
-                        let mut base = text::default(&theme);
+                        let mut base = text::default(theme);
 
                         let text_color = theme.extended_palette().background.weakest.text;
                         base.color = Some(text_color);
