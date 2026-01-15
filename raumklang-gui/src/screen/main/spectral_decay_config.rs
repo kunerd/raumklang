@@ -5,18 +5,20 @@ use crate::{
 };
 
 use iced::{
-    widget::{button, column, container, row, rule, scrollable, space, text},
+    widget::{button, column, container, row, rule, scrollable, space, text, tooltip},
     Alignment::Center,
     Element,
 };
 
 #[derive(Debug, Clone)]
 pub(crate) enum Message {
-    Apply(spectral_decay::Config),
     Discard,
+    ResetToDefault,
+    ResetToPrevious,
     ShiftChanged(String),
     LeftWidthChanged(String),
     RightWidthChanged(String),
+    Apply(spectral_decay::Config),
 }
 
 pub(crate) enum Action {
@@ -25,21 +27,31 @@ pub(crate) enum Action {
 }
 
 #[derive(Debug)]
-pub(crate) struct Config {
+pub(crate) struct SpectralDecayConfig {
     shift: String,
     left_window_width: String,
     right_window_width: String,
-    original_config: spectral_decay::Config,
+    prev_config: spectral_decay::Config,
 }
 
-impl Config {
+impl SpectralDecayConfig {
     pub(crate) fn new(config: spectral_decay::Config) -> Self {
         Self {
             shift: config.shift.as_millis().to_string(),
             left_window_width: config.left_window_width.as_millis().to_string(),
             right_window_width: config.right_window_width.as_millis().to_string(),
-            original_config: config,
+            prev_config: config,
         }
+    }
+
+    pub(crate) fn reset_to_default(&mut self) {
+        self.reset_to_config(spectral_decay::Config::default());
+    }
+
+    pub(crate) fn reset_to_config(&mut self, config: spectral_decay::Config) {
+        self.shift = config.shift.as_millis().to_string();
+        self.left_window_width = config.left_window_width.as_millis().to_string();
+        self.right_window_width = config.right_window_width.as_millis().to_string();
     }
 
     pub(crate) fn update(&mut self, message: Message) -> Option<Action> {
@@ -48,16 +60,22 @@ impl Config {
             Message::Discard => Some(Action::Discard),
             Message::ShiftChanged(shift) => {
                 self.shift = shift;
-
                 None
             }
             Message::LeftWidthChanged(left_width) => {
                 self.left_window_width = left_width;
-
                 None
             }
             Message::RightWidthChanged(right_width) => {
                 self.right_window_width = right_width;
+                None
+            }
+            Message::ResetToDefault => {
+                self.reset_to_default();
+                None
+            }
+            Message::ResetToPrevious => {
+                self.reset_to_config(self.prev_config);
                 None
             }
         }
@@ -81,7 +99,7 @@ impl Config {
                 smoothing_fraction: 24,
             };
 
-            if new_config != self.original_config {
+            if new_config != self.prev_config {
                 Some(new_config)
             } else {
                 None
@@ -95,7 +113,13 @@ impl Config {
                 row![
                     text("Spectral Decay Config").size(18),
                     space::horizontal(),
-                    button(icon::reset().center()).style(button::secondary)
+                    tooltip(
+                        button(icon::reset().center())
+                            .on_press(Message::ResetToDefault)
+                            .style(button::secondary),
+                        "Reset to defaults.",
+                        tooltip::Position::default()
+                    )
                 ],
                 rule::horizontal(1),
                 column![
@@ -133,8 +157,15 @@ impl Config {
                 rule::horizontal(1),
                 row![
                     space::horizontal(),
+                    tooltip(
+                        button(icon::reset().center())
+                            .on_press_maybe(config.map(|_| Message::ResetToPrevious))
+                            .style(button::secondary),
+                        "Reset to previous preferences.",
+                        tooltip::Position::default()
+                    ),
                     button("Close")
-                        .style(button::danger)
+                        .style(button::secondary)
                         .on_press(Message::Discard),
                     button("Apply")
                         .style(button::success)

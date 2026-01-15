@@ -3,7 +3,7 @@ mod frequency_response;
 mod impulse_response;
 mod measurement;
 mod recording;
-mod spectral_decay;
+mod spectral_decay_config;
 mod spectrogram_config;
 
 use crate::{
@@ -13,7 +13,7 @@ use crate::{
     icon, load_project, log,
     screen::main::{
         chart::waveform, impulse_response::processing_overlay,
-        spectrogram_config::SpectrogramConfig,
+        spectral_decay_config::SpectralDecayConfig, spectrogram_config::SpectrogramConfig,
     },
     ui,
     widget::sidebar,
@@ -116,7 +116,7 @@ enum Modal {
     PendingWindow {
         goto_tab: TabId,
     },
-    SpectralDecayConfig(spectral_decay::Config),
+    SpectralDecayConfig(SpectralDecayConfig),
     SpectrogramConfig(SpectrogramConfig),
 }
 
@@ -166,7 +166,7 @@ pub enum Message {
 
     Modal(ModalAction),
     OpenSpectralDecayConfig,
-    SpectralDecayConfig(spectral_decay::Message),
+    SpectralDecayConfig(spectral_decay_config::Message),
     OpenSpectrogramConfig,
     SpectrogramConfig(spectrogram_config::Message),
 }
@@ -895,7 +895,7 @@ impl Main {
                 Task::none()
             }
             Message::OpenSpectralDecayConfig => {
-                self.modal = Modal::SpectralDecayConfig(spectral_decay::Config::new(
+                self.modal = Modal::SpectralDecayConfig(SpectralDecayConfig::new(
                     self.spectral_decay_config,
                 ));
 
@@ -918,7 +918,7 @@ impl Main {
                     Some(action) => {
                         self.modal = Modal::None;
 
-                        if let spectral_decay::Action::Apply(config) = action {
+                        if let spectral_decay_config::Action::Apply(config) = action {
                             self.spectral_decay_config = config;
 
                             self.measurements

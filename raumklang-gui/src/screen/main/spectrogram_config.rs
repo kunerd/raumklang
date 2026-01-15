@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::{data::spectrogram, icon, widget::number_input};
 
 use iced::{
-    widget::{button, column, container, row, rule, scrollable, space, text},
+    widget::{button, column, container, row, rule, scrollable, space, text, tooltip},
     Alignment::Center,
     Element,
 };
@@ -11,6 +11,8 @@ use iced::{
 #[derive(Debug, Clone)]
 pub(crate) enum Message {
     Close,
+    ResetToDefault,
+    ResetToPrevious,
     WindowWidthChanged(String),
     SpanBeforePeakChanged(String),
     SpanAfterPeakChanged(String),
@@ -28,7 +30,7 @@ pub(crate) struct SpectrogramConfig {
     window_width: String,
     span_before_peak: String,
     span_after_peak: String,
-    original_config: spectrogram::Preferences,
+    prev_config: spectrogram::Preferences,
 }
 
 impl SpectrogramConfig {
@@ -37,7 +39,7 @@ impl SpectrogramConfig {
             window_width: config.window_width.as_millis().to_string(),
             span_before_peak: config.span_before_peak.as_millis().to_string(),
             span_after_peak: config.span_after_peak.as_millis().to_string(),
-            original_config: config,
+            prev_config: config,
         }
     }
 
@@ -47,20 +49,25 @@ impl SpectrogramConfig {
             Message::Close => Action::Close,
             Message::WindowWidthChanged(width) => {
                 self.window_width = width;
-
                 Action::None
             }
             Message::SpanBeforePeakChanged(span) => {
                 self.span_before_peak = span;
-
                 Action::None
             }
             Message::SpanAfterPeakChanged(span) => {
                 self.span_after_peak = span;
-
                 Action::None
             }
             Message::Apply(preferences) => Action::ConfigChanged(preferences),
+            Message::ResetToDefault => {
+                self.reset_to_default();
+                Action::None
+            }
+            Message::ResetToPrevious => {
+                self.reset_to_config(self.prev_config);
+                Action::None
+            }
         }
     }
 
@@ -80,7 +87,7 @@ impl SpectrogramConfig {
                 span_after_peak: *span_after_peak,
             };
 
-            if new_config != self.original_config {
+            if new_config != self.prev_config {
                 Some(new_config)
             } else {
                 None
@@ -94,7 +101,13 @@ impl SpectrogramConfig {
                 row![
                     text("Spectrogram Config").size(18),
                     space::horizontal(),
-                    button(icon::reset().center()).style(button::secondary)
+                    tooltip(
+                        button(icon::reset().center())
+                            .on_press(Message::ResetToDefault)
+                            .style(button::secondary),
+                        "Reset to defaults.",
+                        tooltip::Position::default()
+                    )
                 ],
                 rule::horizontal(1),
                 column![
@@ -136,8 +149,15 @@ impl SpectrogramConfig {
                 rule::horizontal(1),
                 row![
                     space::horizontal(),
+                    tooltip(
+                        button(icon::reset().center())
+                            .on_press_maybe(config.map(|_| Message::ResetToPrevious))
+                            .style(button::secondary),
+                        "Reset to defaults.",
+                        tooltip::Position::default()
+                    ),
                     button("Close")
-                        .style(button::danger)
+                        .style(button::secondary)
                         .on_press(Message::Close),
                     button("Apply")
                         .style(button::success)
@@ -151,5 +171,15 @@ impl SpectrogramConfig {
         .width(400)
         .style(container::bordered_box)
         .into()
+    }
+
+    fn reset_to_default(&mut self) {
+        self.reset_to_config(spectrogram::Preferences::default());
+    }
+
+    fn reset_to_config(&mut self, config: spectrogram::Preferences) {
+        self.window_width = config.window_width.as_millis().to_string();
+        self.span_before_peak = config.span_before_peak.as_millis().to_string();
+        self.span_after_peak = config.span_after_peak.as_millis().to_string();
     }
 }

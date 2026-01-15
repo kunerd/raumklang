@@ -42,7 +42,7 @@ pub fn number_input<'a, E: fmt::Display, Message: Clone + 'a>(
             tooltip::Position::Top,
         )
     } else {
-        tooltip(input, text("Number between 0..50"), tooltip::Position::Top)
+        tooltip(input, text(""), tooltip::Position::Top)
     }
     .into()
 }
