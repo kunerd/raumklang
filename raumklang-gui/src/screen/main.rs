@@ -52,7 +52,7 @@ pub struct Main {
     zoom: chart::Zoom,
     offset: chart::Offset,
     project_path: Option<PathBuf>,
-    spectral_decay_config: data::spectral_decay::Preferences,
+    spectral_decay_config: data::spectral_decay::Config,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -882,7 +882,7 @@ impl Main {
             }
             Message::OpenSpectralDecayConfig => {
                 self.modal = Modal::SpectralDecayConfig(spectral_decay::Config::new(
-                    &self.spectral_decay_config,
+                    self.spectral_decay_config,
                 ));
 
                 Task::none()
@@ -1684,7 +1684,7 @@ impl Default for Main {
             signal_cache: canvas::Cache::default(),
             zoom: chart::Zoom::default(),
             offset: chart::Offset::default(),
-            spectral_decay_config: data::spectral_decay::Preferences::default(),
+            spectral_decay_config: data::spectral_decay::Config::default(),
         }
     }
 }
@@ -1742,7 +1742,7 @@ fn compute_frequency_response(
 fn compute_spectral_decay(
     loopback: &ui::Loopback,
     measurement: &mut ui::measurement::Loaded,
-    config: data::spectral_decay::Preferences,
+    config: data::spectral_decay::Config,
 ) -> Task<Message> {
     if measurement.analysis.spectral_decay.result().is_some() {
         return Task::none();

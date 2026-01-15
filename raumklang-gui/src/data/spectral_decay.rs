@@ -9,19 +9,19 @@ use rustfft::{
 
 use crate::data::{smooth_fractional_octave, SampleRate, Samples};
 
-#[derive(Debug, Clone, Copy)]
-pub struct Preferences {
-    pub shift: Duration,
-    pub left_window_width: Duration,
-    pub right_window_width: Duration,
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct Config {
+    pub shift: Shift,
+    pub left_window_width: WindowWidth,
+    pub right_window_width: WindowWidth,
     pub smoothing_fraction: u8,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Shift(usize);
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct Shift(Duration);
 
-#[derive(Debug, Clone, Copy)]
-pub struct WindowWidth(usize);
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct WindowWidth(Duration);
 
 #[derive(Debug, thiserror::Error)]
 pub enum ValidationError {
@@ -32,38 +32,54 @@ pub enum ValidationError {
 }
 
 impl Shift {
-    pub fn from_millis_string(str: &str) -> Result<Self, ValidationError> {
-        let millis: usize = str.parse().map_err(|_| ValidationError::NotANumber)?;
+    pub(crate) fn from_millis_string(str: &str) -> Result<Self, ValidationError> {
+        let millis = str.parse().map_err(|_| ValidationError::NotANumber)?;
 
         if !(1..=50).contains(&millis) {
             return Err(ValidationError::Range);
         }
 
-        Ok(Self(millis))
+        Ok(Self(Duration::from_millis(millis)))
+    }
+
+    pub(crate) fn as_millis(&self) -> u128 {
+        self.0.as_millis()
+    }
+
+    fn from_millis(millis: u64) -> Self {
+        Self(Duration::from_millis(millis))
     }
 }
 
 impl From<&Shift> for Duration {
     fn from(shift: &Shift) -> Self {
-        Duration::from_millis(shift.0 as u64)
+        shift.0
     }
 }
 
 impl WindowWidth {
-    pub fn from_millis_string(str: &str) -> Result<Self, ValidationError> {
-        let millis: usize = str.parse().map_err(|_| ValidationError::NotANumber)?;
+    pub(crate) fn from_millis_string(str: &str) -> Result<Self, ValidationError> {
+        let millis = str.parse().map_err(|_| ValidationError::NotANumber)?;
 
         if !(0..=500).contains(&millis) {
             return Err(ValidationError::Range);
         }
 
-        Ok(Self(millis))
+        Ok(Self(Duration::from_millis(millis)))
+    }
+
+    pub(crate) fn as_millis(&self) -> u128 {
+        self.0.as_millis()
+    }
+
+    fn from_millis(millis: u64) -> Self {
+        Self(Duration::from_millis(millis))
     }
 }
 
 impl From<&WindowWidth> for Duration {
     fn from(value: &WindowWidth) -> Self {
-        Duration::from_millis(value.0 as u64)
+        value.0
     }
 }
 
@@ -82,13 +98,13 @@ impl SpectralDecay {
 
 pub(crate) async fn compute(
     ir: raumklang_core::ImpulseResponse,
-    preferences: Preferences,
+    preferences: Config,
 ) -> SpectralDecay {
     let sample_rate = SampleRate::from(ir.sample_rate);
 
-    let shift: usize = Samples::from_duration(preferences.shift, sample_rate).into();
-    let left_width = Samples::from_duration(preferences.left_window_width, sample_rate);
-    let right_width = Samples::from_duration(preferences.right_window_width, sample_rate);
+    let shift: usize = Samples::from_duration(preferences.shift.0, sample_rate).into();
+    let left_width = Samples::from_duration(preferences.left_window_width.0, sample_rate);
+    let right_width = Samples::from_duration(preferences.right_window_width.0, sample_rate);
     let analysis_width = Samples::from_duration(Duration::from_millis(300), sample_rate);
 
     let window = WindowBuilder::new(
@@ -160,12 +176,12 @@ impl fmt::Debug for SpectralDecay {
     }
 }
 
-impl Default for Preferences {
+impl Default for Config {
     fn default() -> Self {
         Self {
-            shift: Duration::from_millis(20),
-            left_window_width: Duration::from_millis(100),
-            right_window_width: Duration::from_millis(400),
+            shift: Shift::from_millis(20),
+            left_window_width: WindowWidth::from_millis(100),
+            right_window_width: WindowWidth::from_millis(400),
             smoothing_fraction: 24,
         }
     }

@@ -1,10 +1,7 @@
 use std::fmt;
 
 use crate::{
-    data::{
-        self,
-        spectral_decay::{self, WindowWidth},
-    },
+    data::spectral_decay::{self, Shift, WindowWidth},
     icon,
 };
 
@@ -17,7 +14,7 @@ use iced::{
 
 #[derive(Debug, Clone)]
 pub(crate) enum Message {
-    Apply(data::spectral_decay::Preferences),
+    Apply(spectral_decay::Config),
     Discard,
     ShiftChanged(String),
     LeftWidthChanged(String),
@@ -25,7 +22,7 @@ pub(crate) enum Message {
 }
 
 pub(crate) enum Action {
-    Apply(data::spectral_decay::Preferences),
+    Apply(spectral_decay::Config),
     Discard,
 }
 
@@ -34,14 +31,16 @@ pub(crate) struct Config {
     shift: String,
     left_window_width: String,
     right_window_width: String,
+    original_config: spectral_decay::Config,
 }
 
 impl Config {
-    pub(crate) fn new(config: &spectral_decay::Preferences) -> Self {
+    pub(crate) fn new(config: spectral_decay::Config) -> Self {
         Self {
             shift: config.shift.as_millis().to_string(),
             left_window_width: config.left_window_width.as_millis().to_string(),
             right_window_width: config.right_window_width.as_millis().to_string(),
+            original_config: config,
         }
     }
 
@@ -67,7 +66,7 @@ impl Config {
     }
 
     pub(crate) fn view(&self) -> Element<'_, Message> {
-        let shift = data::spectral_decay::Shift::from_millis_string(&self.shift);
+        let shift = Shift::from_millis_string(&self.shift);
         let left_window_width = WindowWidth::from_millis_string(&self.left_window_width);
         let right_window_width = WindowWidth::from_millis_string(&self.right_window_width);
 
@@ -76,13 +75,19 @@ impl Config {
             left_window_width.as_ref(),
             right_window_width.as_ref(),
         ) {
-            Some(data::spectral_decay::Preferences {
-                shift: shift.into(),
-                left_window_width: left_window_width.into(),
-                right_window_width: right_window_width.into(),
+            let new_config = spectral_decay::Config {
+                shift: *shift,
+                left_window_width: *left_window_width,
+                right_window_width: *right_window_width,
                 // TODO make configurable
                 smoothing_fraction: 24,
-            })
+            };
+
+            if new_config != self.original_config {
+                Some(new_config)
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -130,7 +135,7 @@ impl Config {
                 rule::horizontal(1),
                 row![
                     space::horizontal(),
-                    button("Discard")
+                    button("Close")
                         .style(button::danger)
                         .on_press(Message::Discard),
                     button("Apply")
