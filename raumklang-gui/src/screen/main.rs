@@ -4,13 +4,17 @@ mod impulse_response;
 mod measurement;
 mod recording;
 mod spectral_decay;
+mod spectrogram_config;
 
 use crate::{
     data::{
         self, project, spectrogram, window, Project, RecentProjects, SampleRate, Samples, Window,
     },
     icon, load_project, log,
-    screen::main::{chart::waveform, impulse_response::processing_overlay},
+    screen::main::{
+        chart::waveform, impulse_response::processing_overlay,
+        spectrogram_config::SpectrogramConfig,
+    },
     ui,
     widget::sidebar,
     PickAndLoadError,
@@ -53,6 +57,7 @@ pub struct Main {
     offset: chart::Offset,
     project_path: Option<PathBuf>,
     spectral_decay_config: data::spectral_decay::Config,
+    spectrogram_config: spectrogram::Preferences,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -112,6 +117,7 @@ enum Modal {
         goto_tab: TabId,
     },
     SpectralDecayConfig(spectral_decay::Config),
+    SpectrogramConfig(SpectrogramConfig),
 }
 
 #[derive(Debug, Clone)]
@@ -161,6 +167,8 @@ pub enum Message {
     Modal(ModalAction),
     OpenSpectralDecayConfig,
     SpectralDecayConfig(spectral_decay::Message),
+    OpenSpectrogramConfig,
+    SpectrogramConfig(spectrogram_config::Message),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -362,9 +370,11 @@ impl Main {
                         measurement,
                         self.spectral_decay_config,
                     ),
-                    Tab::Spectrogram => {
-                        compute_spectrogram(self.loopback.as_ref().unwrap(), measurement)
-                    }
+                    Tab::Spectrogram => compute_spectrogram(
+                        self.loopback.as_ref().unwrap(),
+                        measurement,
+                        &self.spectrogram_config,
+                    ),
                 }
             }
             Message::ImpulseResponseComputed(id, impulse_response) => {
@@ -413,7 +423,11 @@ impl Main {
                         self.spectral_decay_config,
                     )
                 } else if let Tab::Spectrogram = active_tab {
-                    compute_spectrogram(self.loopback.as_ref().unwrap(), measurement)
+                    compute_spectrogram(
+                        self.loopback.as_ref().unwrap(),
+                        measurement,
+                        &self.spectrogram_config,
+                    )
                 } else {
                     Task::none()
                 }
@@ -936,6 +950,60 @@ impl Main {
                     None => Task::none(),
                 }
             }
+            Message::OpenSpectrogramConfig => {
+                self.modal =
+                    Modal::SpectrogramConfig(SpectrogramConfig::new(self.spectrogram_config));
+
+                Task::none()
+            }
+            Message::SpectrogramConfig(message) => {
+                let Modal::SpectrogramConfig(config) = &mut self.modal else {
+                    return Task::none();
+                };
+
+                let State::Analysing {
+                    selected_impulse_response,
+                    ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
+                match config.update(message) {
+                    spectrogram_config::Action::None => Task::none(),
+                    spectrogram_config::Action::Close => {
+                        self.modal = Modal::None;
+
+                        Task::none()
+                    }
+                    spectrogram_config::Action::ConfigChanged(preferences) => {
+                        self.modal = Modal::None;
+                        self.spectrogram_config = preferences;
+
+                        self.measurements
+                            .iter_mut()
+                            .filter_map(ui::measurement::State::loaded_mut)
+                            .for_each(|m| {
+                                m.analysis.spectrogram = ui::spectrogram::State::default();
+                            });
+
+                        selected_impulse_response
+                            .and_then(|id| {
+                                self.measurements
+                                    .iter_mut()
+                                    .filter_map(ui::measurement::State::loaded_mut)
+                                    .find(|m| m.id == id)
+                            })
+                            .map_or(Task::none(), |measurement| {
+                                compute_spectrogram(
+                                    self.loopback.as_ref().unwrap(),
+                                    measurement,
+                                    &self.spectrogram_config,
+                                )
+                            })
+                    }
+                }
+            }
         }
     }
 
@@ -1031,27 +1099,27 @@ impl Main {
             Modal::PendingWindow { .. } => {
                 let pending_window = {
                     container(
-                    column![
-                        text("Window pending!").size(18),
-                        column![
-                            text("You have modified the window used for frequency response computations."),
-                            text("You need to discard or apply your changes before proceeding."),
-                        ].spacing(5),
-                        row![
-                            space::horizontal(),
-                            button("Discard")
-                                .style(button::danger)
-                                .on_press(Message::Modal(ModalAction::Discard)),
-                            button("Apply")
-                                .style(button::success)
-                                .on_press(Message::Modal(ModalAction::Apply))
-                        ]
-                        .spacing(5)
-                    ]
-                    .spacing(10))
-                    .padding(20)
-                    .width(400)
-                    .style(container::bordered_box)
+                            column![
+                                text("Window pending!").size(18),
+                                column![
+                                    text("You have modified the window used for frequency response computations."),
+                                    text("You need to discard or apply your changes before proceeding."),
+                                ].spacing(5),
+                                row![
+                                    space::horizontal(),
+                                    button("Discard")
+                                        .style(button::danger)
+                                        .on_press(Message::Modal(ModalAction::Discard)),
+                                    button("Apply")
+                                        .style(button::success)
+                                        .on_press(Message::Modal(ModalAction::Apply))
+                                ]
+                                .spacing(5)
+                            ]
+                            .spacing(10))
+                            .padding(20)
+                            .width(400)
+                            .style(container::bordered_box)
                 };
 
                 modal(content, pending_window)
@@ -1059,6 +1127,10 @@ impl Main {
             Modal::SpectralDecayConfig(ref config) => {
                 modal(content, config.view().map(Message::SpectralDecayConfig))
             }
+            Modal::SpectrogramConfig(ref spectrogram_config) => modal(
+                content,
+                spectrogram_config.view().map(Message::SpectrogramConfig),
+            ),
         }
     }
 
@@ -1451,7 +1523,12 @@ impl Main {
         spectrogram: &'a Spectrogram,
     ) -> Element<'a, Message> {
         let sidebar = {
-            let header = sidebar::header("Spectrograms");
+            let header = {
+                let config_btn = button(icon::settings().center())
+                    .style(button::subtle)
+                    .on_press(Message::OpenSpectrogramConfig);
+                Category::new("Spectrograms").push_button(config_btn)
+            };
 
             let entries = self
                 .measurements
@@ -1685,6 +1762,7 @@ impl Default for Main {
             zoom: chart::Zoom::default(),
             offset: chart::Offset::default(),
             spectral_decay_config: data::spectral_decay::Config::default(),
+            spectrogram_config: spectrogram::Preferences::default(),
         }
     }
 }
@@ -1763,6 +1841,7 @@ fn compute_spectral_decay(
 fn compute_spectrogram(
     loopback: &ui::Loopback,
     measurement: &mut ui::measurement::Loaded,
+    config: &spectrogram::Preferences,
 ) -> Task<Message> {
     if measurement.analysis.spectrogram.result().is_some() {
         return Task::none();
@@ -1772,10 +1851,7 @@ fn compute_spectrogram(
         measurement.analysis.spectrogram = ui::spectrogram::State::Computing;
 
         Task::perform(
-            data::spectrogram::compute(
-                impulse_response.origin.clone(),
-                spectrogram::Preferences::default(),
-            ),
+            data::spectrogram::compute(impulse_response.origin.clone(), *config),
             Message::SpectrogramComputed.with(measurement.id),
         )
     } else {
