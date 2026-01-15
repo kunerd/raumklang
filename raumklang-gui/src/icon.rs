@@ -1,6 +1,6 @@
 // Generated automatically by iced_fontello at build time.
 // Do not edit manually. Source: ../fonts/icons.toml
-// ab0a75221ab1331dfa54e7d9f56bf56d76258e259213a7d41471a23956e0b579
+// a31a04bdecfefc20c79309ff6399870e033e64c8b1bb66096a94c9e027c9d20c
 use iced::Font;
 use iced::widget::{Text, text};
 
@@ -19,7 +19,7 @@ pub fn record<'a>() -> Text<'a> {
 }
 
 pub fn reset<'a>() -> Text<'a> {
-    icon("\u{27F3}")
+    icon("\u{27F2}")
 }
 
 pub fn settings<'a>() -> Text<'a> {

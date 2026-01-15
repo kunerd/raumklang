@@ -8,10 +8,11 @@ use rustfft::{
 
 use crate::data::{SampleRate, Samples};
 
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub struct Preferences {
-    span_before_peak: Duration,
-    span_after_peak: Duration,
-    window_width: Duration,
+    pub span_before_peak: Duration,
+    pub span_after_peak: Duration,
+    pub window_width: Duration,
 }
 
 #[derive(Clone)]
