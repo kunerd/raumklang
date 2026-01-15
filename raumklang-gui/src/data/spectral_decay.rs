@@ -9,11 +9,62 @@ use rustfft::{
 
 use crate::data::{smooth_fractional_octave, SampleRate, Samples};
 
+#[derive(Debug, Clone, Copy)]
 pub struct Preferences {
-    shift: Duration,
-    left_window_width: Duration,
-    right_window_width: Duration,
-    smoothing_fraction: u8,
+    pub shift: Duration,
+    pub left_window_width: Duration,
+    pub right_window_width: Duration,
+    pub smoothing_fraction: u8,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Shift(usize);
+
+#[derive(Debug, Clone, Copy)]
+pub struct WindowWidth(usize);
+
+#[derive(Debug, thiserror::Error)]
+pub enum ValidationError {
+    #[error("Must be in range: 0..50")]
+    Range,
+    #[error("Not a number.")]
+    NotANumber,
+}
+
+impl Shift {
+    pub fn from_millis_string(str: &str) -> Result<Self, ValidationError> {
+        let millis: usize = str.parse().map_err(|_| ValidationError::NotANumber)?;
+
+        if !(1..=50).contains(&millis) {
+            return Err(ValidationError::Range);
+        }
+
+        Ok(Self(millis))
+    }
+}
+
+impl From<&Shift> for Duration {
+    fn from(shift: &Shift) -> Self {
+        Duration::from_millis(shift.0 as u64)
+    }
+}
+
+impl WindowWidth {
+    pub fn from_millis_string(str: &str) -> Result<Self, ValidationError> {
+        let millis: usize = str.parse().map_err(|_| ValidationError::NotANumber)?;
+
+        if !(0..=500).contains(&millis) {
+            return Err(ValidationError::Range);
+        }
+
+        Ok(Self(millis))
+    }
+}
+
+impl From<&WindowWidth> for Duration {
+    fn from(value: &WindowWidth) -> Self {
+        Duration::from_millis(value.0 as u64)
+    }
 }
 
 #[derive(Clone)]

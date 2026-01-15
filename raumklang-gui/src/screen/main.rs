@@ -3,16 +3,11 @@ mod frequency_response;
 mod impulse_response;
 mod measurement;
 mod recording;
-
-use chrono::{DateTime, Utc};
-use generic_overlay::generic_overlay::{dropdown_menu, dropdown_root};
-use impulse_response::{ChartOperation, WindowSettings};
-use recording::Recording;
+mod spectral_decay;
 
 use crate::{
     data::{
-        self, project, spectral_decay, spectrogram, window, Project, RecentProjects, SampleRate,
-        Samples, Window,
+        self, project, spectrogram, window, Project, RecentProjects, SampleRate, Samples, Window,
     },
     icon, load_project, log,
     screen::main::{chart::waveform, impulse_response::processing_overlay},
@@ -20,9 +15,13 @@ use crate::{
     widget::sidebar,
     PickAndLoadError,
 };
+use impulse_response::{ChartOperation, WindowSettings};
+use recording::Recording;
 
 use raumklang_core::dbfs;
 
+use chrono::{DateTime, Utc};
+use generic_overlay::generic_overlay::{dropdown_menu, dropdown_root};
 use iced::{
     alignment::{Horizontal, Vertical},
     futures::{FutureExt, TryFutureExt},
@@ -31,9 +30,9 @@ use iced::{
         button, canvas, center, column, container, opaque, pick_list, right, row, rule, scrollable,
         space, stack, text, text::Wrapping, Button,
     },
-    Alignment, Color, Element, Function, Length, Subscription, Task, Theme,
+    Alignment::{self},
+    Color, Element, Function, Length, Subscription, Task, Theme,
 };
-
 use prism::{axis, line_series, Axis, Chart, Labels};
 
 use std::{
@@ -53,6 +52,7 @@ pub struct Main {
     zoom: chart::Zoom,
     offset: chart::Offset,
     project_path: Option<PathBuf>,
+    spectral_decay_config: data::spectral_decay::Preferences,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -111,9 +111,7 @@ enum Modal {
     PendingWindow {
         goto_tab: TabId,
     },
-    // ReplaceLoopback {
-    //     loopback: data::measurement::State<data::measurement::Loopback>,
-    // },
+    SpectralDecayConfig(spectral_decay::Config),
 }
 
 #[derive(Debug, Clone)]
@@ -161,6 +159,8 @@ pub enum Message {
     SpectrogramComputed(ui::measurement::Id, data::Spectrogram),
 
     Modal(ModalAction),
+    OpenSpectralDecayConfig,
+    SpectralDecayConfig(spectral_decay::Message),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -357,9 +357,11 @@ impl Main {
                         compute_impulse_response(self.loopback.as_ref().unwrap(), measurement)
                     }
                     Tab::FrequencyResponses => Task::none(),
-                    Tab::SpectralDecay => {
-                        compute_spectral_decay(self.loopback.as_ref().unwrap(), measurement)
-                    }
+                    Tab::SpectralDecay => compute_spectral_decay(
+                        self.loopback.as_ref().unwrap(),
+                        measurement,
+                        self.spectral_decay_config,
+                    ),
                     Tab::Spectrogram => {
                         compute_spectrogram(self.loopback.as_ref().unwrap(), measurement)
                     }
@@ -405,7 +407,11 @@ impl Main {
                 if let Tab::FrequencyResponses = active_tab {
                     compute_frequency_response(self.loopback.as_ref().unwrap(), measurement, window)
                 } else if let Tab::SpectralDecay = active_tab {
-                    compute_spectral_decay(self.loopback.as_ref().unwrap(), measurement)
+                    compute_spectral_decay(
+                        self.loopback.as_ref().unwrap(),
+                        measurement,
+                        self.spectral_decay_config,
+                    )
                 } else if let Tab::Spectrogram = active_tab {
                     compute_spectrogram(self.loopback.as_ref().unwrap(), measurement)
                 } else {
@@ -874,6 +880,62 @@ impl Main {
 
                 Task::none()
             }
+            Message::OpenSpectralDecayConfig => {
+                self.modal = Modal::SpectralDecayConfig(spectral_decay::Config::new(
+                    &self.spectral_decay_config,
+                ));
+
+                Task::none()
+            }
+            Message::SpectralDecayConfig(message) => {
+                let Modal::SpectralDecayConfig(config) = &mut self.modal else {
+                    return Task::none();
+                };
+
+                let State::Analysing {
+                    selected_impulse_response,
+                    ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
+                match config.update(message) {
+                    Some(action) => {
+                        self.modal = Modal::None;
+
+                        if let spectral_decay::Action::Apply(config) = action {
+                            self.spectral_decay_config = config;
+
+                            self.measurements
+                                .iter_mut()
+                                .filter_map(ui::measurement::State::loaded_mut)
+                                .for_each(|m| {
+                                    m.analysis.spectral_decay =
+                                        ui::spectral_decay::State::default();
+                                });
+
+                            selected_impulse_response
+                                .and_then(|id| {
+                                    self.measurements
+                                        .iter_mut()
+                                        .filter_map(ui::measurement::State::loaded_mut)
+                                        .find(|m| m.id == id)
+                                })
+                                .map_or(Task::none(), |m| {
+                                    compute_spectral_decay(
+                                        self.loopback.as_ref().unwrap(),
+                                        m,
+                                        self.spectral_decay_config,
+                                    )
+                                })
+                        } else {
+                            Task::none()
+                        }
+                    }
+                    None => Task::none(),
+                }
+            }
         }
     }
 
@@ -964,9 +1026,11 @@ impl Main {
 
         let content = container(column![header, container(content).padding(10)]);
 
-        if let Modal::PendingWindow { .. } = self.modal {
-            let pending_window = {
-                container(
+        match self.modal {
+            Modal::None => content.into(),
+            Modal::PendingWindow { .. } => {
+                let pending_window = {
+                    container(
                     column![
                         text("Window pending!").size(18),
                         column![
@@ -988,11 +1052,13 @@ impl Main {
                     .padding(20)
                     .width(400)
                     .style(container::bordered_box)
-            };
+                };
 
-            modal(content, pending_window)
-        } else {
-            content.into()
+                modal(content, pending_window)
+            }
+            Modal::SpectralDecayConfig(ref config) => {
+                modal(content, config.view().map(Message::SpectralDecayConfig))
+            }
         }
     }
 
@@ -1241,12 +1307,6 @@ impl Main {
                 .y_labels(Labels::default().format(&|v| format!("{v:.0}")))
                 .extend_series(series_list)
                 .cache(&chart_settings.cache);
-            // .on_scroll(|state| {
-            //     let pos = state.get_coords();
-            //     let delta = state.scroll_delta();
-            //     let x_range = state.x_range();
-            //     Message::Chart(ChartOperation::Scroll(pos, delta, x_range))
-            // });
 
             container(chart)
         } else {
@@ -1269,7 +1329,12 @@ impl Main {
         cache: &'a canvas::Cache,
     ) -> Element<'a, Message> {
         let sidebar = {
-            let header = sidebar::header("Spectral Decays");
+            let header = {
+                let config_btn = button(icon::settings().center())
+                    .style(button::subtle)
+                    .on_press(Message::OpenSpectralDecayConfig);
+                Category::new("Spectral Decays").push_button(config_btn)
+            };
 
             let entries = self
                 .measurements
@@ -1619,6 +1684,7 @@ impl Default for Main {
             signal_cache: canvas::Cache::default(),
             zoom: chart::Zoom::default(),
             offset: chart::Offset::default(),
+            spectral_decay_config: data::spectral_decay::Preferences::default(),
         }
     }
 }
@@ -1676,6 +1742,7 @@ fn compute_frequency_response(
 fn compute_spectral_decay(
     loopback: &ui::Loopback,
     measurement: &mut ui::measurement::Loaded,
+    config: data::spectral_decay::Preferences,
 ) -> Task<Message> {
     if measurement.analysis.spectral_decay.result().is_some() {
         return Task::none();
@@ -1685,10 +1752,7 @@ fn compute_spectral_decay(
         measurement.analysis.spectral_decay = ui::spectral_decay::State::Computing;
 
         Task::perform(
-            data::spectral_decay::compute(
-                impulse_response.origin.clone(),
-                spectral_decay::Preferences::default(),
-            ),
+            data::spectral_decay::compute(impulse_response.origin.clone(), config),
             Message::SpectralDecayComputed.with(measurement.id),
         )
     } else {
@@ -1821,6 +1885,8 @@ where
             }
         }))
     ]
+    .width(Length::Fill)
+    .height(Length::Fill)
     .into()
 }
 

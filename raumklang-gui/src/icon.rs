@@ -1,6 +1,6 @@
 // Generated automatically by iced_fontello at build time.
 // Do not edit manually. Source: ../fonts/icons.toml
-// e06e6ed8ae0dd802393e4523d83a742b4559aef0d8eff1eb1505292f975784e5
+// ab0a75221ab1331dfa54e7d9f56bf56d76258e259213a7d41471a23956e0b579
 use iced::Font;
 use iced::widget::{Text, text};
 
@@ -16,6 +16,14 @@ pub fn download<'a>() -> Text<'a> {
 
 pub fn record<'a>() -> Text<'a> {
     icon("\u{E0A5}")
+}
+
+pub fn reset<'a>() -> Text<'a> {
+    icon("\u{27F3}")
+}
+
+pub fn settings<'a>() -> Text<'a> {
+    icon("\u{26EF}")
 }
 
 fn icon(codepoint: &str) -> Text<'_> {

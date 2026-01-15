@@ -23,6 +23,7 @@ pub fn landing<'a>(recent_projects: &'a RecentProjects) -> Element<'a, Message> 
             button(n)
                 .on_press(Message::Recent(i))
                 .width(Length::Fill)
+                .style(button::subtle)
                 .into()
         });
 
@@ -32,10 +33,14 @@ pub fn landing<'a>(recent_projects: &'a RecentProjects) -> Element<'a, Message> 
             column!(
                 column![text("Project"), rule::horizontal(2)].spacing(4),
                 column![
-                    button("New").on_press(Message::New).width(Length::Fill),
+                    button("New")
+                        .on_press(Message::New)
+                        .width(Length::Fill)
+                        .style(button::subtle),
                     button("Load ...")
                         .on_press(Message::Load)
                         .width(Length::Fill)
+                        .style(button::subtle)
                 ]
                 .spacing(3)
             )
