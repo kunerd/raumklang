@@ -1008,50 +1008,53 @@ impl Main {
     }
 
     pub fn view<'a>(&'a self, recent_projects: &'a RecentProjects) -> Element<'a, Message> {
-        let recent_project_entries = column(
-            recent_projects
-                .iter()
-                .enumerate()
-                .filter_map(|(i, p)| p.file_name().map(|f| (i, f)))
-                .filter_map(|(i, p)| p.to_str().map(|f| (i, f)))
-                .map(|(i, s)| {
-                    button(s)
-                        .on_press(Message::RecentProject(i))
+        let header = {
+            let project_menu = {
+                let recent_project_entries = column(
+                    recent_projects
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, p)| p.file_name().map(|f| (i, f)))
+                        .filter_map(|(i, p)| p.to_str().map(|f| (i, f)))
+                        .map(|(i, s)| {
+                            button(s)
+                                .on_press(Message::RecentProject(i))
+                                .style(button::subtle)
+                                .width(Length::Fill)
+                                .into()
+                        }),
+                )
+                .width(Length::Fill);
+                column![
+                    button("New")
+                        .on_press(Message::NewProject)
                         .style(button::subtle)
-                        .width(Length::Fill)
-                        .into()
-                }),
-        )
-        .width(Length::Fill);
+                        .width(Length::Fill),
+                    button("Save")
+                        .on_press(Message::SaveProject)
+                        .style(button::subtle)
+                        .width(Length::Fill),
+                    button("Open ...")
+                        .on_press(Message::LoadProject)
+                        .style(button::subtle)
+                        .width(Length::Fill),
+                    dropdown_menu("Open recent ...", recent_project_entries)
+                        .style(button::subtle)
+                        .width(Length::Fill),
+                ]
+                .width(Length::Fill)
+            };
 
-        let project_menu = column![
-            button("New")
-                .on_press(Message::NewProject)
-                .style(button::subtle)
-                .width(Length::Fill),
-            button("Save")
-                .on_press(Message::SaveProject)
-                .style(button::subtle)
-                .width(Length::Fill),
-            button("Open ...")
-                .on_press(Message::LoadProject)
-                .style(button::subtle)
-                .width(Length::Fill),
-            dropdown_menu("Open recent ...", recent_project_entries)
-                .style(button::subtle)
-                .width(Length::Fill),
-        ]
-        .width(Length::Fill);
-
-        let header = container(column![
-            dropdown_root("Project", project_menu).style(button::secondary),
-            match &self.state {
-                State::CollectingMeasuremnts { .. } => TabId::Measurements.view(false),
-                State::Analysing { active_tab, .. } => TabId::from(active_tab).view(true),
-            }
-        ])
-        .width(Length::Fill)
-        .style(container::dark);
+            container(column![
+                dropdown_root("Project", project_menu).style(button::secondary),
+                match &self.state {
+                    State::CollectingMeasuremnts { .. } => TabId::Measurements.view(false),
+                    State::Analysing { active_tab, .. } => TabId::from(active_tab).view(true),
+                }
+            ])
+            .width(Length::Fill)
+            .style(container::dark)
+        };
 
         let content = match &self.state {
             State::CollectingMeasuremnts { recording } => {
@@ -1270,12 +1273,6 @@ impl Main {
                 })
         };
 
-        // row![
-        //     container(sidebar).width(Length::FillPortion(2)),
-        //     container(content).center(Length::FillPortion(5))
-        // ]
-        // .spacing(10)
-        // .into()
         row![
             container(sidebar)
                 .width(Length::FillPortion(2))

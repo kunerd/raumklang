@@ -1,8 +1,10 @@
 use crate::data::RecentProjects;
 
 use iced::{
-    widget::{button, column, container, row, rule, scrollable, space, text},
-    Element, Length,
+    font,
+    widget::{button, column, container, row, scrollable, space, text},
+    Element, Font,
+    Length::{self, Fill},
 };
 
 #[derive(Debug, Clone)]
@@ -27,32 +29,48 @@ pub fn landing<'a>(recent_projects: &'a RecentProjects) -> Element<'a, Message> 
                 .into()
         });
 
+    let bold = |label| {
+        let mut font = Font::default();
+        font.weight = font::Weight::Bold;
+
+        text(label).font(font)
+    };
+
     container(row![
         space::horizontal().width(Length::FillPortion(1)),
         row![
             column!(
-                column![text("Project"), rule::horizontal(2)].spacing(4),
-                column![
-                    button("New")
-                        .on_press(Message::New)
-                        .width(Length::Fill)
-                        .style(button::subtle),
-                    button("Load ...")
-                        .on_press(Message::Load)
-                        .width(Length::Fill)
-                        .style(button::subtle)
-                ]
-                .spacing(3)
+                container(bold("Project"))
+                    .padding(5)
+                    .style(container::rounded_box)
+                    .width(Fill),
+                container(
+                    column![
+                        button("New")
+                            .on_press(Message::New)
+                            .width(Length::Fill)
+                            .style(button::subtle),
+                        button("Load ...")
+                            .on_press(Message::Load)
+                            .width(Length::Fill)
+                            .style(button::subtle)
+                    ]
+                    .spacing(2)
+                    .padding(1)
+                )
+                .style(container::bordered_box)
             )
-            .spacing(10)
-            .padding(5)
             .width(Length::FillPortion(1)),
             column!(
-                column![text("Open recent"), rule::horizontal(2)].spacing(4),
-                scrollable(column(recent_project_entries).spacing(3))
+                container(bold("Recent"))
+                    .padding(5)
+                    .style(container::rounded_box)
+                    .width(Fill),
+                container(scrollable(
+                    column(recent_project_entries).spacing(2).padding(1)
+                ))
+                .style(container::bordered_box)
             )
-            .spacing(10)
-            .padding(5)
             .width(Length::FillPortion(2))
         ]
         .spacing(20)
