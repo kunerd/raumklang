@@ -1,30 +1,41 @@
 mod page;
 
-use page::{measurement, signal_setup, Component, Page};
+use page::Page;
 
 use crate::{
     audio,
-    data::recording::{self, port, volume},
+    data::{
+        self,
+        measurement::config,
+        recording::{self, volume},
+    },
+    screen::main::recording::page::{measurement, Component},
     widget::{meter, RmsPeakMeter},
 };
 
 use iced::{
     alignment::{Horizontal, Vertical},
     time,
-    widget::{canvas, column, container, pick_list, row, rule, slider, text},
-    Element, Length, Subscription, Task,
+    widget::{self, canvas, column, container, pick_list, row, rule, slider, text, text_input},
+    Alignment::Center,
+    Element,
+    Length::{Fill, Shrink},
+    Subscription, Task,
 };
 use tokio_stream::wrappers::ReceiverStream;
 
-use std::{sync::Arc, time::Duration};
+use std::{fmt, sync::Arc, time::Duration};
 
 pub struct Recording {
     kind: Kind,
-    state: State,
     page: Page,
+    state: State,
     volume: f32,
-    selected_out_port: Option<String>,
     selected_in_port: Option<String>,
+    selected_out_port: Option<String>,
+    start_frequency: String,
+    end_frequency: String,
+    duration: String,
     cache: canvas::Cache,
 }
 
@@ -49,17 +60,19 @@ enum State {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    Cancel,
     OutPortSelected(String),
     InPortSelected(String),
-    RunTest(recording::port::Config),
+    StartFrequencyChanged(String),
+    EndFrequencyChanged(String),
+    DurationChanged(String),
+    RunTest(data::measurement::Config),
     AudioBackend(audio::Event),
     RetryTick(time::Instant),
     VolumeChanged(f32),
-    TestOk(port::Config, recording::Volume),
+    TestOk(recording::Volume),
     RmsChanged(audio::Loudness),
     JackNotification(audio::Notification),
-    Cancel,
-    SignalSetup(signal_setup::Message),
     Measurement(measurement::Message),
     Back,
     RetryNow,
@@ -79,6 +92,7 @@ pub enum Result {
 
 impl Recording {
     pub fn new(kind: Kind) -> Self {
+        let config = data::measurement::Config::default();
         Self {
             kind,
             state: State::NotConnected,
@@ -86,6 +100,9 @@ impl Recording {
             volume: 0.5,
             selected_out_port: None,
             selected_in_port: None,
+            start_frequency: format!("{}", config.start_frequency()),
+            end_frequency: format!("{}", config.end_frequency()),
+            duration: format!("{}", config.duration().into_inner().as_secs()),
             cache: canvas::Cache::new(),
         }
     }
@@ -175,7 +192,7 @@ impl Recording {
 
                 Action::None
             }
-            Message::RunTest(config) => {
+            Message::RunTest(signal_config) => {
                 let State::Connected { backend } = &mut self.state else {
                     return Action::None;
                 };
@@ -191,7 +208,7 @@ impl Recording {
                 let handle = handle.abort_on_drop();
 
                 self.page = Page::LoudnessTest {
-                    config,
+                    signal_config,
                     loudness: audio::Loudness::default(),
                     _stream_handle: handle,
                 };
@@ -201,32 +218,26 @@ impl Recording {
                     recv,
                 ]))
             }
-            Message::TestOk(config, _volume) => {
-                self.page = Page::SignalSetup {
-                    config,
-                    page: page::SignalSetup::new(),
-                };
-
-                Action::None
-            }
-            Message::SignalSetup(message) => {
-                let Page::SignalSetup { page, .. } = &mut self.page else {
+            Message::TestOk(_volume) => {
+                let State::Connected { backend } = &self.state else {
                     return Action::None;
                 };
 
-                match page.update(message) {
-                    Some(config) => {
-                        let State::Connected { backend } = &self.state else {
-                            return Action::None;
-                        };
+                let Page::LoudnessTest {
+                    signal_config,
+                    _stream_handle,
+                    // loudness,
+                    //port_config,
+                    ..
+                } = std::mem::take(&mut self.page)
+                else {
+                    return Action::None;
+                };
 
-                        let (page, task) = page::Measurement::new(config, backend);
-                        self.page = Page::Measurement(page);
+                let (page, task) = page::Measurement::new(signal_config, backend);
+                self.page = Page::Measurement(page);
 
-                        Action::Task(task.map(Message::Measurement))
-                    }
-                    None => Action::None,
-                }
+                Action::Task(task.map(Message::Measurement))
             }
             Message::Measurement(message) => {
                 let Page::Measurement(page) = &mut self.page else {
@@ -248,10 +259,9 @@ impl Recording {
                 let page = std::mem::take(&mut self.page);
 
                 self.page = match page {
-                    Page::PortSetup => page,
-                    Page::LoudnessTest { .. } => Page::PortSetup,
-                    Page::SignalSetup { .. } => Page::PortSetup,
-                    Page::Measurement(_measurement) => Page::PortSetup,
+                    Page::Setup => page,
+                    Page::LoudnessTest { .. } => Page::Setup,
+                    Page::Measurement(_measurement) => Page::Setup,
                 };
 
                 Action::None
@@ -265,6 +275,18 @@ impl Recording {
 
                 Action::None
             }
+            Message::StartFrequencyChanged(start) => {
+                self.start_frequency = start;
+                Action::None
+            }
+            Message::EndFrequencyChanged(end) => {
+                self.end_frequency = end;
+                Action::None
+            }
+            Message::DurationChanged(duration) => {
+                self.duration = duration;
+                Action::None
+            }
         }
     }
 
@@ -274,15 +296,9 @@ impl Recording {
                 page::Component::new("Jack").content(text("Jack is not connected."))
             }
             State::Connected { backend } => match &self.page {
-                Page::PortSetup => self.port_setup(backend),
-                Page::LoudnessTest {
-                    config, loudness, ..
-                } => self
-                    .loudness_test(config, loudness)
-                    .back_button("Back", Message::Back),
-                Page::SignalSetup { config, page } => page
-                    .view(config)
-                    .map(Message::SignalSetup)
+                Page::Setup => self.setup(backend),
+                Page::LoudnessTest { loudness, .. } => self
+                    .loudness_test(loudness)
                     .back_button("Back", Message::Back),
                 Page::Measurement(page) => page.view().map(Message::Measurement),
             },
@@ -291,49 +307,108 @@ impl Recording {
 
         let page = page.cancel_button("Cancel", Message::Cancel);
 
-        container(page).width(Length::Fill).into()
+        container(page).width(Fill).into()
     }
 
-    fn port_setup<'a>(&'a self, backend: &'a audio::Backend) -> page::Component<'a, Message> {
-        Component::new("Port Setup")
-            .content(
-                row![
+    fn setup<'a>(&'a self, backend: &'a audio::Backend) -> page::Component<'a, Message> {
+        let range =
+            config::FrequencyRange::from_strings(&self.start_frequency, &self.end_frequency);
+
+        let duration = config::Duration::from_string(&self.duration);
+
+        let ports = {
+            field_group(
+                "Ports",
+                column![
                     column![
-                        text("Out port"),
+                        text("Out"),
                         pick_list(
                             backend.out_ports.as_slice(),
                             self.selected_out_port.as_ref(),
                             Message::OutPortSelected
                         )
+                        .style(|t, s| {
+                            let mut base = pick_list::default(t, s);
+                            base.background =
+                                iced::Background::Color(t.extended_palette().background.base.color);
+                            base
+                        })
                     ]
                     .spacing(6),
                     column![
-                        text("In port"),
+                        text("In"),
                         pick_list(
                             backend.in_ports.as_slice(),
                             self.selected_in_port.as_ref(),
                             Message::InPortSelected
                         )
+                        .style(|t, s| {
+                            let mut base = pick_list::default(t, s);
+                            base.background =
+                                iced::Background::Color(t.extended_palette().background.base.color);
+                            base
+                        })
                     ]
                     .spacing(6),
                 ]
                 .spacing(12),
+                None::<&String>,
             )
+        };
+
+        let signal = {
+            column![
+                field_group(
+                    "Frequency",
+                    row![
+                        number_input(&self.start_frequency, range.is_ok())
+                            .label("From")
+                            .unit("Hz")
+                            .on_input(Message::StartFrequencyChanged),
+                        number_input(&self.end_frequency, range.is_ok())
+                            .label("To")
+                            .unit("Hz")
+                            .on_input(Message::EndFrequencyChanged)
+                    ]
+                    .spacing(8)
+                    .align_y(Center),
+                    range.as_ref().err()
+                ),
+                field_group(
+                    "Duration",
+                    number_input(&self.duration, duration.is_ok())
+                        .unit("s")
+                        .on_input(Message::DurationChanged),
+                    duration.as_ref().err()
+                )
+            ]
+            .spacing(8)
+        };
+
+        let ports_selected = self
+            .selected_out_port
+            .as_ref()
+            .and(self.selected_in_port.as_ref());
+
+        let signal_config = if let (Ok(range), Ok(duration)) = (range, duration) {
+            Some(data::measurement::Config::new(range, duration))
+        } else {
+            None
+        };
+
+        Component::new("Setup")
+            .content(row![ports, signal].spacing(8))
             .next_button(
                 "Start test",
-                recording::port::Config::new(
-                    self.selected_out_port.clone(),
-                    self.selected_in_port.clone(),
-                )
-                .map(Message::RunTest),
+                if let Some(signal_config) = ports_selected.and(signal_config) {
+                    Some(Message::RunTest(signal_config))
+                } else {
+                    None
+                },
             )
     }
 
-    fn loudness_test(
-        &self,
-        config: &port::Config,
-        loudness: &audio::Loudness,
-    ) -> page::Component<'_, Message> {
+    fn loudness_test(&self, loudness: &audio::Loudness) -> page::Component<'_, Message> {
         fn loudness_text<'a>(label: &'a str, value: f32) -> Element<'a, Message> {
             column![
                 text(label).size(12).align_y(Vertical::Bottom),
@@ -341,7 +416,7 @@ impl Recording {
                 text!("{:.1}", value).size(24),
             ]
             .spacing(3)
-            .width(Length::Shrink)
+            .width(Shrink)
             .align_x(Horizontal::Center)
             .into()
         }
@@ -372,22 +447,17 @@ impl Recording {
                                 loudness_text("Peak", loudness.peak),
                             ]
                             .align_y(Vertical::Bottom)
-                            .height(Length::Shrink)
+                            .height(Shrink)
                             .spacing(10)
                         )
-                        .center_x(Length::Fill),
+                        .center_x(Fill),
                         slider(0.0..=1.0, self.volume, Message::VolumeChanged).step(0.01),
                     ]
                     .spacing(10)
                 ]
                 .align_y(Vertical::Center),
             )
-            .next_button(
-                "Next",
-                volume
-                    .ok()
-                    .map(|volume| Message::TestOk(config.clone(), volume)),
-            )
+            .next_button("Next", volume.ok().map(|volume| Message::TestOk(volume)))
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -421,7 +491,7 @@ impl Recording {
                     .align_x(Horizontal::Center)
                     .spacing(16),
                 )
-                .center_x(Length::Fill),
+                .center_x(Fill),
             )
             .next_button("Retry now", Some(Message::RetryNow))
     }
@@ -430,5 +500,119 @@ impl Recording {
 impl Default for Recording {
     fn default() -> Self {
         Self::new(Kind::Measurement)
+    }
+}
+
+fn field_group<'a, Message>(
+    label: &'a str,
+    content: impl Into<Element<'a, Message>>,
+    err: Option<&impl fmt::Display>,
+) -> Element<'a, Message>
+where
+    Message: 'a,
+{
+    container(
+        column![text(label), rule::horizontal(1),]
+            .push(column!().push(err.map(|err| {
+                text!("{}", err).style(|theme| {
+                    let mut style = text::default(theme);
+                    style.color = Some(theme.extended_palette().danger.base.color);
+                    style
+                })
+            })))
+            .push(content)
+            .spacing(6),
+    )
+    .style(container::rounded_box)
+    .padding(8)
+    .into()
+}
+fn number_input<'a, Message>(value: &'a str, is_valid: bool) -> NumberInput<'a, Message>
+where
+    Message: 'a + Clone,
+{
+    NumberInput::new(value, is_valid)
+}
+
+struct NumberInput<'a, Message> {
+    label: Option<&'a str>,
+    value: &'a str,
+    unit: Option<&'a str>,
+    is_valid: bool,
+    on_input: Option<Box<dyn Fn(String) -> Message + 'a>>,
+}
+
+impl<'a, Message> NumberInput<'a, Message>
+where
+    Message: 'a + Clone,
+{
+    fn new(value: &'a str, is_valid: bool) -> Self {
+        Self {
+            label: None,
+            value,
+            unit: None,
+            is_valid,
+            on_input: None,
+        }
+    }
+
+    fn label(mut self, label: &'a str) -> Self {
+        self.label = Some(label);
+        self
+    }
+
+    fn unit(mut self, unit: &'a str) -> Self {
+        self.unit = Some(unit);
+        self
+    }
+
+    fn on_input(mut self, on_input: impl Fn(String) -> Message + 'a) -> Self {
+        self.on_input = Some(Box::new(on_input));
+        self
+    }
+
+    fn view(self) -> Element<'a, Message> {
+        column![]
+            .push(self.label.map(text))
+            .push(
+                row![text_input("", self.value)
+                    .id(widget::Id::new("from"))
+                    .align_x(Horizontal::Right)
+                    .on_input_maybe(self.on_input)
+                    .style(if self.is_valid {
+                        text_input::default
+                    } else {
+                        number_input_danger
+                    })]
+                .push(self.unit.map(text))
+                .align_y(Vertical::Center)
+                .spacing(3),
+            )
+            .into()
+    }
+}
+
+fn number_input_danger(theme: &iced::Theme, status: text_input::Status) -> text_input::Style {
+    let danger = theme.extended_palette().danger;
+
+    let mut style = text_input::default(theme, status);
+
+    let color = match status {
+        text_input::Status::Active => danger.base.color,
+        text_input::Status::Hovered => danger.strong.color,
+        text_input::Status::Focused { is_hovered: _ } => danger.strong.color,
+        text_input::Status::Disabled => danger.weak.color,
+    };
+
+    style.border = style.border.color(color);
+    style
+}
+
+impl<'a, Message> From<NumberInput<'a, Message>> for Element<'a, Message>
+where
+    Message: 'a + Clone,
+{
+    fn from(number_input: NumberInput<'a, Message>) -> Self {
+        number_input.view()
     }
 }

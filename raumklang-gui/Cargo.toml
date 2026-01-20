@@ -20,10 +20,8 @@ serde_json = "1.0"
 rand = "0.8.4"
 jack = "0.13.3"
 ringbuf = "0.4"
-
 rustfft = "6.0"
 directories = "5.0.1"
-
 tracing = "0.1.41"
 tracing-subscriber = {version = "0.3.19", features = ["std", "fmt", "json"]}
 atomic_float = "1.1.0"
@@ -31,13 +29,13 @@ ndarray = "0.16.1"
 ndarray-interp = "0.5.0"
 ndarray-stats = "0.6.0"
 chrono = "0.4.42"
-
 generic_overlay = { package = "widgets", git = "https://github.com/A-Disruption/widgets.git", version = "0.1.0" }
 colorous = "1.0.16"
 
 [dependencies.iced]
 version = "0.14.0-dev"
-features = ["canvas", "tokio", "advanced", "sipper", "debug", "hot"]
+default-features = false
+features = ["canvas", "tokio", "advanced", "sipper", "debug", "hot", "x11"]
 
 [build-dependencies]
 iced_fontello = "0.14.0-dev"
