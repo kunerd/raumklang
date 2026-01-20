@@ -25,11 +25,8 @@ use std::{
 const MAX_RECENT_PROJECTS_ENTRIES: usize = 10;
 
 fn main() -> iced::Result {
-    match log::init() {
-        Ok(_) => (),
-        Err(err) => {
-            eprintln!("Raumklang: failed to initialize logger: {err}")
-        }
+    if let Err(err) = log::init() {
+        eprintln!("Raumklang: failed to initialize logger: {err}")
     }
 
     iced::application(Raumklang::new, Raumklang::update, Raumklang::view)

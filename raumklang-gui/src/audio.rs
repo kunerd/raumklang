@@ -28,7 +28,11 @@ use std::time::Duration;
 #[derive(Debug, Clone)]
 pub enum Event {
     Ready(Backend, Arc<mpsc::Receiver<Notification>>),
-    Error { err: Error, retry_in: Duration },
+    Error {
+        err: Error,
+        retry_tx: std::sync::mpsc::SyncSender<()>,
+        retry_in: Duration,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -342,14 +346,20 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
 
                 let timeout = retry_count * SLEEP_TIME_BASE;
                 let timeout = Duration::from_secs(timeout);
+                let (retry_tx, retry_rx) = std::sync::mpsc::sync_channel(1);
 
                 let _ = sender.blocking_send(Event::Error {
                     err,
+                    retry_tx,
                     retry_in: timeout,
                 });
-                std::thread::sleep(timeout);
 
-                state = State::Connecting(retry_count + 1);
+                let retry_count = match retry_rx.recv_timeout(timeout) {
+                    Ok(_) => retry_count,
+                    Err(_) => retry_count + 1,
+                };
+
+                state = State::Connecting(retry_count);
             }
         }
     }
