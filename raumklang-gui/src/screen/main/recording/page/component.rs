@@ -76,12 +76,20 @@ where
     }
 
     pub fn cancel_button(mut self, label: impl IntoFragment<'a>, message: Message) -> Self {
-        self.cancel_button = button(text(label)).on_press(message).into();
+        self.cancel_button = button(text(label))
+            .style(button::danger)
+            .on_press(message)
+            .into();
         self
     }
 
     pub fn back_button(mut self, label: impl IntoFragment<'a>, message: Message) -> Self {
-        self.back_button = Some(button(text(label)).on_press(message).into());
+        self.back_button = Some(
+            button(text(label))
+                .style(button::secondary)
+                .on_press(message)
+                .into(),
+        );
         self
     }
 

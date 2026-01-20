@@ -43,6 +43,7 @@ enum State {
         err: audio::Error,
         end: std::time::Instant,
         remaining: std::time::Duration,
+        retry_tx: std::sync::mpsc::SyncSender<()>,
     },
 }
 
@@ -61,6 +62,7 @@ pub enum Message {
     SignalSetup(signal_setup::Message),
     Measurement(measurement::Message),
     Back,
+    RetryNow,
 }
 
 pub enum Action {
@@ -103,11 +105,16 @@ impl Recording {
                         Action::None
                     }
                 }
-                audio::Event::Error { err, retry_in } => {
+                audio::Event::Error {
+                    err,
+                    retry_tx,
+                    retry_in,
+                } => {
                     self.state = State::Retrying {
                         err,
                         end: time::Instant::now() + retry_in,
                         remaining: retry_in,
+                        retry_tx,
                     };
                     Action::None
                 }
@@ -249,6 +256,15 @@ impl Recording {
 
                 Action::None
             }
+            Message::RetryNow => {
+                let State::Retrying { retry_tx, .. } = &self.state else {
+                    return Action::None;
+                };
+
+                let _ = retry_tx.send(());
+
+                Action::None
+            }
         }
     }
 
@@ -270,25 +286,7 @@ impl Recording {
                     .back_button("Back", Message::Back),
                 Page::Measurement(page) => page.view().map(Message::Measurement),
             },
-            State::Retrying { err, remaining, .. } => page::Component::new("Jack error").content(
-                container(
-                    column![
-                        text("Connection to Jack audio server failed:")
-                            .size(18)
-                            .style(text::danger),
-                        text!("{err}").style(text::danger),
-                        column![
-                            text("Retrying in").size(14),
-                            text!("{} s", remaining.as_secs()).size(18)
-                        ]
-                        .padding(8)
-                        .align_x(Horizontal::Center),
-                    ]
-                    .align_x(Horizontal::Center)
-                    .spacing(16),
-                )
-                .center_x(Length::Fill),
-            ),
+            State::Retrying { err, remaining, .. } => self.retry(err, remaining),
         };
 
         let page = page.cancel_button("Cancel", Message::Cancel);
@@ -402,6 +400,30 @@ impl Recording {
         }
 
         Subscription::batch(subscriptions)
+    }
+
+    fn retry(&self, err: &audio::Error, remaining: &Duration) -> page::Component<'_, Message> {
+        page::Component::new("Jack error")
+            .content(
+                container(
+                    column![
+                        text("Connection to Jack audio server failed:")
+                            .size(18)
+                            .style(text::danger),
+                        text!("{err}").style(text::danger),
+                        column![
+                            text("Retrying in").size(14),
+                            text!("{} s", remaining.as_secs()).size(18)
+                        ]
+                        .padding(8)
+                        .align_x(Horizontal::Center),
+                    ]
+                    .align_x(Horizontal::Center)
+                    .spacing(16),
+                )
+                .center_x(Length::Fill),
+            )
+            .next_button("Retry now", Some(Message::RetryNow))
     }
 }
 
