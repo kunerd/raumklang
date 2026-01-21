@@ -515,17 +515,18 @@ impl Main {
                 self.smoothing = smoothing;
 
                 if let Some(fraction) = smoothing.fraction() {
-                    let tasks = self.measurements.iter().flat_map(|m| {
-                        let Some(fr) = m
+                    let tasks = self.measurements.iter().flat_map(|measurement| {
+                        let fr = measurement
                             .analysis()
                             .as_ref()
-                            .and_then(|a| a.frequency_response.data.clone())
-                        else {
-                            return None;
-                        };
+                            .and_then(|a| a.frequency_response.data.clone())?;
 
                         Some(Task::perform(
-                            frequency_response::smooth_frequency_response(m.id(), fr, fraction),
+                            frequency_response::smooth_frequency_response(
+                                measurement.id(),
+                                fr,
+                                fraction,
+                            ),
                             Message::FrequencyResponseSmoothed,
                         ))
                     });

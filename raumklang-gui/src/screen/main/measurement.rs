@@ -47,6 +47,7 @@ impl Display for Kind {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum LoadedKind {
     Loopback(ui::Loopback),
