@@ -26,6 +26,7 @@ use raumklang_core::dbfs;
 
 use chrono::{DateTime, Utc};
 use generic_overlay::generic_overlay::{dropdown_menu, dropdown_root};
+
 use iced::{
     alignment::{Horizontal, Vertical},
     futures::{FutureExt, TryFutureExt},
@@ -50,7 +51,6 @@ pub struct Main {
     selected: Option<measurement::Selected>,
     signal_cache: canvas::Cache,
     smoothing: frequency_response::Smoothing,
-    loopback: Option<ui::Loopback>,
     measurements: Vec<ui::measurement::State>,
     modal: Modal,
     zoom: chart::Zoom,
@@ -64,8 +64,10 @@ pub struct Main {
 enum State {
     CollectingMeasuremnts {
         recording: Option<Recording>,
+        loopback: Option<ui::Loopback>,
     },
     Analysing {
+        loopback: ui::Loopback,
         active_tab: Tab,
         window: Window<Samples>,
         selected_impulse_response: Option<ui::measurement::Id>,
@@ -75,7 +77,10 @@ enum State {
 
 impl Default for State {
     fn default() -> Self {
-        State::CollectingMeasuremnts { recording: None }
+        State::CollectingMeasuremnts {
+            recording: None,
+            loopback: None,
+        }
     }
 }
 
@@ -219,6 +224,7 @@ impl Main {
                     ref mut active_tab,
                     ref window,
                     ref mut selected_impulse_response,
+                    ref loopback,
                     ..
                 } = self.state
                 else {
@@ -254,11 +260,7 @@ impl Main {
                             .iter_mut()
                             .flat_map(ui::measurement::State::loaded_mut)
                             .map(|measurement| {
-                                compute_frequency_response(
-                                    self.loopback.as_ref().unwrap(),
-                                    measurement,
-                                    window,
-                                )
+                                compute_frequency_response(loopback, measurement, window)
                             });
                         (Tab::FrequencyResponses, Task::batch(tasks))
                     }
@@ -283,8 +285,16 @@ impl Main {
                     }
                     measurement::Message::Loaded(Ok(result)) => {
                         match Arc::into_inner(result) {
-                            Some(measurement::LoadedKind::Loopback(loopback)) => {
-                                self.loopback = Some(ui::Loopback::from_data(loopback))
+                            Some(measurement::LoadedKind::Loopback(new)) => {
+                                let new = ui::Loopback::from_data(new);
+                                match self.state {
+                                    State::CollectingMeasuremnts {
+                                        ref mut loopback, ..
+                                    } => *loopback = Some(new),
+                                    State::Analysing {
+                                        ref mut loopback, ..
+                                    } => *loopback = new,
+                                }
                             }
                             Some(measurement::LoadedKind::Normal(measurement)) => self
                                 .measurements
@@ -311,13 +321,26 @@ impl Main {
 
                 let state = std::mem::take(&mut self.state);
                 self.state = match (state, self.analysing_possible()) {
-                    (State::CollectingMeasuremnts { recording }, false) => {
-                        State::CollectingMeasuremnts { recording }
-                    }
-                    (State::CollectingMeasuremnts { recording }, true) => State::Analysing {
+                    (
+                        State::CollectingMeasuremnts {
+                            recording,
+                            loopback,
+                        },
+                        false,
+                    ) => State::CollectingMeasuremnts {
+                        recording,
+                        loopback,
+                    },
+                    (
+                        State::CollectingMeasuremnts {
+                            recording,
+                            loopback,
+                        },
+                        true,
+                    ) => State::Analysing {
                         active_tab: Tab::Measurements { recording },
                         window: Window::new(SampleRate::from(
-                            self.loopback
+                            loopback
                                 .as_ref()
                                 .and_then(ui::Loopback::loaded)
                                 .map_or(44_100, |l| l.as_ref().sample_rate()),
@@ -325,11 +348,13 @@ impl Main {
                         .into(),
                         selected_impulse_response: None,
                         charts: Charts::default(),
+                        loopback: loopback.unwrap(),
                     },
                     (old_state, true) => old_state,
-                    (State::Analysing { .. }, false) => {
-                        State::CollectingMeasuremnts { recording: None }
-                    }
+                    (State::Analysing { loopback, .. }, false) => State::CollectingMeasuremnts {
+                        recording: None,
+                        loopback: Some(loopback),
+                    },
                 };
 
                 task.map(Message::Measurements)
@@ -341,6 +366,7 @@ impl Main {
                     ref mut selected_impulse_response,
                     ref mut charts,
                     ref active_tab,
+                    ref loopback,
                     ..
                 } = self.state
                 else {
@@ -361,20 +387,14 @@ impl Main {
 
                 match active_tab {
                     Tab::Measurements { .. } => Task::none(),
-                    Tab::ImpulseResponses { .. } => {
-                        compute_impulse_response(self.loopback.as_ref().unwrap(), measurement)
-                    }
+                    Tab::ImpulseResponses { .. } => compute_impulse_response(loopback, measurement),
                     Tab::FrequencyResponses => Task::none(),
-                    Tab::SpectralDecay => compute_spectral_decay(
-                        self.loopback.as_ref().unwrap(),
-                        measurement,
-                        self.spectral_decay_config,
-                    ),
-                    Tab::Spectrogram => compute_spectrogram(
-                        self.loopback.as_ref().unwrap(),
-                        measurement,
-                        &self.spectrogram_config,
-                    ),
+                    Tab::SpectralDecay => {
+                        compute_spectral_decay(loopback, measurement, self.spectral_decay_config)
+                    }
+                    Tab::Spectrogram => {
+                        compute_spectrogram(loopback, measurement, &self.spectrogram_config)
+                    }
                 }
             }
             Message::ImpulseResponseComputed(id, impulse_response) => {
@@ -383,6 +403,7 @@ impl Main {
                     active_tab,
                     selected_impulse_response,
                     charts,
+                    loopback,
                     ..
                 } = &mut self.state
                 else {
@@ -415,19 +436,11 @@ impl Main {
                 }
 
                 if let Tab::FrequencyResponses = active_tab {
-                    compute_frequency_response(self.loopback.as_ref().unwrap(), measurement, window)
+                    compute_frequency_response(loopback, measurement, window)
                 } else if let Tab::SpectralDecay = active_tab {
-                    compute_spectral_decay(
-                        self.loopback.as_ref().unwrap(),
-                        measurement,
-                        self.spectral_decay_config,
-                    )
+                    compute_spectral_decay(loopback, measurement, self.spectral_decay_config)
                 } else if let Tab::Spectrogram = active_tab {
-                    compute_spectrogram(
-                        self.loopback.as_ref().unwrap(),
-                        measurement,
-                        &self.spectrogram_config,
-                    )
+                    compute_spectrogram(loopback, measurement, &self.spectrogram_config)
                 } else {
                     Task::none()
                 }
@@ -643,9 +656,13 @@ impl Main {
                 Task::done(Message::TabSelected(goto_tab))
             }
             Message::Recording(message) => {
-                let (State::CollectingMeasuremnts { ref mut recording }
+                let (State::CollectingMeasuremnts {
+                    ref mut recording,
+                    loopback: Some(ref mut loopback),
+                }
                 | State::Analysing {
                     active_tab: Tab::Measurements { ref mut recording },
+                    ref mut loopback,
                     ..
                 }) = self.state
                 else {
@@ -661,9 +678,8 @@ impl Main {
                         }
                         recording::Action::Finished(result) => {
                             match result {
-                                recording::Result::Loopback(loopback) => {
-                                    self.loopback =
-                                        Some(ui::Loopback::new("Loopback".to_string(), loopback))
+                                recording::Result::Loopback(new) => {
+                                    *loopback = ui::Loopback::new("Loopback".to_string(), new)
                                 }
                                 recording::Result::Measurement(measurement) => {
                                     self.measurements.push(ui::measurement::State::new(
@@ -682,7 +698,7 @@ impl Main {
                 }
             }
             Message::StartRecording(kind) => match &mut self.state {
-                State::CollectingMeasuremnts { recording }
+                State::CollectingMeasuremnts { recording, .. }
                 | State::Analysing {
                     active_tab: Tab::Measurements { recording },
                     ..
@@ -774,8 +790,16 @@ impl Main {
                 None => Task::none(),
             },
             Message::SaveProject => {
-                let loopback = self
-                    .loopback
+                let loopback = if let State::CollectingMeasuremnts { ref loopback, .. } = self.state
+                {
+                    loopback.as_ref()
+                } else if let State::Analysing { ref loopback, .. } = self.state {
+                    Some(loopback)
+                } else {
+                    None
+                };
+
+                let loopback = loopback
                     .as_ref()
                     .and_then(|l| l.path.clone())
                     .map(|path| project::Loopback(project::Measurement { path }));
@@ -908,6 +932,7 @@ impl Main {
 
                 let State::Analysing {
                     selected_impulse_response,
+                    ref loopback,
                     ..
                 } = self.state
                 else {
@@ -937,11 +962,7 @@ impl Main {
                                         .find(|m| m.id == id)
                                 })
                                 .map_or(Task::none(), |m| {
-                                    compute_spectral_decay(
-                                        self.loopback.as_ref().unwrap(),
-                                        m,
-                                        self.spectral_decay_config,
-                                    )
+                                    compute_spectral_decay(loopback, m, self.spectral_decay_config)
                                 })
                         } else {
                             Task::none()
@@ -963,6 +984,7 @@ impl Main {
 
                 let State::Analysing {
                     selected_impulse_response,
+                    ref loopback,
                     ..
                 } = self.state
                 else {
@@ -995,11 +1017,7 @@ impl Main {
                                     .find(|m| m.id == id)
                             })
                             .map_or(Task::none(), |measurement| {
-                                compute_spectrogram(
-                                    self.loopback.as_ref().unwrap(),
-                                    measurement,
-                                    &self.spectrogram_config,
-                                )
+                                compute_spectrogram(loopback, measurement, &self.spectrogram_config)
                             })
                     }
                 }
@@ -1057,24 +1075,28 @@ impl Main {
         };
 
         let content = match &self.state {
-            State::CollectingMeasuremnts { recording } => {
+            State::CollectingMeasuremnts {
+                recording,
+                loopback,
+            } => {
                 if let Some(recording) = recording {
                     recording.view().map(Message::Recording)
                 } else {
-                    self.measurements_tab()
+                    self.measurements_tab(loopback.as_ref())
                 }
             }
             State::Analysing {
                 active_tab,
                 selected_impulse_response,
                 charts,
+                loopback,
                 ..
             } => match active_tab {
                 Tab::Measurements { recording } => {
                     if let Some(recording) = recording {
                         recording.view().map(Message::Recording)
                     } else {
-                        self.measurements_tab()
+                        self.measurements_tab(Some(loopback))
                     }
                 }
                 Tab::ImpulseResponses {
@@ -1137,7 +1159,7 @@ impl Main {
         }
     }
 
-    fn measurements_tab(&self) -> Element<'_, Message> {
+    fn measurements_tab<'a>(&'a self, loopback: Option<&'a ui::Loopback>) -> Element<'a, Message> {
         let sidebar = {
             let loopback = Category::new("Loopback")
                 .push_button(
@@ -1152,7 +1174,7 @@ impl Main {
                         .on_press(Message::StartRecording(recording::Kind::Loopback))
                         .style(button::secondary),
                 )
-                .push_entry_maybe(self.loopback.as_ref().map(|loopback| {
+                .push_entry_maybe(loopback.map(|loopback| {
                     measurement::loopback_entry(self.selected, loopback).map(Message::Measurements)
                 }));
 
@@ -1205,10 +1227,17 @@ impl Main {
                 .into()
             };
 
+            let loopback = if let State::CollectingMeasuremnts { ref loopback, .. } = self.state {
+                loopback.as_ref()
+            } else if let State::Analysing { ref loopback, .. } = self.state {
+                Some(loopback)
+            } else {
+                None
+            };
+
             let content = if let Some(measurement) =
                 self.selected.and_then(|selected| match selected {
-                    measurement::Selected::Loopback => self
-                        .loopback
+                    measurement::Selected::Loopback => loopback
                         .as_ref()
                         .and_then(|l| l.loaded())
                         .map(AsRef::as_ref),
@@ -1614,27 +1643,31 @@ impl Main {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        let hotkeys_pressed = keyboard::on_key_press(|key, _modifiers| {
-            use keyboard::key::{Key, Named};
+        use keyboard::key;
 
-            Some(match key.as_ref() {
-                Key::Named(Named::Shift) => Message::ShiftKeyPressed,
+        let hotkeys = keyboard::listen().filter_map(|event| match event {
+            keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(key),
+                ..
+            } => match key {
+                key::Named::Shift => Some(Message::ShiftKeyPressed),
                 _ => None?,
-            })
-        });
+            },
 
-        let hotkeys_released = keyboard::on_key_release(|key, _modifiers| {
-            use keyboard::key::{Key, Named};
-
-            Some(match key.as_ref() {
-                Key::Named(Named::Shift) => Message::ShiftKeyReleased,
+            keyboard::Event::KeyReleased {
+                key: keyboard::Key::Named(key),
+                ..
+            } => match key {
+                key::Named::Shift => Some(Message::ShiftKeyReleased),
                 _ => None?,
-            })
+            },
+            _ => None,
         });
 
         let recording = match &self.state {
             State::CollectingMeasuremnts {
                 recording: Some(recording),
+                ..
             }
             | State::Analysing {
                 active_tab:
@@ -1646,11 +1679,22 @@ impl Main {
             _ => Subscription::none(),
         };
 
-        Subscription::batch([hotkeys_pressed, hotkeys_released, recording])
+        Subscription::batch([hotkeys, recording])
     }
 
     fn analysing_possible(&self) -> bool {
-        self.loopback.as_ref().is_some_and(ui::Loopback::is_loaded)
+        let loopback = if let State::CollectingMeasuremnts {
+            loopback: Some(ref loopback),
+            ..
+        }
+        | State::Analysing { ref loopback, .. } = self.state
+        {
+            Some(loopback)
+        } else {
+            None
+        };
+
+        loopback.is_some_and(ui::Loopback::is_loaded)
             && self
                 .measurements
                 .iter()
@@ -1658,7 +1702,16 @@ impl Main {
     }
 
     fn compute_impulse_response(&mut self, id: ui::measurement::Id) -> Task<Message> {
-        let loopback = self.loopback.as_ref().unwrap();
+        let loopback = if let State::CollectingMeasuremnts {
+            loopback: Some(ref loopback),
+            ..
+        }
+        | State::Analysing { ref loopback, .. } = self.state
+        {
+            loopback
+        } else {
+            return Task::none();
+        };
 
         let measurement = self
             .measurements
@@ -1748,8 +1801,10 @@ fn compute_impulse_response(
 impl Default for Main {
     fn default() -> Self {
         Self {
-            state: State::CollectingMeasuremnts { recording: None },
-            loopback: None,
+            state: State::CollectingMeasuremnts {
+                recording: None,
+                loopback: None,
+            },
             measurements: vec![],
             project_path: None,
             selected: None,
