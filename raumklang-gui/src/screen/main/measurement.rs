@@ -49,8 +49,8 @@ impl Display for Kind {
 
 #[derive(Debug)]
 pub enum LoadedKind {
-    Loopback(ui::measurement::Loopback),
-    Normal(ui::measurement::State),
+    Loopback(ui::Loopback),
+    Normal(ui::Measurement),
 }
 
 pub fn loopback_entry<'a>(
@@ -111,36 +111,36 @@ pub fn loopback_entry<'a>(
 
 pub fn list_entry<'a>(
     selected: Option<Selected>,
-    measurement: &'a measurement::State,
+    measurement: &'a ui::Measurement,
 ) -> Element<'a, Message> {
     let id = measurement.id();
 
     let is_active = selected.is_some_and(|s| s == Selected::Measurement(id));
 
-    let info: Element<_> = match &measurement.loaded() {
-        None => text("Error").style(text::danger).into(),
-        Some(signal) => {
-            let dt: DateTime<Utc> = signal.data.modified.into();
+    let info: Element<_> = match &measurement.state {
+        measurement::State::NotLoaded => text("Offline").style(text::danger).into(),
+        measurement::State::Loaded { signal, .. } => {
+            let dt: DateTime<Utc> = signal.modified.into();
             column![
                 text("Last modified:").size(10),
                 text!("{}", dt.format("%x %X")).size(10)
             ]
+            .into()
         }
-        .into(),
     };
 
     let measurement_btn = button(
         column![
-            text(measurement.name()).wrapping(text::Wrapping::WordOrGlyph),
+            text(&measurement.name).wrapping(text::Wrapping::WordOrGlyph),
             info
         ]
         .spacing(5),
     )
-    .on_press_maybe(
-        measurement
-            .loaded()
-            .map(|_| Message::Select(Selected::Measurement(id))),
-    )
+    .on_press_maybe(if measurement.is_loaded() {
+        Some(Message::Select(Selected::Measurement(id)))
+    } else {
+        None
+    })
     .style(move |theme, status| {
         let background = theme.extended_palette().background;
         let base = button::subtle(theme, status);
@@ -177,9 +177,7 @@ pub async fn load_measurement(
         Kind::Loopback => Ok(LoadedKind::Loopback(
             ui::measurement::Loopback::from_file(path).await,
         )),
-        Kind::Normal => Ok(LoadedKind::Normal(
-            ui::measurement::State::from_file(path).await,
-        )),
+        Kind::Normal => Ok(LoadedKind::Normal(ui::Measurement::from_file(path).await)),
     }
     .map(Arc::new)
     .map_err(Arc::new)
