@@ -4,14 +4,11 @@ pub use loopback::Loopback;
 
 use std::{
     fmt::Display,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::atomic::{self, AtomicUsize},
 };
 
-use crate::{
-    data,
-    ui::{impulse_response, spectral_decay, spectrogram, FrequencyResponse},
-};
+use crate::ui::{impulse_response, spectral_decay, spectrogram, FrequencyResponse};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Id(usize);
@@ -24,38 +21,96 @@ impl Display for Id {
 
 #[derive(Debug, Clone)]
 pub enum State {
+    NotLoaded(NotLoaded),
     Loaded(Loaded),
+}
+
+#[derive(Debug, Clone)]
+pub struct NotLoaded {
+    id: Id,
+    name: String,
+    path: Option<PathBuf>,
 }
 
 impl State {
     pub(crate) fn name(&self) -> &String {
         match self {
-            State::Loaded(loaded) => &loaded.name,
+            State::Loaded(inner) => &inner.name,
+            State::NotLoaded(inner) => &inner.name,
         }
     }
 
     pub(crate) fn new(name: String, data: raumklang_core::Measurement) -> Self {
-        Self::Loaded(Loaded::new(name, data))
+        static ID: AtomicUsize = AtomicUsize::new(0);
+        let id = Id(ID.fetch_add(1, atomic::Ordering::Relaxed));
+
+        Self::Loaded(Loaded {
+            id,
+            name,
+            path: None,
+            data,
+            analysis: Analysis::default(),
+        })
     }
 
-    pub(crate) fn from_data(data: data::Measurement) -> Self {
-        Self::Loaded(Loaded::from_data(data))
+    pub async fn from_file(path: impl AsRef<Path>) -> Self {
+        let path = path.as_ref();
+
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_os_string().into_string().ok())
+            .unwrap_or("Unknown".to_string());
+
+        static ID: AtomicUsize = AtomicUsize::new(0);
+        let id = Id(ID.fetch_add(1, atomic::Ordering::Relaxed));
+
+        match raumklang_core::Measurement::from_file(path) {
+            Ok(inner) => {
+                let loaded = Loaded {
+                    id,
+                    name,
+                    path: Some(path.to_path_buf()),
+                    data: inner,
+                    analysis: Analysis::default(),
+                };
+
+                State::Loaded(loaded)
+            }
+            Err(_err) => {
+                let inner = NotLoaded {
+                    id,
+                    name,
+                    path: Some(path.to_path_buf()),
+                };
+
+                State::NotLoaded(inner)
+            }
+        }
     }
 
     pub(crate) fn loaded(&self) -> Option<&Loaded> {
         match self {
             State::Loaded(l) => Some(l),
+            State::NotLoaded(_) => None,
         }
     }
 
     pub(crate) fn loaded_mut(&mut self) -> Option<&mut Loaded> {
         match self {
             State::Loaded(l) => Some(l),
+            State::NotLoaded(_) => None,
         }
     }
 
     pub fn is_loaded(&self) -> bool {
         matches!(self, State::Loaded { .. })
+    }
+
+    pub(crate) fn id(&self) -> Id {
+        match self {
+            State::NotLoaded(not_loaded) => not_loaded.id,
+            State::Loaded(loaded) => loaded.id,
+        }
     }
 }
 
@@ -100,36 +155,6 @@ impl Analysis {
                 spectrogram::State::Computing => spectrogram::Progress::Computing,
                 spectrogram::State::Computed(_) => spectrogram::Progress::Finished,
             },
-        }
-    }
-}
-
-impl Loaded {
-    pub fn new(name: String, data: raumklang_core::Measurement) -> Self {
-        static ID: AtomicUsize = AtomicUsize::new(0);
-
-        let id = Id(ID.fetch_add(1, atomic::Ordering::Relaxed));
-
-        Self {
-            id,
-            name,
-            path: None,
-            data,
-            analysis: Analysis::default(),
-        }
-    }
-
-    pub fn from_data(measurement: data::Measurement) -> Self {
-        static ID: AtomicUsize = AtomicUsize::new(0);
-
-        let id = Id(ID.fetch_add(1, atomic::Ordering::Relaxed));
-
-        Self {
-            id,
-            name: measurement.name,
-            path: Some(measurement.path),
-            data: measurement.inner,
-            analysis: Analysis::default(),
         }
     }
 }

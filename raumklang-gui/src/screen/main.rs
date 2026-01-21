@@ -289,16 +289,26 @@ impl Main {
                             State::CollectingMeasuremnts { loopback, .. } => *loopback = Some(new),
                             State::Analysing { loopback, .. } => *loopback = new,
                         },
-                        Some(measurement::LoadedKind::Normal(measurement)) => self
-                            .measurements
-                            .push(ui::measurement::State::from_data(measurement)),
+                        Some(measurement::LoadedKind::Normal(measurement)) => {
+                            self.measurements.push(measurement)
+                        }
                         None => {}
                     },
                     measurement::Message::Loaded(Err(err)) => {
                         log::error!("{err}");
                     }
-                    measurement::Message::Remove(index) => {
-                        self.measurements.remove(index);
+                    measurement::Message::Remove(id) => {
+                        let index = self.measurements.iter().enumerate().find_map(|(i, m)| {
+                            if m.id() == id {
+                                Some(i)
+                            } else {
+                                None
+                            }
+                        });
+
+                        if let Some(index) = index {
+                            self.measurements.remove(index);
+                        }
                     }
                     measurement::Message::Select(selected) => {
                         self.selected = Some(selected);
@@ -1165,24 +1175,22 @@ impl Main {
                     measurement::loopback_entry(self.selected, loopback).map(Message::Measurements)
                 }));
 
-            let measurements =
-                Category::new("Measurements")
-                    .push_button(button("+").style(button::secondary).on_press(
-                        Message::Measurements(measurement::Message::Load(
+            let measurements = Category::new("Measurements")
+                .push_button(
+                    button("+")
+                        .style(button::secondary)
+                        .on_press(Message::Measurements(measurement::Message::Load(
                             measurement::Kind::Normal,
-                        )),
-                    ))
-                    .push_button(
-                        button(icon::record())
-                            .on_press(Message::StartRecording(recording::Kind::Measurement))
-                            .style(button::secondary),
-                    )
-                    .extend_entries(self.measurements.iter().enumerate().map(
-                        |(id, measurement)| {
-                            measurement::list_entry(id, self.selected, measurement)
-                                .map(Message::Measurements)
-                        },
-                    ));
+                        ))),
+                )
+                .push_button(
+                    button(icon::record())
+                        .on_press(Message::StartRecording(recording::Kind::Measurement))
+                        .style(button::secondary),
+                )
+                .extend_entries(self.measurements.iter().map(|measurement| {
+                    measurement::list_entry(self.selected, measurement).map(Message::Measurements)
+                }));
 
             container(scrollable(
                 column![loopback, measurements].spacing(20).padding(10),
@@ -1228,9 +1236,10 @@ impl Main {
                         .as_ref()
                         .and_then(|l| l.loaded())
                         .map(AsRef::as_ref),
-                    measurement::Selected::Measurement(i) => self
+                    measurement::Selected::Measurement(id) => self
                         .measurements
-                        .get(i)
+                        .iter()
+                        .find(|m| m.id() == id)
                         .and_then(ui::measurement::State::loaded)
                         .map(|m| &m.data),
                 }) {
