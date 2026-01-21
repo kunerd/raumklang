@@ -52,14 +52,14 @@ pub struct Measurement {
     id: Id,
     pub name: String,
     pub path: Option<PathBuf>,
-    pub state: State,
+    state: State,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Id(usize);
 
 #[derive(Debug, Clone)]
-pub enum State {
+enum State {
     NotLoaded,
     Loaded {
         signal: raumklang_core::Measurement,
@@ -68,9 +68,21 @@ pub enum State {
 }
 
 impl Measurement {
-    pub(crate) fn new(name: String, path: Option<PathBuf>, state: State) -> Self {
+    pub(crate) fn new(
+        name: String,
+        path: Option<PathBuf>,
+        signal: Option<raumklang_core::Measurement>,
+    ) -> Self {
         static ID: AtomicUsize = AtomicUsize::new(0);
         let id = Id(ID.fetch_add(1, atomic::Ordering::Relaxed));
+
+        let state = match signal {
+            Some(signal) => State::Loaded {
+                signal,
+                analysis: Analysis::default(),
+            },
+            None => State::NotLoaded,
+        };
 
         Self {
             id,
@@ -88,16 +100,10 @@ impl Measurement {
             .and_then(|n| n.to_os_string().into_string().ok())
             .unwrap_or("Unknown".to_string());
 
-        let state = match raumklang_core::Measurement::from_file(path) {
-            Ok(signal) => State::Loaded {
-                signal,
-                analysis: Analysis::default(),
-            },
-            Err(_err) => State::NotLoaded,
-        };
+        let signal = raumklang_core::Measurement::from_file(path).ok();
 
         let path = Some(path.to_path_buf());
-        Self::new(name, path, state)
+        Self::new(name, path, signal)
     }
 
     pub fn is_loaded(&self) -> bool {

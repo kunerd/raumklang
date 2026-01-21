@@ -394,7 +394,7 @@ impl Main {
                     return Task::none();
                 };
 
-                let ui::measurement::State::Loaded { analysis, .. } = &mut measurement.state else {
+                let Some(analysis) = measurement.analysis_mut() else {
                     return Task::none();
                 };
 
@@ -464,7 +464,7 @@ impl Main {
                     return Task::none();
                 };
 
-                let ui::measurement::State::Loaded { analysis, .. } = &mut measurement.state else {
+                let Some(analysis) = measurement.analysis_mut() else {
                     return Task::none();
                 };
 
@@ -652,10 +652,7 @@ impl Main {
                                     self.measurements.push(ui::Measurement::new(
                                         "Measurement".to_string(),
                                         None,
-                                        ui::measurement::State::Loaded {
-                                            signal,
-                                            analysis: ui::measurement::Analysis::default(),
-                                        },
+                                        Some(signal),
                                     ))
                                 }
                             }
@@ -915,12 +912,9 @@ impl Main {
 
                             self.measurements
                                 .iter_mut()
-                                .for_each(|m| match &mut m.state {
-                                    ui::measurement::State::NotLoaded => {}
-                                    ui::measurement::State::Loaded { analysis, .. } => {
-                                        analysis.spectral_decay =
-                                            ui::spectral_decay::State::default();
-                                    }
+                                .flat_map(ui::Measurement::analysis_mut)
+                                .for_each(|analysis| {
+                                    analysis.spectral_decay = ui::spectral_decay::State::default()
                                 });
 
                             selected_impulse_response
@@ -1234,13 +1228,18 @@ impl Main {
         let sidebar = {
             let header = sidebar::header("Impulse Responses");
 
-            let entries =
-                self.measurements.iter().flat_map(|m| match &m.state {
-                    ui::measurement::State::NotLoaded => None,
-                    ui::measurement::State::Loaded { signal, analysis } => Some(
-                        impulse_response_item(selected, m.id(), &m.name, signal, analysis),
-                    ),
-                });
+            let entries = self.measurements.iter().flat_map(|measurement| {
+                let signal = measurement.signal()?;
+                let analysis = measurement.analysis()?;
+
+                Some(impulse_response_item(
+                    selected,
+                    measurement.id(),
+                    &measurement.name,
+                    signal,
+                    analysis,
+                ))
+            });
 
             container(column![header, scrollable(column(entries))].spacing(6))
                 .padding(6)
@@ -1253,15 +1252,10 @@ impl Main {
         let content = {
             let placeholder = center(text("Impulse response not computed, yet.")).into();
 
-            self.measurements
-                .iter()
-                .find(|m| Some(m.id()) == selected)
-                .and_then(|m| match &m.state {
-                    ui::measurement::State::NotLoaded => None,
-                    ui::measurement::State::Loaded { analysis, .. } => {
-                        analysis.impulse_response.result()
-                    }
-                })
+            selected
+                .and_then(|id| self.measurements.get(id))
+                .and_then(ui::Measurement::analysis)
+                .and_then(|analysis| analysis.impulse_response.result())
                 .map_or(placeholder, |impulse_response| {
                     chart
                         .view(impulse_response, window_settings)
@@ -1287,9 +1281,7 @@ impl Main {
             let header = sidebar::header("Frequency Responses");
 
             let entries = self.measurements.iter().flat_map(|measurement| {
-                let ui::measurement::State::Loaded { analysis, .. } = &measurement.state else {
-                    return None;
-                };
+                let analysis = &measurement.analysis()?;
 
                 let content = analysis.frequency_response.view(
                     &measurement.name,
@@ -1402,52 +1394,53 @@ impl Main {
                 Category::new("Spectral Decays").push_button(config_btn)
             };
 
-            let entries = self.measurements.iter().flat_map(|m| match &m.state {
-                ui::measurement::State::NotLoaded => None,
-                ui::measurement::State::Loaded { signal, analysis } => {
-                    let id = m.id();
-                    let is_active = selected.is_some_and(|s| s == id);
+            let entries = self.measurements.iter().flat_map(|measurement| {
+                let id = measurement.id();
+                let is_active = selected.is_some_and(|s| s == id);
 
-                    let entry = {
-                        // TODO: refactor, basically the same btn as IR and Spectrogram
-                        let dt: DateTime<Utc> = signal.modified.into();
-                        let btn = button(
-                            column![
-                                text(&m.name).size(16).wrapping(Wrapping::WordOrGlyph),
-                                text!("{}", dt.format("%x %X")).size(10)
-                            ]
-                            .clip(true)
-                            .spacing(6),
-                        )
-                        .on_press_with(move || Message::ImpulseResponseSelected(id))
-                        .width(Length::Fill)
-                        .style(move |theme: &Theme, status| {
-                            let base = button::subtle(theme, status);
-                            let background = theme.extended_palette().background;
+                let signal = measurement.signal()?;
+                let entry = {
+                    // TODO: refactor, basically the same btn as IR and Spectrogram
+                    let dt: DateTime<Utc> = signal.modified.into();
+                    let btn = button(
+                        column![
+                            text(&measurement.name)
+                                .size(16)
+                                .wrapping(Wrapping::WordOrGlyph),
+                            text!("{}", dt.format("%x %X")).size(10)
+                        ]
+                        .clip(true)
+                        .spacing(6),
+                    )
+                    .on_press_with(move || Message::ImpulseResponseSelected(id))
+                    .width(Length::Fill)
+                    .style(move |theme: &Theme, status| {
+                        let base = button::subtle(theme, status);
+                        let background = theme.extended_palette().background;
 
-                            if is_active {
-                                base.with_background(background.weak.color)
-                            } else {
-                                base
-                            }
-                        });
-
-                        sidebar::item(btn, is_active)
-                    };
-
-                    let entry = match analysis.spectral_decay_progress() {
-                        ui::spectral_decay::Progress::None => entry,
-                        ui::spectral_decay::Progress::ComputingImpulseResponse => {
-                            processing_overlay("Impulse Response", entry)
+                        if is_active {
+                            base.with_background(background.weak.color)
+                        } else {
+                            base
                         }
-                        ui::spectral_decay::Progress::Computing => {
-                            processing_overlay("Spectral Decay", entry)
-                        }
-                        ui::spectral_decay::Progress::Finished => entry,
-                    };
+                    });
 
-                    Some(entry)
-                }
+                    sidebar::item(btn, is_active)
+                };
+
+                let analysis = measurement.analysis()?;
+                let entry = match analysis.spectral_decay_progress() {
+                    ui::spectral_decay::Progress::None => entry,
+                    ui::spectral_decay::Progress::ComputingImpulseResponse => {
+                        processing_overlay("Impulse Response", entry)
+                    }
+                    ui::spectral_decay::Progress::Computing => {
+                        processing_overlay("Spectral Decay", entry)
+                    }
+                    ui::spectral_decay::Progress::Finished => entry,
+                };
+
+                Some(entry)
             });
 
             container(column![header, scrollable(column(entries))].spacing(6))
@@ -1462,10 +1455,9 @@ impl Main {
             .measurements
             .iter()
             .find(|m| Some(m.id()) == selected)
-            .and_then(|m| match &m.state {
-                ui::measurement::State::NotLoaded => None,
-                ui::measurement::State::Loaded { analysis, .. } => analysis.spectral_decay.result(),
-            }) {
+            .and_then(ui::Measurement::analysis)
+            .and_then(|analysis| analysis.spectral_decay.result())
+        {
             let gradient = colorous::MAGMA;
 
             let series_list = decay.iter().enumerate().map(|(fr_index, fr)| {
@@ -1524,51 +1516,52 @@ impl Main {
                 Category::new("Spectrograms").push_button(config_btn)
             };
 
-            let entries = self.measurements.iter().flat_map(|m| match &m.state {
-                ui::measurement::State::NotLoaded => None,
-                ui::measurement::State::Loaded { signal, analysis } => {
-                    let id = m.id();
-                    let is_active = selected.is_some_and(|selected| selected == id);
+            let entries = self.measurements.iter().flat_map(|measurement| {
+                let id = measurement.id();
+                let is_active = selected.is_some_and(|selected| selected == id);
 
-                    let entry = {
-                        let dt: DateTime<Utc> = signal.modified.into();
-                        let btn = button(
-                            column![
-                                text(&m.name).size(16).wrapping(Wrapping::WordOrGlyph),
-                                text!("{}", dt.format("%x %X")).size(10)
-                            ]
-                            .clip(true)
-                            .spacing(6),
-                        )
-                        .on_press_with(move || Message::ImpulseResponseSelected(id))
-                        .width(Length::Fill)
-                        .style(move |theme: &Theme, status| {
-                            let base = button::subtle(theme, status);
-                            let background = theme.extended_palette().background;
+                let signal = measurement.signal()?;
+                let entry = {
+                    let dt: DateTime<Utc> = signal.modified.into();
+                    let btn = button(
+                        column![
+                            text(&measurement.name)
+                                .size(16)
+                                .wrapping(Wrapping::WordOrGlyph),
+                            text!("{}", dt.format("%x %X")).size(10)
+                        ]
+                        .clip(true)
+                        .spacing(6),
+                    )
+                    .on_press_with(move || Message::ImpulseResponseSelected(id))
+                    .width(Length::Fill)
+                    .style(move |theme: &Theme, status| {
+                        let base = button::subtle(theme, status);
+                        let background = theme.extended_palette().background;
 
-                            if is_active {
-                                base.with_background(background.weak.color)
-                            } else {
-                                base
-                            }
-                        });
-
-                        sidebar::item(btn, is_active)
-                    };
-
-                    let entry = match analysis.spectrogram_progress() {
-                        ui::spectrogram::Progress::None => entry,
-                        ui::spectrogram::Progress::ComputingImpulseResponse => {
-                            processing_overlay("Impulse Response", entry)
+                        if is_active {
+                            base.with_background(background.weak.color)
+                        } else {
+                            base
                         }
-                        ui::spectrogram::Progress::Computing => {
-                            processing_overlay("Spectral Decay", entry)
-                        }
-                        ui::spectrogram::Progress::Finished => entry,
-                    };
+                    });
 
-                    Some(entry)
-                }
+                    sidebar::item(btn, is_active)
+                };
+
+                let analysis = measurement.analysis()?;
+                let entry = match analysis.spectrogram_progress() {
+                    ui::spectrogram::Progress::None => entry,
+                    ui::spectrogram::Progress::ComputingImpulseResponse => {
+                        processing_overlay("Impulse Response", entry)
+                    }
+                    ui::spectrogram::Progress::Computing => {
+                        processing_overlay("Spectral Decay", entry)
+                    }
+                    ui::spectrogram::Progress::Finished => entry,
+                };
+
+                Some(entry)
             });
 
             container(column![header, scrollable(column(entries))].spacing(6))
@@ -1743,15 +1736,17 @@ fn compute_impulse_response(
         return Task::none();
     };
 
-    let ui::measurement::State::Loaded { signal, analysis } = &mut measurement.state else {
-        return Task::none();
+    if let Some(analysis) = &mut measurement.analysis_mut() {
+        if analysis.impulse_response.result().is_some() {
+            return Task::none();
+        }
+
+        analysis.impulse_response = ui::impulse_response::State::Computing;
     };
 
-    if analysis.impulse_response.result().is_some() {
+    let Some(signal) = measurement.signal() else {
         return Task::none();
-    }
-
-    analysis.impulse_response = ui::impulse_response::State::Computing;
+    };
 
     Task::perform(
         data::impulse_response::compute(loopback.clone(), signal.clone()),
@@ -1817,7 +1812,7 @@ fn compute_frequency_response(
 ) -> Task<Message> {
     let id = measurement.id();
 
-    let ui::measurement::State::Loaded { analysis, .. } = &mut measurement.state else {
+    let Some(analysis) = measurement.analysis_mut() else {
         return Task::none();
     };
 
@@ -1838,7 +1833,7 @@ fn compute_spectral_decay(
     measurement: &mut ui::Measurement,
     config: data::spectral_decay::Config,
 ) -> Task<Message> {
-    let ui::measurement::State::Loaded { analysis, .. } = &mut measurement.state else {
+    let Some(analysis) = measurement.analysis_mut() else {
         return Task::none();
     };
 
@@ -1863,7 +1858,7 @@ fn compute_spectrogram(
     measurement: &mut ui::Measurement,
     config: &spectrogram::Preferences,
 ) -> Task<Message> {
-    let ui::measurement::State::Loaded { analysis, .. } = &mut measurement.state else {
+    let Some(analysis) = measurement.analysis_mut() else {
         return Task::none();
     };
 
