@@ -117,9 +117,8 @@ pub fn list_entry<'a>(
 
     let is_active = selected.is_some_and(|s| s == Selected::Measurement(id));
 
-    let info: Element<_> = match &measurement.state {
-        measurement::State::NotLoaded => text("Offline").style(text::danger).into(),
-        measurement::State::Loaded { signal, .. } => {
+    let info: Element<_> = match &measurement.signal() {
+        Some(signal) => {
             let dt: DateTime<Utc> = signal.modified.into();
             column![
                 text("Last modified:").size(10),
@@ -127,6 +126,7 @@ pub fn list_entry<'a>(
             ]
             .into()
         }
+        None => text("Offline").style(text::danger).into(),
     };
 
     let measurement_btn = button(
