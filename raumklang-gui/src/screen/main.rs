@@ -274,53 +274,41 @@ impl Main {
                 tasks
             }
             Message::Measurements(message) => {
-                let task = match message {
+                match message {
                     measurement::Message::Load(kind) => {
                         let dialog_caption = kind.to_string();
 
-                        Task::perform(
+                        return Task::perform(
                             measurement::pick_file_and_load_signal(dialog_caption, kind),
                             measurement::Message::Loaded,
                         )
+                        .map(Message::Measurements);
                     }
-                    measurement::Message::Loaded(Ok(result)) => {
-                        match Arc::into_inner(result) {
-                            Some(measurement::LoadedKind::Loopback(new)) => {
-                                let new = ui::Loopback::from_data(new);
-                                match self.state {
-                                    State::CollectingMeasuremnts {
-                                        ref mut loopback, ..
-                                    } => *loopback = Some(new),
-                                    State::Analysing {
-                                        ref mut loopback, ..
-                                    } => *loopback = new,
-                                }
-                            }
-                            Some(measurement::LoadedKind::Normal(measurement)) => self
-                                .measurements
-                                .push(ui::measurement::State::from_data(measurement)),
-                            None => {}
-                        }
-
-                        Task::none()
-                    }
+                    measurement::Message::Loaded(Ok(result)) => match Arc::into_inner(result) {
+                        Some(measurement::LoadedKind::Loopback(new)) => match &mut self.state {
+                            State::CollectingMeasuremnts { loopback, .. } => *loopback = Some(new),
+                            State::Analysing { loopback, .. } => *loopback = new,
+                        },
+                        Some(measurement::LoadedKind::Normal(measurement)) => self
+                            .measurements
+                            .push(ui::measurement::State::from_data(measurement)),
+                        None => {}
+                    },
                     measurement::Message::Loaded(Err(err)) => {
                         log::error!("{err}");
-                        Task::none()
                     }
                     measurement::Message::Remove(index) => {
                         self.measurements.remove(index);
-                        Task::none()
                     }
                     measurement::Message::Select(selected) => {
                         self.selected = Some(selected);
                         self.signal_cache.clear();
-                        Task::none()
                     }
-                };
+                }
 
+                let is_analysing_possible = self.analysing_possible();
                 let state = std::mem::take(&mut self.state);
-                self.state = match (state, self.analysing_possible()) {
+                self.state = match (state, is_analysing_possible) {
                     (
                         State::CollectingMeasuremnts {
                             recording,
@@ -334,21 +322,20 @@ impl Main {
                     (
                         State::CollectingMeasuremnts {
                             recording,
-                            loopback,
+                            loopback: Some(loopback),
                         },
                         true,
                     ) => State::Analysing {
                         active_tab: Tab::Measurements { recording },
                         window: Window::new(SampleRate::from(
                             loopback
-                                .as_ref()
-                                .and_then(ui::Loopback::loaded)
+                                .loaded()
                                 .map_or(44_100, |l| l.as_ref().sample_rate()),
                         ))
                         .into(),
                         selected_impulse_response: None,
                         charts: Charts::default(),
-                        loopback: loopback.unwrap(),
+                        loopback,
                     },
                     (old_state, true) => old_state,
                     (State::Analysing { loopback, .. }, false) => State::CollectingMeasuremnts {
@@ -357,7 +344,7 @@ impl Main {
                     },
                 };
 
-                task.map(Message::Measurements)
+                Task::none()
             }
             Message::ImpulseResponseSelected(id) => {
                 log::debug!("Impulse response selected: {id}");
@@ -1683,18 +1670,18 @@ impl Main {
     }
 
     fn analysing_possible(&self) -> bool {
-        let loopback = if let State::CollectingMeasuremnts {
+        let is_loopback_loaded = if let State::CollectingMeasuremnts {
             loopback: Some(ref loopback),
             ..
         }
         | State::Analysing { ref loopback, .. } = self.state
         {
-            Some(loopback)
+            loopback.is_loaded()
         } else {
-            None
+            return false;
         };
 
-        loopback.is_some_and(ui::Loopback::is_loaded)
+        is_loopback_loaded
             && self
                 .measurements
                 .iter()

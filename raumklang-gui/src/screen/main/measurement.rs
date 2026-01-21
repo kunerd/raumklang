@@ -1,12 +1,12 @@
 use crate::{
     data, icon,
-    ui::{measurement, Loopback},
+    ui::{self, measurement, Loopback},
     widget::sidebar,
 };
 
 use chrono::{DateTime, Utc};
 use iced::{
-    widget::{button, column, right, row, rule, text},
+    widget::{button, column, right, row, rule, text, tooltip},
     Alignment::Center,
     Element,
     Length::{self, Fill},
@@ -49,30 +49,39 @@ impl Display for Kind {
 
 #[derive(Debug)]
 pub enum LoadedKind {
-    Loopback(data::Loopback),
+    Loopback(ui::measurement::Loopback),
     Normal(data::Measurement),
 }
 
 pub fn loopback_entry<'a>(
     selected: Option<Selected>,
-    signal: &'a Loopback,
+    loopback: &'a Loopback,
 ) -> Element<'a, Message> {
     let is_active = selected.is_some_and(|s| matches!(s, Selected::Loopback));
 
-    let info: Element<_> = match &signal.loaded() {
-        None => text("Error").style(text::danger).into(),
-        Some(data) => {
-            let dt: DateTime<Utc> = data.as_ref().modified.into();
+    let info: Element<_> = match &loopback.state {
+        measurement::loopback::State::Loaded(loopback) => {
+            let dt: DateTime<Utc> = loopback.as_ref().modified.into();
             column![
                 text("Last modified:").size(10),
                 text!("{}", dt.format("%x %X")).size(10)
             ]
+            .into()
         }
+        measurement::loopback::State::NotLoaded(err) => tooltip(
+            text("Offline").style(text::danger),
+            text!("{err}").style(text::danger),
+            tooltip::Position::default(),
+        )
         .into(),
     };
 
-    let measurement_btn = button(column![text(&signal.name).size(16)].push(info).spacing(5))
-        .on_press_maybe(signal.loaded().map(|_| Message::Select(Selected::Loopback)))
+    let measurement_btn = button(column![text(&loopback.name).size(16)].push(info).spacing(5))
+        .on_press_maybe(
+            loopback
+                .loaded()
+                .map(|_| Message::Select(Selected::Loopback)),
+        )
         .style(move |theme, status| {
             let background = theme.extended_palette().background;
             let base = button::subtle(theme, status);
@@ -164,9 +173,9 @@ pub async fn load_measurement(
     kind: Kind,
 ) -> Result<Arc<LoadedKind>, Arc<WavLoadError>> {
     match kind {
-        Kind::Loopback => data::Loopback::from_file(path)
-            .await
-            .map(LoadedKind::Loopback),
+        Kind::Loopback => Ok(LoadedKind::Loopback(
+            ui::measurement::Loopback::from_file(path).await,
+        )),
         Kind::Normal => data::Measurement::from_file(path)
             .await
             .map(LoadedKind::Normal),
