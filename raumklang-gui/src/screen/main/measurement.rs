@@ -1,5 +1,5 @@
 use crate::{
-    data, icon,
+    icon,
     ui::{self, measurement, Loopback},
     widget::sidebar,
 };
@@ -21,13 +21,13 @@ pub enum Message {
     Select(Selected),
     Load(Kind),
     Loaded(Result<Arc<LoadedKind>, Arc<WavLoadError>>),
-    Remove(usize),
+    Remove(measurement::Id),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub enum Selected {
     Loopback,
-    Measurement(usize),
+    Measurement(measurement::Id),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -50,7 +50,7 @@ impl Display for Kind {
 #[derive(Debug)]
 pub enum LoadedKind {
     Loopback(ui::measurement::Loopback),
-    Normal(data::Measurement),
+    Normal(ui::measurement::State),
 }
 
 pub fn loopback_entry<'a>(
@@ -110,13 +110,14 @@ pub fn loopback_entry<'a>(
 }
 
 pub fn list_entry<'a>(
-    index: usize,
     selected: Option<Selected>,
-    signal: &'a measurement::State,
+    measurement: &'a measurement::State,
 ) -> Element<'a, Message> {
-    let is_active = selected.is_some_and(|s| s == Selected::Measurement(index));
+    let id = measurement.id();
 
-    let info: Element<_> = match &signal.loaded() {
+    let is_active = selected.is_some_and(|s| s == Selected::Measurement(id));
+
+    let info: Element<_> = match &measurement.loaded() {
         None => text("Error").style(text::danger).into(),
         Some(signal) => {
             let dt: DateTime<Utc> = signal.data.modified.into();
@@ -130,15 +131,15 @@ pub fn list_entry<'a>(
 
     let measurement_btn = button(
         column![
-            text(signal.name()).wrapping(text::Wrapping::WordOrGlyph),
+            text(measurement.name()).wrapping(text::Wrapping::WordOrGlyph),
             info
         ]
         .spacing(5),
     )
     .on_press_maybe(
-        signal
+        measurement
             .loaded()
-            .map(|_| Message::Select(Selected::Measurement(index))),
+            .map(|_| Message::Select(Selected::Measurement(id))),
     )
     .style(move |theme, status| {
         let background = theme.extended_palette().background;
@@ -154,7 +155,7 @@ pub fn list_entry<'a>(
     .clip(true);
 
     let delete_btn = button(icon::delete().align_x(Center).align_y(Center))
-        .on_press_with(move || Message::Remove(index))
+        .on_press_with(move || Message::Remove(id))
         .width(30)
         .height(30)
         .style(button::danger);
@@ -176,9 +177,9 @@ pub async fn load_measurement(
         Kind::Loopback => Ok(LoadedKind::Loopback(
             ui::measurement::Loopback::from_file(path).await,
         )),
-        Kind::Normal => data::Measurement::from_file(path)
-            .await
-            .map(LoadedKind::Normal),
+        Kind::Normal => Ok(LoadedKind::Normal(
+            ui::measurement::State::from_file(path).await,
+        )),
     }
     .map(Arc::new)
     .map_err(Arc::new)
