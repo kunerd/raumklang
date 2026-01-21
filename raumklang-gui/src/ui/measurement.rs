@@ -10,12 +10,40 @@ use std::{
 
 use crate::ui::{impulse_response, spectral_decay, spectrogram, FrequencyResponse};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Id(usize);
+#[derive(Debug, Default, Clone)]
+pub struct List(Vec<Measurement>);
 
-impl Display for Id {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+impl List {
+    pub fn iter(&self) -> impl Iterator<Item = &Measurement> + Clone {
+        self.0.iter()
+    }
+
+    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = &mut Measurement> {
+        self.0.iter_mut()
+    }
+
+    pub fn loaded_mut(&mut self) -> impl Iterator<Item = &mut Measurement> {
+        self.0.iter_mut().filter(|m| m.is_loaded())
+    }
+
+    pub(crate) fn push(&mut self, measurement: Measurement) {
+        self.0.push(measurement);
+    }
+
+    pub(crate) fn remove(&mut self, id: Id) -> Option<Measurement> {
+        let Some((index, _)) = self.0.iter().enumerate().find(|(_, m)| m.id() == id) else {
+            return None;
+        };
+
+        Some(self.0.remove(index))
+    }
+
+    pub(crate) fn get(&self, id: Id) -> Option<&Measurement> {
+        self.0.iter().find(|m| m.id == id)
+    }
+
+    pub(crate) fn get_mut(&mut self, id: Id) -> Option<&mut Measurement> {
+        self.0.iter_mut().find(|m| m.id == id)
     }
 }
 
@@ -26,6 +54,9 @@ pub struct Measurement {
     pub path: Option<PathBuf>,
     pub state: State,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Id(usize);
 
 #[derive(Debug, Clone)]
 pub enum State {
@@ -85,6 +116,28 @@ impl Measurement {
 
     pub(crate) fn id(&self) -> Id {
         self.id
+    }
+
+    pub fn analysis(&self) -> Option<&Analysis> {
+        match self.state {
+            State::NotLoaded => None,
+            State::Loaded { ref analysis, .. } => Some(analysis),
+        }
+    }
+
+    pub fn analysis_mut(&mut self) -> Option<&mut Analysis> {
+        match self.state {
+            State::NotLoaded => None,
+            State::Loaded {
+                ref mut analysis, ..
+            } => Some(analysis),
+        }
+    }
+}
+
+impl Display for Id {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
