@@ -400,11 +400,7 @@ impl Recording {
             .content(row![ports, signal].spacing(8))
             .next_button(
                 "Start test",
-                if let Some(signal_config) = ports_selected.and(signal_config) {
-                    Some(Message::RunTest(signal_config))
-                } else {
-                    None
-                },
+                ports_selected.and(signal_config).map(Message::RunTest),
             )
     }
 
@@ -457,7 +453,7 @@ impl Recording {
                 ]
                 .align_y(Vertical::Center),
             )
-            .next_button("Next", volume.ok().map(|volume| Message::TestOk(volume)))
+            .next_button("Next", volume.ok().map(Message::TestOk))
     }
 
     pub fn subscription(&self) -> Subscription<Message> {

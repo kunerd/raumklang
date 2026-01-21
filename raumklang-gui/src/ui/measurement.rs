@@ -31,9 +31,12 @@ impl List {
     }
 
     pub(crate) fn remove(&mut self, id: Id) -> Option<Measurement> {
-        let Some((index, _)) = self.0.iter().enumerate().find(|(_, m)| m.id() == id) else {
-            return None;
-        };
+        let index = self
+            .0
+            .iter()
+            .enumerate()
+            .find(|(_, m)| m.id == id)
+            .map(|(i, _)| i)?;
 
         Some(self.0.remove(index))
     }
@@ -58,6 +61,7 @@ pub struct Measurement {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Id(usize);
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 enum State {
     NotLoaded,
