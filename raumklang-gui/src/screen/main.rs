@@ -51,7 +51,7 @@ pub struct Main {
     selected: Option<measurement::Selected>,
     signal_cache: canvas::Cache,
     smoothing: frequency_response::Smoothing,
-    measurements: Vec<ui::Measurement>,
+    measurements: ui::measurement::List,
     modal: Modal,
     zoom: chart::Zoom,
     offset: chart::Offset,
@@ -255,9 +255,9 @@ impl Main {
                         Task::none(),
                     ),
                     (_, TabId::FrequencyResponses) => {
-                        let tasks = self.measurements.iter_mut().filter(|m| m.is_loaded()).map(
-                            |measurement| compute_frequency_response(loopback, measurement, window),
-                        );
+                        let tasks = self.measurements.loaded_mut().map(|measurement| {
+                            compute_frequency_response(loopback, measurement, window)
+                        });
                         (Tab::FrequencyResponses, Task::batch(tasks))
                     }
                     (_, TabId::SpectralDecay) => (Tab::SpectralDecay, Task::none()),
@@ -294,17 +294,7 @@ impl Main {
                         log::error!("{err}");
                     }
                     measurement::Message::Remove(id) => {
-                        let index = self.measurements.iter().enumerate().find_map(|(i, m)| {
-                            if m.id() == id {
-                                Some(i)
-                            } else {
-                                None
-                            }
-                        });
-
-                        if let Some(index) = index {
-                            self.measurements.remove(index);
-                        }
+                        self.measurements.remove(id);
                     }
                     measurement::Message::Select(selected) => {
                         self.selected = Some(selected);
@@ -369,12 +359,7 @@ impl Main {
                 *selected_impulse_response = Some(id);
                 charts.impulse_responses.data_cache.clear();
 
-                let Some(measurement) = self
-                    .measurements
-                    .iter_mut()
-                    .filter(|m| m.is_loaded())
-                    .find(|m| m.id() == id)
-                else {
+                let Some(measurement) = self.measurements.get_mut(id) else {
                     return Task::none();
                 };
 
@@ -405,7 +390,7 @@ impl Main {
 
                 let impulse_response = ui::ImpulseResponse::from_data(impulse_response);
 
-                let Some(measurement) = self.measurements.iter_mut().find(|m| m.id() == id) else {
+                let Some(measurement) = self.measurements.get_mut(id) else {
                     return Task::none();
                 };
 
@@ -475,7 +460,7 @@ impl Main {
                     return Task::none();
                 };
 
-                let Some(measurement) = self.measurements.iter_mut().find(|m| m.id() == id) else {
+                let Some(measurement) = self.measurements.get_mut(id) else {
                     return Task::none();
                 };
 
@@ -509,14 +494,9 @@ impl Main {
 
                 let Some(frequency_response) = self
                     .measurements
-                    .iter_mut()
-                    .find(|m| m.id() == id)
-                    .and_then(|m| match &mut m.state {
-                        ui::measurement::State::NotLoaded => None,
-                        ui::measurement::State::Loaded { analysis, .. } => {
-                            Some(&mut analysis.frequency_response)
-                        }
-                    })
+                    .get_mut(id)
+                    .and_then(ui::Measurement::analysis_mut)
+                    .map(|analysis| &mut analysis.frequency_response)
                 else {
                     return Task::none();
                 };
@@ -535,33 +515,27 @@ impl Main {
                 self.smoothing = smoothing;
 
                 if let Some(fraction) = smoothing.fraction() {
-                    let tasks = self
-                        .measurements
-                        .iter()
-                        .flat_map(|m| match &m.state {
-                            ui::measurement::State::NotLoaded => None,
-                            ui::measurement::State::Loaded { analysis, .. } => analysis
-                                .frequency_response
-                                .result()
-                                .map(|fr| (m.id(), fr.clone())),
-                        })
-                        .map(|(id, fr)| {
-                            Task::perform(
-                                frequency_response::smooth_frequency_response(id, fr, fraction),
-                                Message::FrequencyResponseSmoothed,
-                            )
-                        });
+                    let tasks = self.measurements.iter().flat_map(|m| {
+                        let Some(fr) = m
+                            .analysis()
+                            .as_ref()
+                            .and_then(|a| a.frequency_response.data.clone())
+                        else {
+                            return None;
+                        };
+
+                        Some(Task::perform(
+                            frequency_response::smooth_frequency_response(m.id(), fr, fraction),
+                            Message::FrequencyResponseSmoothed,
+                        ))
+                    });
 
                     Task::batch(tasks)
                 } else {
                     self.measurements
                         .iter_mut()
-                        .flat_map(|m| match &mut m.state {
-                            ui::measurement::State::NotLoaded => None,
-                            ui::measurement::State::Loaded { analysis, .. } => {
-                                Some(&mut analysis.frequency_response)
-                            }
-                        })
+                        .flat_map(ui::Measurement::analysis_mut)
+                        .map(|analysis| &mut analysis.frequency_response)
                         .for_each(|fr| fr.smoothed = None);
 
                     charts.frequency_responses.cache.clear();
@@ -574,18 +548,12 @@ impl Main {
                     return Task::none();
                 };
 
-                let Some(frequency_response) = self.measurements.iter_mut().find_map(|m| {
-                    if m.id() == id {
-                        match &mut m.state {
-                            ui::measurement::State::NotLoaded => None,
-                            ui::measurement::State::Loaded { analysis, .. } => {
-                                Some(&mut analysis.frequency_response)
-                            }
-                        }
-                    } else {
-                        None
-                    }
-                }) else {
+                let Some(frequency_response) = self
+                    .measurements
+                    .get_mut(id)
+                    .and_then(ui::Measurement::analysis_mut)
+                    .map(|analysis| &mut analysis.frequency_response)
+                else {
                     return Task::none();
                 };
 
@@ -641,13 +609,11 @@ impl Main {
                     ModalAction::Apply => {
                         self.measurements
                             .iter_mut()
-                            .for_each(|m| match &mut m.state {
-                                ui::measurement::State::NotLoaded => {}
-                                ui::measurement::State::Loaded { analysis, .. } => {
-                                    analysis.frequency_response = ui::FrequencyResponse::default();
-                                    analysis.spectral_decay = ui::spectral_decay::State::default();
-                                    analysis.spectrogram = ui::spectrogram::State::default();
-                                }
+                            .flat_map(ui::Measurement::analysis_mut)
+                            .for_each(|analysis| {
+                                analysis.frequency_response = ui::FrequencyResponse::default();
+                                analysis.spectral_decay = ui::spectral_decay::State::default();
+                                analysis.spectrogram = ui::spectrogram::State::default();
                             });
 
                         *window = window_settings.window.clone();
@@ -739,18 +705,9 @@ impl Main {
 
                 if let Some(impulse_response) = self
                     .measurements
-                    .iter()
-                    .find_map(|m| {
-                        if m.id() == id {
-                            let ui::measurement::State::Loaded { analysis, .. } = &m.state else {
-                                return None;
-                            };
-
-                            analysis.impulse_response.result()
-                        } else {
-                            None
-                        }
-                    })
+                    .get(id)
+                    .and_then(ui::Measurement::analysis)
+                    .and_then(|analysis| analysis.impulse_response.result())
                     .cloned()
                 {
                     Task::perform(
@@ -869,14 +826,9 @@ impl Main {
 
                 let Some(spectral_decay) = self
                     .measurements
-                    .iter_mut()
-                    .find(|m| m.id() == id)
-                    .and_then(|m| match &mut m.state {
-                        ui::measurement::State::NotLoaded => None,
-                        ui::measurement::State::Loaded { analysis, .. } => {
-                            Some(&mut analysis.spectral_decay)
-                        }
-                    })
+                    .get_mut(id)
+                    .and_then(ui::Measurement::analysis_mut)
+                    .map(|analysis| &mut analysis.spectral_decay)
                 else {
                     return Task::none();
                 };
@@ -918,14 +870,9 @@ impl Main {
 
                 let Some(spectrogram) = self
                     .measurements
-                    .iter_mut()
-                    .find(|m| m.id() == id)
-                    .and_then(|m| match &mut m.state {
-                        ui::measurement::State::NotLoaded => None,
-                        ui::measurement::State::Loaded { analysis, .. } => {
-                            Some(&mut analysis.spectrogram)
-                        }
-                    })
+                    .get_mut(id)
+                    .and_then(ui::Measurement::analysis_mut)
+                    .map(|analysis| &mut analysis.spectrogram)
                 else {
                     return Task::none();
                 };
@@ -1025,15 +972,13 @@ impl Main {
 
                         self.measurements
                             .iter_mut()
-                            .for_each(|m| match &mut m.state {
-                                ui::measurement::State::NotLoaded => {}
-                                ui::measurement::State::Loaded { analysis, .. } => {
-                                    analysis.spectrogram = ui::spectrogram::State::default();
-                                }
+                            .flat_map(ui::Measurement::analysis_mut)
+                            .for_each(|analysis| {
+                                analysis.spectrogram = ui::spectrogram::State::default()
                             });
 
                         selected_impulse_response
-                            .and_then(|id| self.measurements.iter_mut().find(|m| m.id() == id))
+                            .and_then(|id| self.measurements.get_mut(id))
                             .map_or(Task::none(), |measurement| {
                                 compute_spectrogram(loopback, measurement, &self.spectrogram_config)
                             })
@@ -1374,13 +1319,8 @@ impl Main {
         let frequency_responses = self
             .measurements
             .iter()
-            .flat_map(|m| match &m.state {
-                ui::measurement::State::NotLoaded => None,
-                ui::measurement::State::Loaded { analysis, .. } => {
-                    Some(&analysis.frequency_response)
-                }
-            })
-            .filter(|fr| fr.is_shown);
+            .flat_map(ui::Measurement::analysis)
+            .map(|analysis| &analysis.frequency_response);
 
         let content = if frequency_responses
             .clone()
@@ -1639,14 +1579,12 @@ impl Main {
                 })
         };
 
-        let content = if let Some(data) = self
-            .measurements
-            .iter()
-            .find(|m| Some(m.id()) == selected)
-            .and_then(|m| match &m.state {
-                ui::measurement::State::NotLoaded => None,
-                ui::measurement::State::Loaded { analysis, .. } => analysis.spectrogram.result(),
-            }) {
+        let spectrogram_data = selected
+            .and_then(|id| self.measurements.get(id))
+            .and_then(ui::Measurement::analysis)
+            .and_then(|analysis| analysis.spectrogram.result());
+
+        let content = if let Some(data) = spectrogram_data {
             let chart = chart::spectrogram(
                 data,
                 &spectrogram.cache,
@@ -1737,7 +1675,7 @@ impl Main {
             return Task::none();
         };
 
-        let measurement = self.measurements.iter_mut().find(|m| m.id() == id).unwrap();
+        let measurement = self.measurements.get_mut(id).unwrap();
 
         compute_impulse_response(loopback, measurement)
     }
@@ -1828,7 +1766,7 @@ impl Default for Main {
                 recording: None,
                 loopback: None,
             },
-            measurements: vec![],
+            measurements: ui::measurement::List::default(),
             project_path: None,
             selected: None,
             smoothing: frequency_response::Smoothing::default(),
