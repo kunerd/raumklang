@@ -2,8 +2,6 @@ pub mod config;
 
 pub use config::Config;
 
-use raumklang_core::WavLoadError;
-
 use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
@@ -29,28 +27,5 @@ impl Measurement {
             path: path.to_path_buf(),
             inner,
         })
-    }
-}
-
-#[derive(Debug)]
-pub struct Loopback {
-    pub name: String,
-    pub path: PathBuf,
-    pub inner: raumklang_core::Loopback,
-}
-
-impl Loopback {
-    fn from_measurement(measurement: Measurement) -> Self {
-        Self {
-            name: measurement.name,
-            path: measurement.path,
-            inner: raumklang_core::Loopback::new(measurement.inner),
-        }
-    }
-
-    pub async fn from_file(path: impl AsRef<Path>) -> Result<Self, WavLoadError> {
-        let measurement = Measurement::from_file(path).await?;
-
-        Ok(Self::from_measurement(measurement))
     }
 }
