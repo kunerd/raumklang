@@ -20,37 +20,33 @@ impl Display for Id {
 }
 
 #[derive(Debug, Clone)]
-pub enum State {
-    NotLoaded(NotLoaded),
-    Loaded(Loaded),
+pub struct Measurement {
+    id: Id,
+    pub name: String,
+    pub path: Option<PathBuf>,
+    pub state: State,
 }
 
 #[derive(Debug, Clone)]
-pub struct NotLoaded {
-    id: Id,
-    name: String,
-    path: Option<PathBuf>,
+pub enum State {
+    NotLoaded,
+    Loaded {
+        signal: raumklang_core::Measurement,
+        analysis: Analysis,
+    },
 }
 
-impl State {
-    pub(crate) fn name(&self) -> &String {
-        match self {
-            State::Loaded(inner) => &inner.name,
-            State::NotLoaded(inner) => &inner.name,
-        }
-    }
-
-    pub(crate) fn new(name: String, data: raumklang_core::Measurement) -> Self {
+impl Measurement {
+    pub(crate) fn new(name: String, path: Option<PathBuf>, state: State) -> Self {
         static ID: AtomicUsize = AtomicUsize::new(0);
         let id = Id(ID.fetch_add(1, atomic::Ordering::Relaxed));
 
-        Self::Loaded(Loaded {
+        Self {
             id,
             name,
-            path: None,
-            data,
-            analysis: Analysis::default(),
-        })
+            path,
+            state,
+        }
     }
 
     pub async fn from_file(path: impl AsRef<Path>) -> Self {
@@ -61,66 +57,35 @@ impl State {
             .and_then(|n| n.to_os_string().into_string().ok())
             .unwrap_or("Unknown".to_string());
 
-        static ID: AtomicUsize = AtomicUsize::new(0);
-        let id = Id(ID.fetch_add(1, atomic::Ordering::Relaxed));
+        let state = match raumklang_core::Measurement::from_file(path) {
+            Ok(signal) => State::Loaded {
+                signal,
+                analysis: Analysis::default(),
+            },
+            Err(_err) => State::NotLoaded,
+        };
 
-        match raumklang_core::Measurement::from_file(path) {
-            Ok(inner) => {
-                let loaded = Loaded {
-                    id,
-                    name,
-                    path: Some(path.to_path_buf()),
-                    data: inner,
-                    analysis: Analysis::default(),
-                };
-
-                State::Loaded(loaded)
-            }
-            Err(_err) => {
-                let inner = NotLoaded {
-                    id,
-                    name,
-                    path: Some(path.to_path_buf()),
-                };
-
-                State::NotLoaded(inner)
-            }
-        }
-    }
-
-    pub(crate) fn loaded(&self) -> Option<&Loaded> {
-        match self {
-            State::Loaded(l) => Some(l),
-            State::NotLoaded(_) => None,
-        }
-    }
-
-    pub(crate) fn loaded_mut(&mut self) -> Option<&mut Loaded> {
-        match self {
-            State::Loaded(l) => Some(l),
-            State::NotLoaded(_) => None,
-        }
+        let path = Some(path.to_path_buf());
+        Self::new(name, path, state)
     }
 
     pub fn is_loaded(&self) -> bool {
-        matches!(self, State::Loaded { .. })
+        match &self.state {
+            State::NotLoaded => false,
+            State::Loaded { .. } => true,
+        }
+    }
+
+    pub fn signal(&self) -> Option<&raumklang_core::Measurement> {
+        match &self.state {
+            State::NotLoaded => None,
+            State::Loaded { signal, .. } => Some(signal),
+        }
     }
 
     pub(crate) fn id(&self) -> Id {
-        match self {
-            State::NotLoaded(not_loaded) => not_loaded.id,
-            State::Loaded(loaded) => loaded.id,
-        }
+        self.id
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct Loaded {
-    pub id: Id,
-    pub name: String,
-    pub path: Option<PathBuf>,
-    pub data: raumklang_core::Measurement,
-    pub analysis: Analysis,
 }
 
 #[derive(Debug, Clone, Default)]

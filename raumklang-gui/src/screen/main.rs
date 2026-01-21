@@ -51,7 +51,7 @@ pub struct Main {
     selected: Option<measurement::Selected>,
     signal_cache: canvas::Cache,
     smoothing: frequency_response::Smoothing,
-    measurements: Vec<ui::measurement::State>,
+    measurements: Vec<ui::Measurement>,
     modal: Modal,
     zoom: chart::Zoom,
     offset: chart::Offset,
@@ -255,13 +255,9 @@ impl Main {
                         Task::none(),
                     ),
                     (_, TabId::FrequencyResponses) => {
-                        let tasks = self
-                            .measurements
-                            .iter_mut()
-                            .flat_map(ui::measurement::State::loaded_mut)
-                            .map(|measurement| {
-                                compute_frequency_response(loopback, measurement, window)
-                            });
+                        let tasks = self.measurements.iter_mut().filter(|m| m.is_loaded()).map(
+                            |measurement| compute_frequency_response(loopback, measurement, window),
+                        );
                         (Tab::FrequencyResponses, Task::batch(tasks))
                     }
                     (_, TabId::SpectralDecay) => (Tab::SpectralDecay, Task::none()),
@@ -376,8 +372,8 @@ impl Main {
                 let Some(measurement) = self
                     .measurements
                     .iter_mut()
-                    .filter_map(ui::measurement::State::loaded_mut)
-                    .find(|m| m.id == id)
+                    .filter(|m| m.is_loaded())
+                    .find(|m| m.id() == id)
                 else {
                     return Task::none();
                 };
@@ -409,19 +405,15 @@ impl Main {
 
                 let impulse_response = ui::ImpulseResponse::from_data(impulse_response);
 
-                let Some(measurement) = self
-                    .measurements
-                    .iter_mut()
-                    .filter_map(ui::measurement::State::loaded_mut)
-                    .find(|m| m.id == id)
-                else {
+                let Some(measurement) = self.measurements.iter_mut().find(|m| m.id() == id) else {
                     return Task::none();
                 };
 
-                measurement
-                    .analysis
-                    .impulse_response
-                    .computed(impulse_response.clone());
+                let ui::measurement::State::Loaded { analysis, .. } = &mut measurement.state else {
+                    return Task::none();
+                };
+
+                analysis.impulse_response.computed(impulse_response.clone());
 
                 if selected_impulse_response.is_some_and(|selected| selected == id) {
                     charts
@@ -483,17 +475,15 @@ impl Main {
                     return Task::none();
                 };
 
-                let Some(measurement) = self
-                    .measurements
-                    .iter_mut()
-                    .filter_map(ui::measurement::State::loaded_mut)
-                    .find(|m| m.id == id)
-                else {
+                let Some(measurement) = self.measurements.iter_mut().find(|m| m.id() == id) else {
                     return Task::none();
                 };
 
-                measurement
-                    .analysis
+                let ui::measurement::State::Loaded { analysis, .. } = &mut measurement.state else {
+                    return Task::none();
+                };
+
+                analysis
                     .frequency_response
                     .computed(frequency_response.clone());
 
@@ -520,9 +510,13 @@ impl Main {
                 let Some(frequency_response) = self
                     .measurements
                     .iter_mut()
-                    .filter_map(ui::measurement::State::loaded_mut)
-                    .find(|m| m.id == id)
-                    .map(|m| &mut m.analysis.frequency_response)
+                    .find(|m| m.id() == id)
+                    .and_then(|m| match &mut m.state {
+                        ui::measurement::State::NotLoaded => None,
+                        ui::measurement::State::Loaded { analysis, .. } => {
+                            Some(&mut analysis.frequency_response)
+                        }
+                    })
                 else {
                     return Task::none();
                 };
@@ -544,13 +538,12 @@ impl Main {
                     let tasks = self
                         .measurements
                         .iter()
-                        .filter_map(ui::measurement::State::loaded)
-                        .flat_map(|m| {
-                            m.analysis
+                        .flat_map(|m| match &m.state {
+                            ui::measurement::State::NotLoaded => None,
+                            ui::measurement::State::Loaded { analysis, .. } => analysis
                                 .frequency_response
                                 .result()
-                                .cloned()
-                                .map(|fr| (m.id, fr))
+                                .map(|fr| (m.id(), fr.clone())),
                         })
                         .map(|(id, fr)| {
                             Task::perform(
@@ -563,8 +556,12 @@ impl Main {
                 } else {
                     self.measurements
                         .iter_mut()
-                        .filter_map(ui::measurement::State::loaded_mut)
-                        .map(|m| &mut m.analysis.frequency_response)
+                        .flat_map(|m| match &mut m.state {
+                            ui::measurement::State::NotLoaded => None,
+                            ui::measurement::State::Loaded { analysis, .. } => {
+                                Some(&mut analysis.frequency_response)
+                            }
+                        })
                         .for_each(|fr| fr.smoothed = None);
 
                     charts.frequency_responses.cache.clear();
@@ -577,13 +574,18 @@ impl Main {
                     return Task::none();
                 };
 
-                let Some(frequency_response) = self
-                    .measurements
-                    .iter_mut()
-                    .filter_map(ui::measurement::State::loaded_mut)
-                    .find(|m| m.id == id)
-                    .map(|m| &mut m.analysis.frequency_response)
-                else {
+                let Some(frequency_response) = self.measurements.iter_mut().find_map(|m| {
+                    if m.id() == id {
+                        match &mut m.state {
+                            ui::measurement::State::NotLoaded => None,
+                            ui::measurement::State::Loaded { analysis, .. } => {
+                                Some(&mut analysis.frequency_response)
+                            }
+                        }
+                    } else {
+                        None
+                    }
+                }) else {
                     return Task::none();
                 };
 
@@ -639,11 +641,13 @@ impl Main {
                     ModalAction::Apply => {
                         self.measurements
                             .iter_mut()
-                            .filter_map(ui::measurement::State::loaded_mut)
-                            .for_each(|m| {
-                                m.analysis.frequency_response = ui::FrequencyResponse::default();
-                                m.analysis.spectral_decay = ui::spectral_decay::State::default();
-                                m.analysis.spectrogram = ui::spectrogram::State::default();
+                            .for_each(|m| match &mut m.state {
+                                ui::measurement::State::NotLoaded => {}
+                                ui::measurement::State::Loaded { analysis, .. } => {
+                                    analysis.frequency_response = ui::FrequencyResponse::default();
+                                    analysis.spectral_decay = ui::spectral_decay::State::default();
+                                    analysis.spectrogram = ui::spectrogram::State::default();
+                                }
                             });
 
                         *window = window_settings.window.clone();
@@ -675,13 +679,17 @@ impl Main {
                         }
                         recording::Action::Finished(result) => {
                             match result {
-                                recording::Result::Loopback(new) => {
-                                    *loopback = ui::Loopback::new("Loopback".to_string(), new)
+                                recording::Result::Loopback(signal) => {
+                                    *loopback = ui::Loopback::new("Loopback".to_string(), signal)
                                 }
-                                recording::Result::Measurement(measurement) => {
-                                    self.measurements.push(ui::measurement::State::new(
+                                recording::Result::Measurement(signal) => {
+                                    self.measurements.push(ui::Measurement::new(
                                         "Measurement".to_string(),
-                                        measurement,
+                                        None,
+                                        ui::measurement::State::Loaded {
+                                            signal,
+                                            analysis: ui::measurement::Analysis::default(),
+                                        },
                                     ))
                                 }
                             }
@@ -732,9 +740,17 @@ impl Main {
                 if let Some(impulse_response) = self
                     .measurements
                     .iter()
-                    .filter_map(ui::measurement::State::loaded)
-                    .find(|m| m.id == id)
-                    .and_then(|m| m.analysis.impulse_response.result())
+                    .find_map(|m| {
+                        if m.id() == id {
+                            let ui::measurement::State::Loaded { analysis, .. } = &m.state else {
+                                return None;
+                            };
+
+                            analysis.impulse_response.result()
+                        } else {
+                            None
+                        }
+                    })
                     .cloned()
                 {
                     Task::perform(
@@ -804,7 +820,6 @@ impl Main {
                 let measurements = self
                     .measurements
                     .iter()
-                    .flat_map(ui::measurement::State::loaded)
                     .flat_map(|m| m.path.clone())
                     .map(|path| project::Measurement { path })
                     .collect();
@@ -855,9 +870,13 @@ impl Main {
                 let Some(spectral_decay) = self
                     .measurements
                     .iter_mut()
-                    .filter_map(ui::measurement::State::loaded_mut)
-                    .find(|m| m.id == id)
-                    .map(|m| &mut m.analysis.spectral_decay)
+                    .find(|m| m.id() == id)
+                    .and_then(|m| match &mut m.state {
+                        ui::measurement::State::NotLoaded => None,
+                        ui::measurement::State::Loaded { analysis, .. } => {
+                            Some(&mut analysis.spectral_decay)
+                        }
+                    })
                 else {
                     return Task::none();
                 };
@@ -900,9 +919,13 @@ impl Main {
                 let Some(spectrogram) = self
                     .measurements
                     .iter_mut()
-                    .filter_map(ui::measurement::State::loaded_mut)
-                    .find(|m| m.id == id)
-                    .map(|m| &mut m.analysis.spectrogram)
+                    .find(|m| m.id() == id)
+                    .and_then(|m| match &mut m.state {
+                        ui::measurement::State::NotLoaded => None,
+                        ui::measurement::State::Loaded { analysis, .. } => {
+                            Some(&mut analysis.spectrogram)
+                        }
+                    })
                 else {
                     return Task::none();
                 };
@@ -945,21 +968,22 @@ impl Main {
 
                             self.measurements
                                 .iter_mut()
-                                .filter_map(ui::measurement::State::loaded_mut)
-                                .for_each(|m| {
-                                    m.analysis.spectral_decay =
-                                        ui::spectral_decay::State::default();
+                                .for_each(|m| match &mut m.state {
+                                    ui::measurement::State::NotLoaded => {}
+                                    ui::measurement::State::Loaded { analysis, .. } => {
+                                        analysis.spectral_decay =
+                                            ui::spectral_decay::State::default();
+                                    }
                                 });
 
                             selected_impulse_response
-                                .and_then(|id| {
-                                    self.measurements
-                                        .iter_mut()
-                                        .filter_map(ui::measurement::State::loaded_mut)
-                                        .find(|m| m.id == id)
-                                })
-                                .map_or(Task::none(), |m| {
-                                    compute_spectral_decay(loopback, m, self.spectral_decay_config)
+                                .and_then(|id| self.measurements.iter_mut().find(|m| m.id() == id))
+                                .map_or(Task::none(), |measurement| {
+                                    compute_spectral_decay(
+                                        loopback,
+                                        measurement,
+                                        self.spectral_decay_config,
+                                    )
                                 })
                         } else {
                             Task::none()
@@ -1001,18 +1025,15 @@ impl Main {
 
                         self.measurements
                             .iter_mut()
-                            .filter_map(ui::measurement::State::loaded_mut)
-                            .for_each(|m| {
-                                m.analysis.spectrogram = ui::spectrogram::State::default();
+                            .for_each(|m| match &mut m.state {
+                                ui::measurement::State::NotLoaded => {}
+                                ui::measurement::State::Loaded { analysis, .. } => {
+                                    analysis.spectrogram = ui::spectrogram::State::default();
+                                }
                             });
 
                         selected_impulse_response
-                            .and_then(|id| {
-                                self.measurements
-                                    .iter_mut()
-                                    .filter_map(ui::measurement::State::loaded_mut)
-                                    .find(|m| m.id == id)
-                            })
+                            .and_then(|id| self.measurements.iter_mut().find(|m| m.id() == id))
                             .map_or(Task::none(), |measurement| {
                                 compute_spectrogram(loopback, measurement, &self.spectrogram_config)
                             })
@@ -1240,8 +1261,7 @@ impl Main {
                         .measurements
                         .iter()
                         .find(|m| m.id() == id)
-                        .and_then(ui::measurement::State::loaded)
-                        .map(|m| &m.data),
+                        .and_then(ui::Measurement::signal),
                 }) {
                 chart::waveform(measurement, &self.signal_cache, self.zoom, self.offset)
                     .map(Message::MeasurementChart)
@@ -1269,11 +1289,13 @@ impl Main {
         let sidebar = {
             let header = sidebar::header("Impulse Responses");
 
-            let entries = self
-                .measurements
-                .iter()
-                .filter_map(ui::measurement::State::loaded)
-                .map(|measurement| impulse_response_item(selected, measurement));
+            let entries =
+                self.measurements.iter().flat_map(|m| match &m.state {
+                    ui::measurement::State::NotLoaded => None,
+                    ui::measurement::State::Loaded { signal, analysis } => Some(
+                        impulse_response_item(selected, m.id(), &m.name, signal, analysis),
+                    ),
+                });
 
             container(column![header, scrollable(column(entries))].spacing(6))
                 .padding(6)
@@ -1284,13 +1306,17 @@ impl Main {
         };
 
         let content = {
-            let placeholder = container(text("Impulse response not computed, yet.")).into();
+            let placeholder = center(text("Impulse response not computed, yet.")).into();
 
             self.measurements
                 .iter()
-                .filter_map(ui::measurement::State::loaded)
-                .find(|m| Some(m.id) == selected)
-                .and_then(|measurement| measurement.analysis.impulse_response.result())
+                .find(|m| Some(m.id()) == selected)
+                .and_then(|m| match &m.state {
+                    ui::measurement::State::NotLoaded => None,
+                    ui::measurement::State::Loaded { analysis, .. } => {
+                        analysis.impulse_response.result()
+                    }
+                })
                 .map_or(placeholder, |impulse_response| {
                     chart
                         .view(impulse_response, window_settings)
@@ -1312,22 +1338,21 @@ impl Main {
         &'a self,
         chart_settings: &'a frequency_response::ChartData,
     ) -> Element<'a, Message> {
-        let loaded_measurements = self
-            .measurements
-            .iter()
-            .filter_map(ui::measurement::State::loaded);
-
         let sidebar = {
             let header = sidebar::header("Frequency Responses");
 
-            let entries = loaded_measurements.clone().map(|measurement| {
-                let content = measurement.analysis.frequency_response.view(
+            let entries = self.measurements.iter().flat_map(|measurement| {
+                let ui::measurement::State::Loaded { analysis, .. } = &measurement.state else {
+                    return None;
+                };
+
+                let content = analysis.frequency_response.view(
                     &measurement.name,
-                    measurement.analysis.impulse_response.progress(),
-                    Message::FrequencyResponseToggled.with(measurement.id),
+                    analysis.impulse_response.progress(),
+                    Message::FrequencyResponseToggled.with(measurement.id()),
                 );
 
-                sidebar::item(content, false)
+                Some(sidebar::item(content, false))
             });
 
             container(column![header, scrollable(column(entries).spacing(6))].spacing(6))
@@ -1346,8 +1371,15 @@ impl Main {
             )]
         };
 
-        let frequency_responses = loaded_measurements
-            .map(|m| &m.analysis.frequency_response)
+        let frequency_responses = self
+            .measurements
+            .iter()
+            .flat_map(|m| match &m.state {
+                ui::measurement::State::NotLoaded => None,
+                ui::measurement::State::Loaded { analysis, .. } => {
+                    Some(&analysis.frequency_response)
+                }
+            })
             .filter(|fr| fr.is_shown);
 
         let content = if frequency_responses
@@ -1430,22 +1462,18 @@ impl Main {
                 Category::new("Spectral Decays").push_button(config_btn)
             };
 
-            let entries = self
-                .measurements
-                .iter()
-                .filter_map(ui::measurement::State::loaded)
-                .map(|measurement| {
-                    let id = measurement.id;
+            let entries = self.measurements.iter().flat_map(|m| match &m.state {
+                ui::measurement::State::NotLoaded => None,
+                ui::measurement::State::Loaded { signal, analysis } => {
+                    let id = m.id();
                     let is_active = selected.is_some_and(|s| s == id);
 
                     let entry = {
                         // TODO: refactor, basically the same btn as IR and Spectrogram
-                        let dt: DateTime<Utc> = measurement.data.modified.into();
+                        let dt: DateTime<Utc> = signal.modified.into();
                         let btn = button(
                             column![
-                                text(&measurement.name)
-                                    .size(16)
-                                    .wrapping(Wrapping::WordOrGlyph),
+                                text(&m.name).size(16).wrapping(Wrapping::WordOrGlyph),
                                 text!("{}", dt.format("%x %X")).size(10)
                             ]
                             .clip(true)
@@ -1467,7 +1495,7 @@ impl Main {
                         sidebar::item(btn, is_active)
                     };
 
-                    match measurement.analysis.spectral_decay_progress() {
+                    let entry = match analysis.spectral_decay_progress() {
                         ui::spectral_decay::Progress::None => entry,
                         ui::spectral_decay::Progress::ComputingImpulseResponse => {
                             processing_overlay("Impulse Response", entry)
@@ -1476,8 +1504,11 @@ impl Main {
                             processing_overlay("Spectral Decay", entry)
                         }
                         ui::spectral_decay::Progress::Finished => entry,
-                    }
-                });
+                    };
+
+                    Some(entry)
+                }
+            });
 
             container(column![header, scrollable(column(entries))].spacing(6))
                 .padding(6)
@@ -1490,10 +1521,11 @@ impl Main {
         let content = if let Some(decay) = self
             .measurements
             .iter()
-            .filter_map(ui::measurement::State::loaded)
-            .find(|m| Some(m.id) == selected)
-            .and_then(|m| m.analysis.spectral_decay.result())
-        {
+            .find(|m| Some(m.id()) == selected)
+            .and_then(|m| match &m.state {
+                ui::measurement::State::NotLoaded => None,
+                ui::measurement::State::Loaded { analysis, .. } => analysis.spectral_decay.result(),
+            }) {
             let gradient = colorous::MAGMA;
 
             let series_list = decay.iter().enumerate().map(|(fr_index, fr)| {
@@ -1552,21 +1584,17 @@ impl Main {
                 Category::new("Spectrograms").push_button(config_btn)
             };
 
-            let entries = self
-                .measurements
-                .iter()
-                .filter_map(ui::measurement::State::loaded)
-                .map(|measurement| {
-                    let id = measurement.id;
+            let entries = self.measurements.iter().flat_map(|m| match &m.state {
+                ui::measurement::State::NotLoaded => None,
+                ui::measurement::State::Loaded { signal, analysis } => {
+                    let id = m.id();
                     let is_active = selected.is_some_and(|selected| selected == id);
 
                     let entry = {
-                        let dt: DateTime<Utc> = measurement.data.modified.into();
+                        let dt: DateTime<Utc> = signal.modified.into();
                         let btn = button(
                             column![
-                                text(&measurement.name)
-                                    .size(16)
-                                    .wrapping(Wrapping::WordOrGlyph),
+                                text(&m.name).size(16).wrapping(Wrapping::WordOrGlyph),
                                 text!("{}", dt.format("%x %X")).size(10)
                             ]
                             .clip(true)
@@ -1588,7 +1616,7 @@ impl Main {
                         sidebar::item(btn, is_active)
                     };
 
-                    match measurement.analysis.spectrogram_progress() {
+                    let entry = match analysis.spectrogram_progress() {
                         ui::spectrogram::Progress::None => entry,
                         ui::spectrogram::Progress::ComputingImpulseResponse => {
                             processing_overlay("Impulse Response", entry)
@@ -1597,8 +1625,11 @@ impl Main {
                             processing_overlay("Spectral Decay", entry)
                         }
                         ui::spectrogram::Progress::Finished => entry,
-                    }
-                });
+                    };
+
+                    Some(entry)
+                }
+            });
 
             container(column![header, scrollable(column(entries))].spacing(6))
                 .padding(6)
@@ -1611,10 +1642,11 @@ impl Main {
         let content = if let Some(data) = self
             .measurements
             .iter()
-            .filter_map(ui::measurement::State::loaded)
-            .find(|m| Some(m.id) == selected)
-            .and_then(|m| m.analysis.spectrogram.result())
-        {
+            .find(|m| Some(m.id()) == selected)
+            .and_then(|m| match &m.state {
+                ui::measurement::State::NotLoaded => None,
+                ui::measurement::State::Loaded { analysis, .. } => analysis.spectrogram.result(),
+            }) {
             let chart = chart::spectrogram(
                 data,
                 &spectrogram.cache,
@@ -1690,11 +1722,7 @@ impl Main {
             return false;
         };
 
-        is_loopback_loaded
-            && self
-                .measurements
-                .iter()
-                .any(ui::measurement::State::is_loaded)
+        is_loopback_loaded && self.measurements.iter().any(ui::Measurement::is_loaded)
     }
 
     fn compute_impulse_response(&mut self, id: ui::measurement::Id) -> Task<Message> {
@@ -1709,31 +1737,26 @@ impl Main {
             return Task::none();
         };
 
-        let measurement = self
-            .measurements
-            .iter_mut()
-            .filter_map(ui::measurement::State::loaded_mut)
-            .find(|m| m.id == id)
-            .unwrap();
+        let measurement = self.measurements.iter_mut().find(|m| m.id() == id).unwrap();
 
         compute_impulse_response(loopback, measurement)
     }
 }
 
-fn impulse_response_item(
+fn impulse_response_item<'a>(
     selected: Option<ui::measurement::Id>,
-    measurement: &ui::measurement::Loaded,
-) -> Element<'_, Message> {
-    let id = measurement.id;
+    id: ui::measurement::Id,
+    name: &'a str,
+    signal: &'a raumklang_core::Measurement,
+    analysis: &'a ui::measurement::Analysis,
+) -> Element<'a, Message> {
     let is_active = selected.is_some_and(|selected| selected == id);
 
     let entry = {
-        let dt: DateTime<Utc> = measurement.data.modified.into();
+        let dt: DateTime<Utc> = signal.modified.into();
         let ir_btn = button(
             column![
-                text(&measurement.name)
-                    .size(16)
-                    .wrapping(Wrapping::WordOrGlyph),
+                text(name).size(16).wrapping(Wrapping::WordOrGlyph),
                 text!("{}", dt.format("%x %X")).size(10)
             ]
             .clip(true)
@@ -1765,7 +1788,7 @@ fn impulse_response_item(
         sidebar::item(content, is_active)
     };
 
-    match measurement.analysis.impulse_response.progress() {
+    match analysis.impulse_response.progress() {
         ui::impulse_response::Progress::None => entry,
         ui::impulse_response::Progress::Computing => {
             impulse_response::processing_overlay("Impulse Response", entry)
@@ -1776,21 +1799,25 @@ fn impulse_response_item(
 
 fn compute_impulse_response(
     loopback: &ui::Loopback,
-    measurement: &mut ui::measurement::Loaded,
+    measurement: &mut ui::Measurement,
 ) -> Task<Message> {
     let Some(loopback) = loopback.loaded() else {
         return Task::none();
     };
 
-    if measurement.analysis.impulse_response.result().is_some() {
+    let ui::measurement::State::Loaded { signal, analysis } = &mut measurement.state else {
+        return Task::none();
+    };
+
+    if analysis.impulse_response.result().is_some() {
         return Task::none();
     }
 
-    measurement.analysis.impulse_response = ui::impulse_response::State::Computing;
+    analysis.impulse_response = ui::impulse_response::State::Computing;
 
     Task::perform(
-        data::impulse_response::compute(loopback.clone(), measurement.data.clone()),
-        Message::ImpulseResponseComputed.with(measurement.id),
+        data::impulse_response::compute(loopback.clone(), signal.clone()),
+        Message::ImpulseResponseComputed.with(measurement.id()),
     )
 }
 
@@ -1847,14 +1874,17 @@ async fn save_impulse_response(path: Arc<Path>, impulse_response: ui::ImpulseRes
 
 fn compute_frequency_response(
     loopback: &ui::Loopback,
-    measurement: &mut ui::measurement::Loaded,
+    measurement: &mut ui::Measurement,
     window: &Window<Samples>,
 ) -> Task<Message> {
-    let id = measurement.id;
+    let id = measurement.id();
 
-    if let Some(impulse_response) = measurement.analysis.impulse_response.result() {
-        measurement.analysis.frequency_response.progress =
-            ui::frequency_response::Progress::Computing;
+    let ui::measurement::State::Loaded { analysis, .. } = &mut measurement.state else {
+        return Task::none();
+    };
+
+    if let Some(impulse_response) = analysis.impulse_response.result() {
+        analysis.frequency_response.progress = ui::frequency_response::Progress::Computing;
 
         Task::perform(
             data::frequency_response::compute(impulse_response.origin.clone(), window.clone()),
@@ -1867,19 +1897,23 @@ fn compute_frequency_response(
 
 fn compute_spectral_decay(
     loopback: &ui::Loopback,
-    measurement: &mut ui::measurement::Loaded,
+    measurement: &mut ui::Measurement,
     config: data::spectral_decay::Config,
 ) -> Task<Message> {
-    if measurement.analysis.spectral_decay.result().is_some() {
+    let ui::measurement::State::Loaded { analysis, .. } = &mut measurement.state else {
+        return Task::none();
+    };
+
+    if analysis.spectral_decay.result().is_some() {
         return Task::none();
     }
 
-    if let Some(impulse_response) = measurement.analysis.impulse_response.result() {
-        measurement.analysis.spectral_decay = ui::spectral_decay::State::Computing;
+    if let Some(impulse_response) = analysis.impulse_response.result() {
+        analysis.spectral_decay = ui::spectral_decay::State::Computing;
 
         Task::perform(
             data::spectral_decay::compute(impulse_response.origin.clone(), config),
-            Message::SpectralDecayComputed.with(measurement.id),
+            Message::SpectralDecayComputed.with(measurement.id()),
         )
     } else {
         compute_impulse_response(loopback, measurement)
@@ -1888,19 +1922,23 @@ fn compute_spectral_decay(
 
 fn compute_spectrogram(
     loopback: &ui::Loopback,
-    measurement: &mut ui::measurement::Loaded,
+    measurement: &mut ui::Measurement,
     config: &spectrogram::Preferences,
 ) -> Task<Message> {
-    if measurement.analysis.spectrogram.result().is_some() {
+    let ui::measurement::State::Loaded { analysis, .. } = &mut measurement.state else {
+        return Task::none();
+    };
+
+    if analysis.spectrogram.result().is_some() {
         return Task::none();
     }
 
-    if let Some(impulse_response) = measurement.analysis.impulse_response.result() {
-        measurement.analysis.spectrogram = ui::spectrogram::State::Computing;
+    if let Some(impulse_response) = analysis.impulse_response.result() {
+        analysis.spectrogram = ui::spectrogram::State::Computing;
 
         Task::perform(
             data::spectrogram::compute(impulse_response.origin.clone(), *config),
-            Message::SpectrogramComputed.with(measurement.id),
+            Message::SpectrogramComputed.with(measurement.id()),
         )
     } else {
         compute_impulse_response(loopback, measurement)
