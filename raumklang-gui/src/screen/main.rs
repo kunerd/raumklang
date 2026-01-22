@@ -19,10 +19,10 @@ use crate::{
     widget::sidebar,
     PickAndLoadError,
 };
+use raumklang_core::dbfs;
+
 use impulse_response::{ChartOperation, WindowSettings};
 use recording::Recording;
-
-use raumklang_core::dbfs;
 
 use chrono::{DateTime, Utc};
 use generic_overlay::generic_overlay::{dropdown_menu, dropdown_root};
@@ -70,7 +70,7 @@ enum State {
         loopback: ui::Loopback,
         active_tab: Tab,
         window: Window<Samples>,
-        selected_impulse_response: Option<ui::measurement::Id>,
+        selected: Option<ui::measurement::Id>,
         charts: Charts,
     },
 }
@@ -195,7 +195,7 @@ impl Main {
                     measurement::Message::Loaded,
                 )
             })
-            .unwrap_or(Task::none());
+            .unwrap_or_else(Task::none);
 
         let load_measurements = project.measurements.into_iter().map(|measurement| {
             Task::perform(
@@ -223,7 +223,7 @@ impl Main {
                 let State::Analysing {
                     ref mut active_tab,
                     ref window,
-                    ref mut selected_impulse_response,
+                    ref mut selected,
                     ref loopback,
                     ..
                 } = self.state
@@ -265,7 +265,7 @@ impl Main {
                 };
 
                 *active_tab = tab;
-                *selected_impulse_response = None;
+                *selected = None;
 
                 tasks
             }
@@ -329,7 +329,7 @@ impl Main {
                                 .map_or(44_100, |l| l.as_ref().sample_rate()),
                         ))
                         .into(),
-                        selected_impulse_response: None,
+                        selected: None,
                         charts: Charts::default(),
                         loopback,
                     },
@@ -346,7 +346,7 @@ impl Main {
                 log::debug!("Impulse response selected: {id}");
 
                 let State::Analysing {
-                    ref mut selected_impulse_response,
+                    selected: ref mut selected_analysis,
                     ref mut charts,
                     ref active_tab,
                     ref loopback,
@@ -356,7 +356,7 @@ impl Main {
                     return Task::none();
                 };
 
-                *selected_impulse_response = Some(id);
+                *selected_analysis = Some(id);
                 charts.impulse_responses.data_cache.clear();
 
                 let Some(measurement) = self.measurements.get_mut(id) else {
@@ -379,7 +379,7 @@ impl Main {
                 let State::Analysing {
                     window,
                     active_tab,
-                    selected_impulse_response,
+                    selected: selected_analysis,
                     charts,
                     loopback,
                     ..
@@ -400,7 +400,7 @@ impl Main {
 
                 analysis.impulse_response.computed(impulse_response.clone());
 
-                if selected_impulse_response.is_some_and(|selected| selected == id) {
+                if selected_analysis.is_some_and(|selected| selected == id) {
                     charts
                         .impulse_responses
                         .x_range
@@ -896,7 +896,7 @@ impl Main {
                 };
 
                 let State::Analysing {
-                    selected_impulse_response,
+                    selected: selected_analysis,
                     ref loopback,
                     ..
                 } = self.state
@@ -918,7 +918,7 @@ impl Main {
                                     analysis.spectral_decay = ui::spectral_decay::State::default()
                                 });
 
-                            selected_impulse_response
+                            selected_analysis
                                 .and_then(|id| self.measurements.iter_mut().find(|m| m.id() == id))
                                 .map_or(Task::none(), |measurement| {
                                     compute_spectral_decay(
@@ -946,7 +946,7 @@ impl Main {
                 };
 
                 let State::Analysing {
-                    selected_impulse_response,
+                    selected: selected_analysis,
                     ref loopback,
                     ..
                 } = self.state
@@ -972,7 +972,7 @@ impl Main {
                                 analysis.spectrogram = ui::spectrogram::State::default()
                             });
 
-                        selected_impulse_response
+                        selected_analysis
                             .and_then(|id| self.measurements.get_mut(id))
                             .map_or(Task::none(), |measurement| {
                                 compute_spectrogram(loopback, measurement, &self.spectrogram_config)
@@ -1045,7 +1045,7 @@ impl Main {
             }
             State::Analysing {
                 active_tab,
-                selected_impulse_response,
+                selected: selected_analysis,
                 charts,
                 loopback,
                 ..
@@ -1060,18 +1060,17 @@ impl Main {
                 Tab::ImpulseResponses {
                     window_settings, ..
                 } => self.impulse_responses_tab(
-                    *selected_impulse_response,
+                    *selected_analysis,
                     &charts.impulse_responses,
                     window_settings,
                 ),
                 Tab::FrequencyResponses => {
                     self.frequency_responses_tab(&charts.frequency_responses)
                 }
-                Tab::SpectralDecay => self
-                    .spectral_decay_tab(*selected_impulse_response, &charts.spectral_decay_cache),
-                Tab::Spectrogram => {
-                    self.spectrogram_tab(*selected_impulse_response, &charts.spectrogram)
+                Tab::SpectralDecay => {
+                    self.spectral_decay_tab(*selected_analysis, &charts.spectral_decay_cache)
                 }
+                Tab::Spectrogram => self.spectrogram_tab(*selected_analysis, &charts.spectrogram),
             },
         };
 
