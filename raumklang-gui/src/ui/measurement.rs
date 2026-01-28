@@ -75,7 +75,7 @@ enum State {
     NotLoaded,
     Loaded {
         signal: raumklang_core::Measurement,
-        analysis: Analysis,
+        // analysis: Analysis,
     },
 }
 
@@ -91,7 +91,7 @@ impl Measurement {
         let state = match signal {
             Some(signal) => State::Loaded {
                 signal,
-                analysis: Analysis::default(),
+                // analysis: Analysis::default(),
             },
             None => State::NotLoaded,
         };
@@ -136,21 +136,21 @@ impl Measurement {
         self.id
     }
 
-    pub fn analysis(&self) -> Option<&Analysis> {
-        match self.state {
-            State::NotLoaded => None,
-            State::Loaded { ref analysis, .. } => Some(analysis),
-        }
-    }
+    // pub fn analysis(&self) -> Option<&Analysis> {
+    //     match self.state {
+    //         State::NotLoaded => None,
+    //         State::Loaded { ref analysis, .. } => Some(analysis),
+    //     }
+    // }
 
-    pub fn analysis_mut(&mut self) -> Option<&mut Analysis> {
-        match self.state {
-            State::NotLoaded => None,
-            State::Loaded {
-                ref mut analysis, ..
-            } => Some(analysis),
-        }
-    }
+    // pub fn analysis_mut(&mut self) -> Option<&mut Analysis> {
+    //     match self.state {
+    //         State::NotLoaded => None,
+    //         State::Loaded {
+    //             ref mut analysis, ..
+    //         } => Some(analysis),
+    //     }
+    // }
 }
 
 impl Display for Id {
