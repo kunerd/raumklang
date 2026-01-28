@@ -31,6 +31,7 @@ use iced::{
     alignment::{Horizontal, Vertical},
     futures::{FutureExt, TryFutureExt},
     keyboard, padding,
+    task::sipper,
     widget::{
         button, canvas, center, column, container, opaque, pick_list, right, row, rule, scrollable,
         space, stack, text, text::Wrapping, Button,
@@ -78,16 +79,11 @@ enum State {
 }
 
 impl State {
-    pub fn analysis<'a>(measurements: impl IntoIterator<Item = &'a ui::Measurement>) -> Self {
-        let mut frequency_responses = BTreeMap::new();
-        measurements.into_iter().for_each(|m| {
-            frequency_responses.insert(m.id(), ui::FrequencyResponse::new());
-        });
-
+    pub fn analysis() -> Self {
         Self::Analysing {
             selected: None,
             impulse_responses: BTreeMap::new(),
-            frequency_responses,
+            frequency_responses: BTreeMap::new(),
         }
     }
 }
@@ -257,20 +253,12 @@ impl Main {
                             self.loopback = Some(loopback);
 
                             if !self.measurements.is_empty() {
-                                self.state = State::analysis(self.measurements.iter())
+                                self.state = State::analysis()
                             }
                         }
                         Some(measurement::LoadedKind::Normal(measurement)) => {
                             if self.measurements.is_empty() {
-                                self.state = State::analysis([&measurement]);
-                            }
-                            if let State::Analysing {
-                                ref mut frequency_responses,
-                                ..
-                            } = self.state
-                            {
-                                frequency_responses
-                                    .insert(measurement.id(), ui::FrequencyResponse::new());
+                                self.state = State::analysis();
                             }
 
                             self.measurements.push(measurement);
@@ -305,7 +293,7 @@ impl Main {
                 match &self.tab {
                     Tab::Measurements { .. } => Task::none(),
                     Tab::ImpulseResponses { .. } => self.compute_impulse_response(id),
-                    Tab::FrequencyResponses => todo!(),
+                    Tab::FrequencyResponses => Task::none(),
                     Tab::SpectralDecay => todo!(),
                     Tab::Spectrogram => todo!(),
                 }
@@ -314,16 +302,13 @@ impl Main {
                 let State::Analysing {
                     selected,
                     ref mut impulse_responses,
-                    ref mut frequency_responses,
                     ..
                 } = self.state
                 else {
                     return Task::none();
                 };
 
-                let impulse_response = impulse_responses
-                    .entry(id)
-                    .or_insert(ui::impulse_response::State::default());
+                let impulse_response = impulse_responses.entry(id).or_default();
 
                 let new_ir = ui::ImpulseResponse::from_data(new_ir);
                 impulse_response.computed(new_ir.clone());
@@ -337,34 +322,7 @@ impl Main {
                     self.charts.impulse_responses.data_cache.clear();
                 }
 
-                let Some(loopback) = self.loopback.as_ref() else {
-                    return Task::none();
-                };
-
-                let Some(measurement) = self.measurements.get_mut(id) else {
-                    return Task::none();
-                };
-
-                let Some(window) = self.window.as_ref() else {
-                    return Task::none();
-                };
-
-                if let Tab::FrequencyResponses = self.tab {
-                    let Some(fr) = frequency_responses.get_mut(&id) else {
-                        return Task::none();
-                    };
-
-                    compute_frequency_response(loopback, measurement, window, impulse_response, fr)
-                } else {
-                    Task::none()
-                }
-                // else if let Tab::SpectralDecay = active_tab {
-                //     compute_spectral_decay(loopback, measurement, self.spectral_decay_config)
-                // } else if let Tab::Spectrogram = active_tab {
-                //     compute_spectrogram(loopback, measurement, &self.spectrogram_config)
-                // } else {
-                //     Task::none()
-                // }
+                Task::none()
             }
             Message::FrequencyResponseComputed(id, new_fr) => {
                 log::debug!("Frequency response computed: {id}");
@@ -408,15 +366,45 @@ impl Main {
             }
 
             Message::OpenFrequencyResponses => {
+                let State::Analysing {
+                    ref mut impulse_responses,
+                    ref mut frequency_responses,
+                    ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
                 self.tab = Tab::FrequencyResponses;
 
-                let ids: Vec<_> = self
-                    .measurements
-                    .loaded()
-                    .map(ui::Measurement::id)
-                    .collect();
+                let tasks = self.measurements.loaded_mut().flat_map(|measurement| {
+                    let id = measurement.id();
+                    let window = self.window.clone()?;
+                    let loopback = self.loopback.as_ref().and_then(Loopback::loaded).cloned()?;
+                    let measurement = measurement.signal().cloned()?;
 
-                Task::batch(ids.into_iter().map(|id| self.compute_impulse_response(id)))
+                    impulse_responses.insert(id, ui::impulse_response::State::Computing);
+                    frequency_responses
+                        .entry(id)
+                        .or_insert_with(ui::FrequencyResponse::new);
+
+                    let sipper = sipper(async move |mut progress| {
+                        let impulse_response =
+                            data::impulse_response::compute(loopback, measurement).await;
+
+                        progress.send(impulse_response.clone()).await;
+
+                        data::frequency_response::compute(impulse_response.origin, window).await
+                    });
+
+                    Some(Task::sip(
+                        sipper,
+                        Message::ImpulseResponseComputed.with(id),
+                        Message::FrequencyResponseComputed.with(id),
+                    ))
+                });
+
+                Task::batch(tasks)
             }
             _ => Task::none(),
         }
