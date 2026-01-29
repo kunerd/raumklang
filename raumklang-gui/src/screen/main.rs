@@ -12,7 +12,7 @@ use crate::{
     },
     icon, load_project, log,
     screen::main::{
-        chart::waveform, impulse_response::processing_overlay, measurement::Selected,
+        chart::waveform, impulse_response::processing_overlay,
         spectral_decay_config::SpectralDecayConfig, spectrogram_config::SpectrogramConfig,
     },
     ui::{self, analysis, Analysis, Loopback},
@@ -50,15 +50,16 @@ use std::{
 
 pub struct Main {
     state: State,
-    selected: Option<measurement::Selected>,
+    selected: Option<ui::measurement::Selected>,
 
     loopback: Option<ui::Loopback>,
+    measurements: ui::measurement::List,
 
     signal_cache: canvas::Cache,
-    smoothing: frequency_response::Smoothing,
-    measurements: ui::measurement::List,
     zoom: chart::Zoom,
     offset: chart::Offset,
+
+    smoothing: frequency_response::Smoothing,
     // modal: Modal,
     // project_path: Option<PathBuf>,
     // spectral_decay_config: data::spectral_decay::Config,
@@ -275,10 +276,6 @@ impl Main {
                     measurement::Message::Loaded(Err(err)) => {
                         log::error!("{err}");
                     }
-                    measurement::Message::Select(selected) => {
-                        self.selected = Some(selected);
-                        self.signal_cache.clear();
-                    }
                 }
 
                 Task::none()
@@ -364,8 +361,8 @@ impl Main {
             }
             Message::Measurement(msg) => {
                 match msg {
-                    ui::measurement::Message::Select(id) => {
-                        self.selected = Some(Selected::Measurement(id));
+                    ui::measurement::Message::Select(selected) => {
+                        self.selected = Some(selected);
                         self.signal_cache.clear();
                     }
                     ui::measurement::Message::Remove(id) => {
@@ -1495,7 +1492,8 @@ impl Main {
                         .style(button::secondary),
                 )
                 .push_entry_maybe(self.loopback.as_ref().map(|loopback| {
-                    measurement::loopback_entry(self.selected, loopback).map(Message::Measurements)
+                    let active = self.selected == Some(ui::measurement::Selected::Loopback);
+                    loopback.view(active).map(Message::Measurement)
                 }));
 
             let measurements =
@@ -1511,9 +1509,8 @@ impl Main {
                             .style(button::secondary),
                     )
                     .extend_entries(self.measurements.iter().map(|measurement| {
-                        let active = self
-                            .selected
-                            .is_some_and(|id| id == Selected::Measurement(measurement.id()));
+                        let active = self.selected
+                            == Some(ui::measurement::Selected::Measurement(measurement.id()));
                         measurement.view(active).map(Message::Measurement)
                     }));
 
@@ -1549,16 +1546,14 @@ impl Main {
 
             let content = if let Some(measurement) =
                 self.selected.and_then(|selected| match selected {
-                    measurement::Selected::Loopback => self
+                    ui::measurement::Selected::Loopback => self
                         .loopback
                         .as_ref()
-                        .and_then(|l| l.loaded())
+                        .and_then(Loopback::loaded)
                         .map(AsRef::as_ref),
-                    measurement::Selected::Measurement(id) => self
-                        .measurements
-                        .iter()
-                        .find(|m| m.id() == id)
-                        .and_then(ui::Measurement::signal),
+                    ui::measurement::Selected::Measurement(id) => {
+                        self.measurements.get(id).and_then(ui::Measurement::signal)
+                    }
                 }) {
                 chart::waveform(measurement, &self.signal_cache, self.zoom, self.offset)
                     .map(Message::MeasurementChart)
