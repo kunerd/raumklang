@@ -49,7 +49,7 @@ use std::{
 };
 
 pub struct Main {
-    tab: Tab,
+    // tab: Tab,
     selected: Option<measurement::Selected>,
     state: State,
 
@@ -72,6 +72,7 @@ pub struct Main {
 enum State {
     Collecting,
     Analysing {
+        active_tab: Tab,
         selected: Option<ui::measurement::Id>,
         analyses: BTreeMap<ui::measurement::Id, Analysis>,
     },
@@ -80,8 +81,16 @@ enum State {
 impl State {
     pub fn analysis() -> Self {
         Self::Analysing {
+            active_tab: Tab::default(),
             selected: None,
             analyses: BTreeMap::new(),
+        }
+    }
+
+    fn active_tab(&self) -> Option<&Tab> {
+        match &self {
+            State::Collecting => None,
+            State::Analysing { active_tab, .. } => Some(active_tab),
         }
     }
 }
@@ -289,14 +298,20 @@ impl Main {
                 Task::none()
             }
             Message::ImpulseResponseSelected(id) => {
-                let State::Analysing { selected, analyses } = &mut self.state else {
+                let State::Analysing {
+                    active_tab: tab,
+                    selected,
+                    analyses,
+                    ..
+                } = &mut self.state
+                else {
                     return Task::none();
                 };
 
                 *selected = Some(id);
                 analyses.entry(id).or_default();
 
-                match &self.tab {
+                match tab {
                     Tab::Measurements { .. } => Task::none(),
                     Tab::ImpulseResponses { .. } => self.compute_impulse_response(id),
                     Tab::FrequencyResponses => Task::none(),
@@ -307,6 +322,7 @@ impl Main {
             Message::ImpulseResponseComputed(id, new_ir) => {
                 let State::Analysing {
                     selected,
+                    ref active_tab,
                     ref mut analyses,
                     ..
                 } = self.state
@@ -328,7 +344,7 @@ impl Main {
                     self.charts.impulse_responses.data_cache.clear();
                 }
 
-                match &self.tab {
+                match active_tab {
                     Tab::Measurements { .. } => Task::none(),
                     Tab::ImpulseResponses { .. } => Task::none(),
                     Tab::FrequencyResponses => self.compute_frequency_response(id),
@@ -361,15 +377,32 @@ impl Main {
                 }
             }
             Message::OpenMeasurements => {
-                self.tab = Tab::Measurements { recording: None };
+                let State::Analysing {
+                    active_tab: ref mut tab,
+                    ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
+                *tab = Tab::Measurements { recording: None };
+
                 Task::none()
             }
             Message::OpenImpulseResponses => {
+                let State::Analysing {
+                    active_tab: ref mut tab,
+                    ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
                 let Some(window) = &self.window else {
                     return Task::none();
                 };
 
-                self.tab = Tab::ImpulseResponses {
+                *tab = Tab::ImpulseResponses {
                     window_settings: WindowSettings::new(window.clone()),
                 };
 
@@ -377,11 +410,15 @@ impl Main {
             }
 
             Message::OpenFrequencyResponses => {
-                let State::Analysing { .. } = self.state else {
+                let State::Analysing {
+                    active_tab: ref mut tab,
+                    ..
+                } = self.state
+                else {
                     return Task::none();
                 };
 
-                self.tab = Tab::FrequencyResponses;
+                *tab = Tab::FrequencyResponses;
 
                 // FIXME get rid of vec alloc
                 let ids: Vec<_> = self
@@ -1271,32 +1308,35 @@ impl Main {
                     .on_press_maybe(message)
             };
 
-            let is_analysing = matches!(self.state, State::Analysing { .. });
-
+            let active_tab = self.state.active_tab();
             let tabs = row![
                 tab(
                     "Measurements",
-                    matches!(self.tab, Tab::Measurements { .. }),
+                    active_tab.is_none(),
                     Some(Message::OpenMeasurements)
                 ),
                 tab(
                     "Impulse Responses",
-                    matches!(self.tab, Tab::ImpulseResponses { .. }),
-                    is_analysing.then_some(Message::OpenImpulseResponses) // Message::OpenImpulseResponses
+                    matches!(active_tab, Some(Tab::ImpulseResponses { .. })),
+                    active_tab
+                        .is_some()
+                        .then_some(Message::OpenImpulseResponses)
                 ),
                 tab(
                     "Frequency Responses",
-                    matches!(self.tab, Tab::FrequencyResponses),
-                    is_analysing.then_some(Message::OpenFrequencyResponses) // Message::OpenImpulseResponses
+                    matches!(active_tab, Some(Tab::FrequencyResponses)),
+                    active_tab
+                        .is_some()
+                        .then_some(Message::OpenFrequencyResponses)
                 ),
                 tab(
                     "Spectral Decays",
-                    matches!(self.tab, Tab::SpectralDecay),
+                    matches!(active_tab, Some(Tab::SpectralDecay)),
                     None // Message::OpenFrequencyResponses
                 ),
                 tab(
                     "Spectrogram",
-                    matches!(self.tab, Tab::Spectrogram),
+                    matches!(active_tab, Some(Tab::Spectrogram)),
                     None // Message::OpenFrequencyResponses
                 ),
             ]
@@ -1312,34 +1352,55 @@ impl Main {
         };
 
         let content = {
-            match &self.tab {
-                Tab::Measurements { recording } => self.measurements_tab(),
-                Tab::ImpulseResponses { window_settings } => {
-                    let State::Analysing {
-                        selected,
-                        ref analyses,
-                    } = self.state
-                    else {
-                        panic!("invalid state");
-                    };
-
-                    self.impulse_responses_tab(
+            match self.state {
+                State::Collecting => self.measurements_tab(),
+                State::Analysing {
+                    ref active_tab,
+                    selected,
+                    ref analyses,
+                } => match active_tab {
+                    Tab::Measurements { recording } => self.measurements_tab(),
+                    Tab::ImpulseResponses { window_settings } => self.impulse_responses_tab(
                         selected,
                         &self.charts.impulse_responses,
                         window_settings,
                         analyses,
-                    )
-                }
-                Tab::FrequencyResponses => {
-                    let State::Analysing { ref analyses, .. } = self.state else {
-                        panic!("invalid state");
-                    };
-
-                    self.frequency_responses_tab(&self.charts.frequency_responses, analyses)
-                }
-                Tab::SpectralDecay => todo!(),
-                Tab::Spectrogram => todo!(),
+                    ),
+                    Tab::FrequencyResponses => {
+                        self.frequency_responses_tab(&self.charts.frequency_responses, analyses)
+                    }
+                    Tab::SpectralDecay => todo!(),
+                    Tab::Spectrogram => todo!(),
+                },
             }
+            // match &self.tab {
+            //     Tab::Measurements { recording } => self.measurements_tab(),
+            //     Tab::ImpulseResponses { window_settings } => {
+            //         let State::Analysing {
+            //             selected,
+            //             ref analyses,
+            //         } = self.state
+            //         else {
+            //             panic!("invalid state");
+            //         };
+
+            //         self.impulse_responses_tab(
+            //             selected,
+            //             &self.charts.impulse_responses,
+            //             window_settings,
+            //             analyses,
+            //         )
+            //     }
+            //     Tab::FrequencyResponses => {
+            //         let State::Analysing { ref analyses, .. } = self.state else {
+            //             panic!("invalid state");
+            //         };
+
+            //         self.frequency_responses_tab(&self.charts.frequency_responses, analyses)
+            //     }
+            //     Tab::SpectralDecay => todo!(),
+            //     Tab::Spectrogram => todo!(),
+            // }
         };
 
         container(column![header, container(content).padding(10)]).into()
@@ -2067,7 +2128,6 @@ fn impulse_response_item<'a>(
 impl Default for Main {
     fn default() -> Self {
         Self {
-            tab: Tab::Measurements { recording: None },
             // state: State::CollectingMeasuremnts {
             //     recording: None,
             //     loopback: None,
