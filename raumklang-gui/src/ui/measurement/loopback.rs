@@ -19,11 +19,11 @@ use std::{
 pub struct Loopback {
     pub name: String,
     pub path: Option<PathBuf>,
-    pub state: State,
+    state: State,
 }
 
 #[derive(Debug, Clone)]
-pub enum State {
+enum State {
     Loaded(raumklang_core::Loopback),
     NotLoaded(Arc<raumklang_core::WavLoadError>),
 }
