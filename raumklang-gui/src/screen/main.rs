@@ -49,9 +49,8 @@ use std::{
 };
 
 pub struct Main {
-    // tab: Tab,
-    selected: Option<measurement::Selected>,
     state: State,
+    selected: Option<measurement::Selected>,
 
     loopback: Option<ui::Loopback>,
 
@@ -194,6 +193,7 @@ pub enum Message {
     SpectralDecayConfig(spectral_decay_config::Message),
     OpenSpectrogramConfig,
     SpectrogramConfig(spectrogram_config::Message),
+    Measurement(ui::measurement::Message),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -274,20 +274,6 @@ impl Main {
                     },
                     measurement::Message::Loaded(Err(err)) => {
                         log::error!("{err}");
-                    }
-                    measurement::Message::Remove(id) => {
-                        self.measurements.remove(id);
-
-                        if self.measurements.is_empty() {
-                            self.state = State::Collecting
-                        }
-
-                        if let State::Analysing {
-                            ref mut analyses, ..
-                        } = self.state
-                        {
-                            analyses.remove(&id);
-                        }
                     }
                     measurement::Message::Select(selected) => {
                         self.selected = Some(selected);
@@ -376,6 +362,30 @@ impl Main {
                     Task::none()
                 }
             }
+            Message::Measurement(msg) => {
+                match msg {
+                    ui::measurement::Message::Select(id) => {
+                        self.selected = Some(Selected::Measurement(id));
+                        self.signal_cache.clear();
+                    }
+                    ui::measurement::Message::Remove(id) => {
+                        self.measurements.remove(id);
+
+                        if self.measurements.is_empty() {
+                            self.state = State::Collecting
+                        }
+
+                        if let State::Analysing {
+                            ref mut analyses, ..
+                        } = self.state
+                        {
+                            analyses.remove(&id);
+                        }
+                    }
+                };
+
+                Task::none()
+            }
             Message::OpenMeasurements => {
                 let State::Analysing {
                     active_tab: ref mut tab,
@@ -437,47 +447,6 @@ impl Main {
         }
     }
 
-    pub fn compute_impulse_response(&mut self, id: ui::measurement::Id) -> Task<Message> {
-        let State::Analysing {
-            ref mut analyses, ..
-        } = self.state
-        else {
-            return Task::none();
-        };
-
-        let analysis = analyses.entry(id).or_default();
-
-        let Some(loopback) = self.loopback.as_ref().and_then(Loopback::loaded) else {
-            return Task::none();
-        };
-
-        let measurement = self
-            .measurements
-            .get(id)
-            .and_then(ui::Measurement::signal)
-            .unwrap();
-
-        analysis
-            .compute_impulse_response(loopback.clone(), measurement.clone())
-            .map(|f| Task::perform(f, Message::ImpulseResponseComputed.with(id)))
-            .unwrap_or_default()
-    }
-
-    pub fn compute_frequency_response(&mut self, id: ui::measurement::Id) -> Task<Message> {
-        let State::Analysing {
-            ref mut analyses, ..
-        } = self.state
-        else {
-            return Task::none();
-        };
-
-        let analysis = analyses.entry(id).or_default();
-
-        analysis
-            .compute_frequency_response(self.window.as_ref().cloned().unwrap())
-            .map(|f| Task::perform(f, Message::FrequencyResponseComputed.with(id)))
-            .unwrap_or_else(|| self.compute_impulse_response(id))
-    }
     // pub fn update(
     //
     //     &mut self,
@@ -1373,34 +1342,6 @@ impl Main {
                     Tab::Spectrogram => todo!(),
                 },
             }
-            // match &self.tab {
-            //     Tab::Measurements { recording } => self.measurements_tab(),
-            //     Tab::ImpulseResponses { window_settings } => {
-            //         let State::Analysing {
-            //             selected,
-            //             ref analyses,
-            //         } = self.state
-            //         else {
-            //             panic!("invalid state");
-            //         };
-
-            //         self.impulse_responses_tab(
-            //             selected,
-            //             &self.charts.impulse_responses,
-            //             window_settings,
-            //             analyses,
-            //         )
-            //     }
-            //     Tab::FrequencyResponses => {
-            //         let State::Analysing { ref analyses, .. } = self.state else {
-            //             panic!("invalid state");
-            //         };
-
-            //         self.frequency_responses_tab(&self.charts.frequency_responses, analyses)
-            //     }
-            //     Tab::SpectralDecay => todo!(),
-            //     Tab::Spectrogram => todo!(),
-            // }
         };
 
         container(column![header, container(content).padding(10)]).into()
@@ -1557,22 +1498,24 @@ impl Main {
                     measurement::loopback_entry(self.selected, loopback).map(Message::Measurements)
                 }));
 
-            let measurements = Category::new("Measurements")
-                .push_button(
-                    button("+")
-                        .style(button::secondary)
-                        .on_press(Message::Measurements(measurement::Message::Load(
+            let measurements =
+                Category::new("Measurements")
+                    .push_button(button("+").style(button::secondary).on_press(
+                        Message::Measurements(measurement::Message::Load(
                             measurement::Kind::Normal,
-                        ))),
-                )
-                .push_button(
-                    button(icon::record())
-                        .on_press(Message::StartRecording(recording::Kind::Measurement))
-                        .style(button::secondary),
-                )
-                .extend_entries(self.measurements.iter().map(|measurement| {
-                    measurement::list_entry(self.selected, measurement).map(Message::Measurements)
-                }));
+                        )),
+                    ))
+                    .push_button(
+                        button(icon::record())
+                            .on_press(Message::StartRecording(recording::Kind::Measurement))
+                            .style(button::secondary),
+                    )
+                    .extend_entries(self.measurements.iter().map(|measurement| {
+                        let active = self
+                            .selected
+                            .is_some_and(|id| id == Selected::Measurement(measurement.id()));
+                        measurement.view(active).map(Message::Measurement)
+                    }));
 
             container(scrollable(
                 column![loopback, measurements].spacing(20).padding(10),
@@ -2070,6 +2013,47 @@ impl Main {
 
     //     is_loopback_loaded && self.measurements.iter().any(ui::Measurement::is_loaded)
     // }
+    fn compute_impulse_response(&mut self, id: ui::measurement::Id) -> Task<Message> {
+        let State::Analysing {
+            ref mut analyses, ..
+        } = self.state
+        else {
+            return Task::none();
+        };
+
+        let analysis = analyses.entry(id).or_default();
+
+        let Some(loopback) = self.loopback.as_ref().and_then(Loopback::loaded) else {
+            return Task::none();
+        };
+
+        let measurement = self
+            .measurements
+            .get(id)
+            .and_then(ui::Measurement::signal)
+            .unwrap();
+
+        analysis
+            .compute_impulse_response(loopback.clone(), measurement.clone())
+            .map(|f| Task::perform(f, Message::ImpulseResponseComputed.with(id)))
+            .unwrap_or_default()
+    }
+
+    fn compute_frequency_response(&mut self, id: ui::measurement::Id) -> Task<Message> {
+        let State::Analysing {
+            ref mut analyses, ..
+        } = self.state
+        else {
+            return Task::none();
+        };
+
+        let analysis = analyses.entry(id).or_default();
+
+        analysis
+            .compute_frequency_response(self.window.as_ref().cloned().unwrap())
+            .map(|f| Task::perform(f, Message::FrequencyResponseComputed.with(id)))
+            .unwrap_or_else(|| self.compute_impulse_response(id))
+    }
 }
 
 fn impulse_response_item<'a>(
