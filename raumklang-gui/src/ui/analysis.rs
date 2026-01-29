@@ -4,7 +4,7 @@ use raumklang_core::{Loopback, Measurement};
 
 use crate::{
     data,
-    ui::{impulse_response, FrequencyResponse, ImpulseResponse},
+    ui::{frequency_response, impulse_response, FrequencyResponse, ImpulseResponse},
 };
 
 #[derive(Debug, Clone, Default)]
@@ -93,18 +93,22 @@ impl Analysis {
         &mut self,
         window: data::Window<data::Samples>,
     ) -> Option<impl Future<Output = data::FrequencyResponse>> {
-        let impulse_response = self.impulse_response().cloned()?;
+        let State::ImpulseResponse {
+            ref impulse_response,
+            ref mut frequency_response,
+        } = self.0
+        else {
+            return None;
+        };
 
-        if self
-            .frequency_response()
-            .and_then(FrequencyResponse::result)
-            .is_some()
-        {
+        if let frequency_response::Progress::Finished = frequency_response.progress {
             return None;
         }
 
+        frequency_response.progress = frequency_response::Progress::Computing;
+
         Some(data::frequency_response::compute(
-            impulse_response.origin,
+            impulse_response.origin.clone(),
             window,
         ))
     }

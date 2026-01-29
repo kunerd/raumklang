@@ -18,6 +18,7 @@ pub struct FrequencyResponse {
     pub color: iced::Color,
     pub is_shown: bool,
     pub progress: Progress,
+
     pub data: Option<data::FrequencyResponse>,
     pub smoothed: Option<Box<[f32]>>,
 }
@@ -37,6 +38,7 @@ impl FrequencyResponse {
 
     pub fn computed(&mut self, data: data::FrequencyResponse) {
         self.data = Some(data);
+        self.progress = Progress::Finished;
     }
 
     pub fn view<'a, Message>(
@@ -48,43 +50,46 @@ impl FrequencyResponse {
     where
         Message: 'a,
     {
-        let item = row![
-            icon::record().color(self.color).align_y(Alignment::Center),
-            container(
+        let item = {
+            let color_dot = icon::record().color(self.color).align_y(Alignment::Center);
+
+            let content = container(
                 text(measurement_name)
                     .size(16)
                     .style(|theme| {
                         let mut base = text::default(theme);
 
-                        let text_color = theme.extended_palette().background.weakest.text;
-                        base.color = Some(text_color);
+                        let palette = theme.extended_palette();
+                        base.color = Some(palette.background.weakest.text);
 
                         base
                     })
-                    .align_y(Alignment::Center)
-                    .wrapping(text::Wrapping::Glyph),
+                    .wrapping(text::Wrapping::Glyph)
+                    .align_y(Alignment::Center),
             )
             .width(Length::Fill)
-            .clip(true),
-            container(toggler(self.is_shown).on_toggle(on_toggle)).align_right(Length::Shrink)
-        ]
-        .align_y(Alignment::Center)
-        .spacing(10)
-        .padding(6)
-        .into();
+            .clip(true);
 
-        if self.data.is_some() {
-            item
-        } else {
-            match impulse_response_progess {
-                impulse_response::Progress::Computing => {
-                    processing_overlay("Impulse Response", item)
-                }
-                impulse_response::Progress::Finished => {
+            let switch =
+                container(toggler(self.is_shown).on_toggle(on_toggle)).align_right(Length::Shrink);
+
+            row![color_dot, content, switch]
+                .align_y(Alignment::Center)
+                .spacing(10)
+                .padding(20)
+                .into()
+        };
+
+        match impulse_response_progess {
+            impulse_response::Progress::None | impulse_response::Progress::Computing => {
+                processing_overlay("Impulse Response", item)
+            }
+            impulse_response::Progress::Finished => match self.progress {
+                Progress::None | Progress::Computing => {
                     processing_overlay(self.progress.to_string(), item)
                 }
-                _ => item,
-            }
+                Progress::Finished => item,
+            },
         }
     }
 
@@ -104,6 +109,7 @@ pub enum Progress {
     #[default]
     None,
     Computing,
+    Finished,
 }
 
 impl Display for Progress {
@@ -111,6 +117,7 @@ impl Display for Progress {
         let text = match self {
             Self::None => "Not Started",
             Self::Computing => "Impulse Response",
+            Self::Finished => "Finished",
         };
 
         write!(f, "{}", text)
