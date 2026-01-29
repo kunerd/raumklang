@@ -1,7 +1,6 @@
 mod chart;
 mod frequency_response;
 mod impulse_response;
-mod measurement;
 mod recording;
 mod spectral_decay_config;
 mod spectrogram_config;
@@ -19,7 +18,7 @@ use crate::{
     widget::sidebar,
     PickAndLoadError,
 };
-use raumklang_core::dbfs;
+use raumklang_core::{dbfs, WavLoadError};
 
 use impulse_response::{ChartOperation, WindowSettings};
 use recording::Recording;
@@ -40,6 +39,7 @@ use iced::{
     Color, Element, Function, Length, Subscription, Task, Theme,
 };
 use prism::{axis, line_series, Axis, Chart, Labels};
+use rfd::FileHandle;
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -54,6 +54,8 @@ pub struct Main {
 
     loopback: Option<ui::Loopback>,
     measurements: ui::measurement::List,
+
+    project_path: Option<PathBuf>,
 
     signal_cache: canvas::Cache,
     zoom: chart::Zoom,
@@ -162,7 +164,6 @@ pub enum Message {
     OpenImpulseResponses,
     OpenFrequencyResponses,
 
-    Measurements(measurement::Message),
     MeasurementChart(waveform::Interaction),
     ImpulseResponseSelected(ui::measurement::Id),
 
@@ -195,6 +196,12 @@ pub enum Message {
     OpenSpectrogramConfig,
     SpectrogramConfig(spectrogram_config::Message),
     Measurement(ui::measurement::Message),
+
+    LoadLoopback,
+    LoopbackLoaded(Loopback),
+
+    LoadMeasurement,
+    MeasurementLoaded(ui::Measurement),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -208,75 +215,92 @@ pub enum TabId {
 
 impl Main {
     pub fn from_project(path: PathBuf, project: data::Project) -> (Self, Task<Message>) {
-        // let load_loopback = project
-        //     .loopback
-        //     .map(|loopback| {
-        //         Task::perform(
-        //             measurement::load_measurement(loopback.0.path, measurement::Kind::Loopback),
-        //             measurement::Message::Loaded,
-        //         )
-        //     })
-        //     .unwrap_or_else(Task::none);
+        let load_loopback = project
+            .loopback
+            .map(|loopback| {
+                Task::perform(
+                    Loopback::from_file(loopback.0.path),
+                    Message::LoopbackLoaded,
+                )
+            })
+            .unwrap_or_default();
 
-        // let load_measurements = project.measurements.into_iter().map(|measurement| {
-        //     Task::perform(
-        //         measurement::load_measurement(measurement.path, measurement::Kind::Normal),
-        //         measurement::Message::Loaded,
-        //     )
-        // });
+        let load_measurements = project.measurements.into_iter().map(|measurement| {
+            Task::perform(
+                ui::Measurement::from_file(measurement.path),
+                Message::MeasurementLoaded,
+            )
+        });
 
         (
-            Self::default(),
-            // Self {
-            // project_path: Some(path),
-            // ..Default::default()
-            // },
-            // Task::batch([load_loopback, Task::batch(load_measurements)]).map(Message::Measurements),
-            Task::none(),
+            Self {
+                project_path: Some(path),
+                ..Default::default()
+            },
+            Task::batch([load_loopback, Task::batch(load_measurements)]),
         )
     }
 
     pub fn update(&mut self, recent_projects: &mut RecentProjects, msg: Message) -> Task<Message> {
         match msg {
-            Message::Measurements(message) => {
-                match message {
-                    measurement::Message::Load(kind) => {
-                        let dialog_caption = kind.to_string();
+            Message::LoadLoopback => {
+                Task::future(pick_file("Load Loopback ...")).and_then(|path| {
+                    Task::perform(ui::Loopback::from_file(path), Message::LoopbackLoaded)
+                })
+            }
+            Message::LoadMeasurement => {
+                Task::future(pick_file("Load measurement ...")).and_then(|path| {
+                    Task::perform(ui::Measurement::from_file(path), Message::MeasurementLoaded)
+                })
+            }
+            Message::LoopbackLoaded(loopback) => {
+                self.window = loopback
+                    .loaded()
+                    .map(raumklang_core::Loopback::sample_rate)
+                    .map(SampleRate::from)
+                    .map(Window::new)
+                    .map(Into::into);
 
-                        return Task::perform(
-                            measurement::pick_file_and_load_signal(dialog_caption, kind),
-                            measurement::Message::Loaded,
-                        )
-                        .map(Message::Measurements);
-                    }
-                    measurement::Message::Loaded(Ok(result)) => match Arc::into_inner(result) {
-                        Some(measurement::LoadedKind::Loopback(loopback)) => {
-                            self.window = loopback
-                                .loaded()
-                                .map(raumklang_core::Loopback::sample_rate)
-                                .map(SampleRate::from)
-                                .map(Window::new)
-                                .map(Into::into);
+                self.loopback = Some(loopback);
 
-                            self.loopback = Some(loopback);
-
-                            if !self.measurements.is_empty() {
-                                self.state = State::analysis()
-                            }
-                        }
-                        Some(measurement::LoadedKind::Normal(measurement)) => {
-                            if self.measurements.is_empty() {
-                                self.state = State::analysis();
-                            }
-
-                            self.measurements.push(measurement);
-                        }
-                        None => {}
-                    },
-                    measurement::Message::Loaded(Err(err)) => {
-                        log::error!("{err}");
-                    }
+                if !self.measurements.is_empty() {
+                    self.state = State::analysis();
                 }
+
+                Task::none()
+            }
+            Message::MeasurementLoaded(measurement) => {
+                let is_loopback_loaded = self.loopback.as_ref().is_some_and(Loopback::is_loaded);
+
+                if is_loopback_loaded && self.measurements.is_empty() {
+                    self.state = State::analysis();
+                }
+
+                self.measurements.push(measurement);
+
+                Task::none()
+            }
+            Message::Measurement(msg) => {
+                match msg {
+                    ui::measurement::Message::Select(selected) => {
+                        self.selected = Some(selected);
+                        self.signal_cache.clear();
+                    }
+                    ui::measurement::Message::Remove(id) => {
+                        self.measurements.remove(id);
+
+                        if self.measurements.loaded().next().is_none() {
+                            self.state = State::Collecting
+                        }
+
+                        if let State::Analysing {
+                            ref mut analyses, ..
+                        } = self.state
+                        {
+                            analyses.remove(&id);
+                        }
+                    }
+                };
 
                 Task::none()
             }
@@ -358,30 +382,6 @@ impl Main {
                 } else {
                     Task::none()
                 }
-            }
-            Message::Measurement(msg) => {
-                match msg {
-                    ui::measurement::Message::Select(selected) => {
-                        self.selected = Some(selected);
-                        self.signal_cache.clear();
-                    }
-                    ui::measurement::Message::Remove(id) => {
-                        self.measurements.remove(id);
-
-                        if self.measurements.is_empty() {
-                            self.state = State::Collecting
-                        }
-
-                        if let State::Analysing {
-                            ref mut analyses, ..
-                        } = self.state
-                        {
-                            analyses.remove(&id);
-                        }
-                    }
-                };
-
-                Task::none()
             }
             Message::OpenMeasurements => {
                 let State::Analysing {
@@ -1481,9 +1481,7 @@ impl Main {
             let loopback = Category::new("Loopback")
                 .push_button(
                     button("+")
-                        .on_press_maybe(Some(Message::Measurements(measurement::Message::Load(
-                            measurement::Kind::Loopback,
-                        ))))
+                        .on_press(Message::LoadLoopback)
                         .style(button::secondary),
                 )
                 .push_button(
@@ -1496,23 +1494,22 @@ impl Main {
                     loopback.view(active).map(Message::Measurement)
                 }));
 
-            let measurements =
-                Category::new("Measurements")
-                    .push_button(button("+").style(button::secondary).on_press(
-                        Message::Measurements(measurement::Message::Load(
-                            measurement::Kind::Normal,
-                        )),
-                    ))
-                    .push_button(
-                        button(icon::record())
-                            .on_press(Message::StartRecording(recording::Kind::Measurement))
-                            .style(button::secondary),
-                    )
-                    .extend_entries(self.measurements.iter().map(|measurement| {
-                        let active = self.selected
-                            == Some(ui::measurement::Selected::Measurement(measurement.id()));
-                        measurement.view(active).map(Message::Measurement)
-                    }));
+            let measurements = Category::new("Measurements")
+                .push_button(
+                    button("+")
+                        .style(button::secondary)
+                        .on_press(Message::LoadMeasurement),
+                )
+                .push_button(
+                    button(icon::record())
+                        .on_press(Message::StartRecording(recording::Kind::Measurement))
+                        .style(button::secondary),
+                )
+                .extend_entries(self.measurements.iter().map(|measurement| {
+                    let active = self.selected
+                        == Some(ui::measurement::Selected::Measurement(measurement.id()));
+                    measurement.view(active).map(Message::Measurement)
+                }));
 
             container(scrollable(
                 column![loopback, measurements].spacing(20).padding(10),
@@ -2107,26 +2104,23 @@ fn impulse_response_item<'a>(
 impl Default for Main {
     fn default() -> Self {
         Self {
-            // state: State::CollectingMeasuremnts {
-            //     recording: None,
-            //     loopback: None,
-            // },
             state: State::default(),
+            selected: None,
 
             loopback: None,
             measurements: ui::measurement::List::default(),
-            // project_path: None,
-            selected: None,
-            smoothing: frequency_response::Smoothing::default(),
-            // modal: Modal::None,
-            signal_cache: canvas::Cache::default(),
+
+            project_path: None,
+
             zoom: chart::Zoom::default(),
             offset: chart::Offset::default(),
+            smoothing: frequency_response::Smoothing::default(),
             // spectral_decay_config: data::spectral_decay::Config::default(),
             // spectrogram_config: spectrogram::Preferences::default(),
             window: None,
 
             charts: Charts::default(),
+            signal_cache: canvas::Cache::default(),
         }
     }
 }
@@ -2419,4 +2413,15 @@ async fn pick_project_file() -> Result<PathBuf, PickAndSaveError> {
         .ok_or(PickAndSaveError::DialogClosed)?;
 
     Ok(handle.path().to_path_buf())
+}
+
+pub async fn pick_file(title: impl AsRef<str>) -> Option<PathBuf> {
+    let handle = rfd::AsyncFileDialog::new()
+        .set_title(format!("Choose {} file", title.as_ref()))
+        .add_filter("wav", &["wav", "wave"])
+        .add_filter("all", &["*"])
+        .pick_file()
+        .await;
+
+    handle.as_ref().map(FileHandle::path).map(Path::to_path_buf)
 }
