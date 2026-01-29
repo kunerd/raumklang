@@ -76,6 +76,16 @@ impl Analysis {
         }
     }
 
+    pub(crate) fn frequency_response_mut(&mut self) -> Option<&mut FrequencyResponse> {
+        match &mut self.0 {
+            State::None => None,
+            State::ImpulseResponseComputing(frequency_response)
+            | State::ImpulseResponse {
+                frequency_response, ..
+            } => Some(frequency_response),
+        }
+    }
+
     pub(crate) fn impulse_response_progress(&self) -> impulse_response::Progress {
         match self.0 {
             State::None => impulse_response::Progress::None,
