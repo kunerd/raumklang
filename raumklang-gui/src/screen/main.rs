@@ -14,7 +14,7 @@ use crate::{
         chart::waveform, spectral_decay_config::SpectralDecayConfig,
         spectrogram_config::SpectrogramConfig,
     },
-    ui::{self, analysis, measurement, Analysis, ImpulseResponse, Loopback, Measurement},
+    ui::{self, analysis, measurement, Analysis, Loopback, Measurement},
     widget::sidebar,
     PickAndLoadError,
 };
@@ -27,13 +27,14 @@ use chrono::{DateTime, Utc};
 use generic_overlay::generic_overlay::{dropdown_menu, dropdown_root};
 
 use iced::{
+    advanced::Renderer,
     alignment::{Horizontal, Vertical},
     futures::{FutureExt, TryFutureExt},
     keyboard, padding,
-    task::sipper,
+    task::{sipper, Sipper},
     widget::{
         button, canvas, center, column, container, opaque, pick_list, right, row, rule, scrollable,
-        space, stack, text, text::Wrapping, Button,
+        space, stack, text, Button,
     },
     Alignment::{self, Center},
     Color, Element, Function, Length, Subscription, Task, Theme,
@@ -179,8 +180,8 @@ pub enum Message {
     ImpulseResponseSaved(measurement::Id, Option<Arc<Path>>),
 
     FrequencyResponseToggled(measurement::Id, bool),
-    SmoothingChanged(frequency_response::Smoothing),
-    FrequencyResponseSmoothed((measurement::Id, Box<[f32]>)),
+    ChangeSmoothing(frequency_response::Smoothing),
+    FrequencyResponseSmoothed(measurement::Id, Box<[f32]>),
 
     ShiftKeyPressed,
     ShiftKeyReleased,
@@ -315,21 +316,22 @@ impl Main {
                 };
 
                 *selected = Some(id);
-                analyses.entry(id).or_default();
+                self.charts.impulse_responses.data_cache.clear();
 
                 match tab {
                     Tab::Measurements { .. } => Task::none(),
-                    Tab::ImpulseResponses { .. } => self.compute_impulse_response(id),
+                    Tab::ImpulseResponses { .. } => compute_impulse_response(
+                        analyses,
+                        id,
+                        self.loopback.as_ref(),
+                        &self.measurements,
+                    ),
                     Tab::FrequencyResponses => Task::none(),
                     Tab::SpectralDecay => todo!(),
                     Tab::Spectrogram => todo!(),
                 }
             }
-            Message::ImpulseResponse(id, ui::impulse_response::Message::OpenSaveFileDialog) => {
-                Task::future(choose_impulse_response_file_path())
-                    .and_then(move |path| Task::done(Message::SaveImpulseResponse(id, path)))
-            }
-            Message::SaveImpulseResponse(id, path) => {
+            Message::ImpulseResponse(id, ui::impulse_response::Message::Save) => {
                 let State::Analysing {
                     ref mut analyses, ..
                 } = self.state
@@ -337,25 +339,25 @@ impl Main {
                     return Task::none();
                 };
 
-                // FIXME: ugly as hell
-                let ir = analyses
-                    .get(&id)
-                    .and_then(Analysis::impulse_response)
-                    .cloned();
+                let loopback = self.loopback.as_ref().and_then(Loopback::loaded).unwrap();
+                let measurement = self
+                    .measurements
+                    .get(id)
+                    .and_then(Measurement::signal)
+                    .unwrap();
 
-                let ir_fut = self.impulse_response_future(id);
+                let analysis = analyses.entry(id).or_default();
+                let fut = analysis.impulse_response.compute(loopback, measurement);
+                dbg!(fut.is_some());
 
                 Task::sip(
                     sipper(async move |mut progress| {
-                        let ir = if let Some(ir) = ir {
-                            ir
-                        } else {
-                            let ir = ir_fut?.await;
+                        let path = choose_impulse_response_file_path().await?;
 
-                            progress.send(ir.clone()).await;
+                        let ir = fut?.run(&progress).await;
+                        progress.send(ir.clone()).await;
 
-                            ui::ImpulseResponse::from_data(ir)
-                        };
+                        let ir = ui::ImpulseResponse::from_data(&ir)?;
 
                         save_impulse_response(path.clone(), ir).await;
 
@@ -365,7 +367,13 @@ impl Main {
                     Message::ImpulseResponseSaved.with(id),
                 )
             }
-            Message::ImpulseResponseComputed(id, new_ir) => {
+            Message::SaveImpulseResponse(id, path) => Task::none(),
+            Message::ImpulseResponseSaved(id, path) => {
+                eprintln!("IR (#{:?}) saved to: {:?}", id, path);
+
+                Task::none()
+            }
+            Message::ImpulseResponseComputed(id, impulse_response) => {
                 let State::Analysing {
                     selected,
                     ref active_tab,
@@ -376,24 +384,33 @@ impl Main {
                     return Task::none();
                 };
 
-                let new_ir = ImpulseResponse::from_data(new_ir);
+                // let new_ir = ImpulseResponse::from_data(new_ir);
 
+                log::debug!("IR progress: {:?}", impulse_response.progress());
                 let analysis = analyses.entry(id).or_default();
-                analysis.apply(analysis::Event::ImpulseResponseComputed(new_ir.clone()));
+                analysis.impulse_response =
+                    ui::impulse_response::State::from_data(impulse_response);
+                // analysis.apply(analysis::Event::ImpulseResponseComputed(new_ir.clone()));
 
-                if selected.is_some_and(|selected| selected == id) {
-                    self.charts
-                        .impulse_responses
-                        .x_range
-                        .get_or_insert(0.0..=new_ir.data.len() as f32);
+                // if selected.is_some_and(|selected| selected == id) {
+                //     self.charts
+                //         .impulse_responses
+                //         .x_range
+                //         .get_or_insert(0.0..=new_ir.data.len() as f32);
 
-                    self.charts.impulse_responses.data_cache.clear();
-                }
+                //     self.charts.impulse_responses.data_cache.clear();
+                // }
 
                 match active_tab {
                     Tab::Measurements { .. } => Task::none(),
                     Tab::ImpulseResponses { .. } => Task::none(),
-                    Tab::FrequencyResponses => self.compute_frequency_response(id),
+                    Tab::FrequencyResponses => compute_frequency_response(
+                        analyses,
+                        id,
+                        self.loopback.as_ref(),
+                        &self.measurements,
+                        self.window.as_ref().cloned().unwrap(),
+                    ),
                     Tab::SpectralDecay => todo!(),
                     Tab::Spectrogram => todo!(),
                 }
@@ -409,14 +426,14 @@ impl Main {
                 };
 
                 let analysis = analyses.entry(id).or_default();
-                analysis.apply(analysis::Event::FrequencyResponseComputed(new_fr.clone()));
+                // analysis.apply(analysis::Event::FrequencyResponseComputed(new_fr.clone()));
 
                 self.charts.frequency_responses.cache.clear();
 
                 if let Some(fraction) = self.smoothing.fraction() {
                     Task::perform(
-                        frequency_response::smooth_frequency_response(id, new_fr, fraction),
-                        Message::FrequencyResponseSmoothed,
+                        frequency_response::smooth_frequency_response(new_fr, fraction),
+                        Message::FrequencyResponseSmoothed.with(id),
                     )
                 } else {
                     Task::none()
@@ -439,6 +456,65 @@ impl Main {
 
                 fr.is_shown = state;
 
+                self.charts.frequency_responses.cache.clear();
+
+                Task::none()
+            }
+            Message::ChangeSmoothing(smoothing) => {
+                let State::Analysing {
+                    ref mut analyses, ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
+                self.smoothing = smoothing;
+
+                if let Some(fraction) = smoothing.fraction() {
+                    let tasks = analyses
+                        .iter()
+                        .flat_map(|(id, analysis)| {
+                            let fr = analysis.frequency_response()?;
+                            // TODO: refactor FR model
+                            let data = fr.data.as_ref()?;
+
+                            Some((id, data.clone()))
+                        })
+                        .map(|(id, fr)| {
+                            Task::perform(
+                                frequency_response::smooth_frequency_response(fr, fraction),
+                                Message::FrequencyResponseSmoothed.with(*id),
+                            )
+                        });
+
+                    Task::batch(tasks)
+                } else {
+                    analyses
+                        .values_mut()
+                        .flat_map(Analysis::frequency_response_mut)
+                        .for_each(|fr| fr.smoothed = None);
+
+                    self.charts.frequency_responses.cache.clear();
+
+                    Task::none()
+                }
+            }
+            Message::FrequencyResponseSmoothed(id, smoothed) => {
+                let State::Analysing {
+                    ref mut analyses, ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
+                let Some(fr) = analyses
+                    .get_mut(&id)
+                    .and_then(Analysis::frequency_response_mut)
+                else {
+                    return Task::none();
+                };
+
+                fr.smoothed = Some(smoothed);
                 self.charts.frequency_responses.cache.clear();
 
                 Task::none()
@@ -478,21 +554,31 @@ impl Main {
 
             Message::OpenFrequencyResponses => {
                 let State::Analysing {
-                    active_tab: ref mut tab,
+                    ref mut active_tab,
+                    ref mut analyses,
                     ..
                 } = self.state
                 else {
                     return Task::none();
                 };
 
-                *tab = Tab::FrequencyResponses;
+                *active_tab = Tab::FrequencyResponses;
 
                 // FIXME get rid of vec alloc
-                let ids: Vec<_> = self.measurements.loaded().map(Measurement::id).collect();
+                // let ids: Vec<_> = self.measurements.loaded().map(Measurement::id).collect();
 
-                let tasks = ids
-                    .into_iter()
-                    .map(|id| self.compute_frequency_response(id));
+                // let tasks = ids
+                //     .into_iter()
+                //     .map(|id| self.compute_frequency_response(id));
+                let tasks = self.measurements.loaded().map(Measurement::id).map(|id| {
+                    compute_frequency_response(
+                        analyses,
+                        id,
+                        self.loopback.as_ref(),
+                        &self.measurements,
+                        self.window.as_ref().cloned().unwrap(),
+                    )
+                });
 
                 Task::batch(tasks)
             }
@@ -1640,7 +1726,7 @@ impl Main {
                 let signal = measurement.signal()?;
                 let progress = analyses
                     .get(&measurement.id())
-                    .map(Analysis::impulse_response_progress);
+                    .map(|a| a.impulse_response.progress());
 
                 let entry = ui::impulse_response::view(
                     &measurement.name,
@@ -1662,17 +1748,18 @@ impl Main {
         };
 
         let content = {
-            let placeholder = center(text("Impulse response not computed, yet.")).into();
+            let placeholder = center(text("Impulse response not computed, yet."));
 
             selected
                 .as_ref()
                 .and_then(|id| analyses.get(id))
                 .and_then(Analysis::impulse_response)
-                .map_or(placeholder, |impulse_response| {
+                .map(|impulse_response| {
                     chart
                         .view(impulse_response, window_settings)
                         .map(Message::ImpulseResponseChart)
                 })
+                .unwrap_or(placeholder.into())
         };
 
         row![
@@ -1699,7 +1786,7 @@ impl Main {
 
                 let content = frequency_response.view(
                     &measurement.name,
-                    analysis.impulse_response_progress(),
+                    analysis.impulse_response.progress(),
                     Message::FrequencyResponseToggled.with(measurement.id()),
                 );
 
@@ -1718,7 +1805,7 @@ impl Main {
             row![pick_list(
                 frequency_response::Smoothing::ALL,
                 Some(&self.smoothing),
-                Message::SmoothingChanged,
+                Message::ChangeSmoothing,
             )]
         };
 
@@ -2064,73 +2151,93 @@ impl Main {
 
     //     is_loopback_loaded && self.measurements.iter().any(ui::Measurement::is_loaded)
     // }
-    fn impulse_response_future(
-        &mut self,
-        id: measurement::Id,
-    ) -> Option<impl Future<Output = data::ImpulseResponse>> {
-        let State::Analysing {
-            ref mut analyses, ..
-        } = self.state
-        else {
-            return None;
-        };
+    // fn impulse_response_future(
+    //     &mut self,
+    //     id: measurement::Id,
+    // ) -> Option<impl Future<Output = data::ImpulseResponse>> {
+    //     let State::Analysing {
+    //         ref mut analyses, ..
+    //     } = self.state
+    //     else {
+    //         return None;
+    //     };
 
-        let analysis = analyses.entry(id).or_default();
+    //     let analysis = analyses.entry(id).or_default();
 
-        let Some(loopback) = self.loopback.as_ref().and_then(Loopback::loaded) else {
-            return None;
-        };
+    //     let Some(loopback) = self.loopback.as_ref().and_then(Loopback::loaded) else {
+    //         return None;
+    //     };
 
-        let measurement = self
-            .measurements
-            .get(id)
-            .and_then(Measurement::signal)
-            .unwrap();
+    //     let measurement = self
+    //         .measurements
+    //         .get(id)
+    //         .and_then(Measurement::signal)
+    //         .unwrap();
 
-        analysis.compute_impulse_response(loopback.clone(), measurement.clone())
-    }
+    //     analysis.compute_impulse_response(loopback.clone(), measurement.clone())
+    // }
+}
 
-    fn compute_impulse_response(&mut self, id: measurement::Id) -> Task<Message> {
-        let State::Analysing {
-            ref mut analyses, ..
-        } = self.state
-        else {
-            return Task::none();
-        };
+fn compute_frequency_response(
+    analyses: &mut BTreeMap<measurement::Id, Analysis>,
+    id: measurement::Id,
+    loopback: Option<&Loopback>,
+    measurements: &measurement::List,
+    window: data::Window<data::Samples>,
+) -> Task<Message> {
+    // let Some(loopback) = loopback.and_then(Loopback::loaded).cloned() else {
+    //     return Task::none();
+    // };
 
-        let analysis = analyses.entry(id).or_default();
+    // let Some(measurement) = measurements.get(id).and_then(Measurement::signal).cloned() else {
+    //     return Task::none();
+    // };
 
-        let Some(loopback) = self.loopback.as_ref().and_then(Loopback::loaded) else {
-            return Task::none();
-        };
+    // let analysis = analyses.entry(id).or_default();
 
-        let measurement = self
-            .measurements
-            .get(id)
-            .and_then(Measurement::signal)
-            .unwrap();
+    // Task::sip(
+    //     analysis
+    //         .impulse_response
+    //         .clone()
+    //         .compute(loopback, measurement),
+    //     Message::ImpulseResponseComputed.with(id),
+    //     Message::ImpulseResponseComputed.with(id),
+    // )
+    // analysis
+    //     .compute_frequency_response(window)
+    //     .map(|f| Task::perform(f, Message::FrequencyResponseComputed.with(id)))
+    // .unwrap_or_else(|| compute_impulse_response(analyses, id, loopback, measurements))
+    Task::none()
+}
 
-        analysis
-            .compute_impulse_response(loopback.clone(), measurement.clone())
-            .map(|f| Task::perform(f, Message::ImpulseResponseComputed.with(id)))
-            .unwrap_or_default()
-    }
+fn compute_impulse_response(
+    analyses: &mut BTreeMap<measurement::Id, Analysis>,
+    id: measurement::Id,
+    loopback: Option<&Loopback>,
+    measurements: &measurement::List,
+) -> Task<Message> {
+    let Some(loopback) = loopback.and_then(Loopback::loaded) else {
+        return Task::none();
+    };
 
-    fn compute_frequency_response(&mut self, id: measurement::Id) -> Task<Message> {
-        let State::Analysing {
-            ref mut analyses, ..
-        } = self.state
-        else {
-            return Task::none();
-        };
+    let Some(measurement) = measurements.get(id).and_then(Measurement::signal) else {
+        return Task::none();
+    };
 
-        let analysis = analyses.entry(id).or_default();
+    let analysis = analyses.entry(id).or_default();
 
-        analysis
-            .compute_frequency_response(self.window.as_ref().cloned().unwrap())
-            .map(|f| Task::perform(f, Message::FrequencyResponseComputed.with(id)))
-            .unwrap_or_else(|| self.compute_impulse_response(id))
-    }
+    analysis
+        .impulse_response
+        .clone()
+        .compute(loopback, measurement)
+        .map(|sipper| {
+            Task::sip(
+                sipper,
+                Message::ImpulseResponseComputed.with(id),
+                Message::ImpulseResponseComputed.with(id),
+            )
+        })
+        .unwrap_or_default()
 }
 
 impl Default for Main {
@@ -2160,6 +2267,8 @@ impl Default for Main {
 async fn choose_impulse_response_file_path() -> Option<Arc<Path>> {
     rfd::AsyncFileDialog::new()
         .set_title("Save Impulse Response ...")
+        // FIXME: remove
+        .set_file_name("test.wave")
         .add_filter("wav", &["wav", "wave"])
         .add_filter("all", &["*"])
         .save_file()
@@ -2168,17 +2277,18 @@ async fn choose_impulse_response_file_path() -> Option<Arc<Path>> {
         .map(|h| h.path().into())
 }
 
-async fn save_impulse_response(path: Arc<Path>, impulse_response: ImpulseResponse) {
+// TODO: error handling
+async fn save_impulse_response(path: Arc<Path>, ir: ui::ImpulseResponse) {
     tokio::task::spawn_blocking(move || {
         let spec = hound::WavSpec {
             channels: 1,
-            sample_rate: impulse_response.sample_rate.into(),
+            sample_rate: ir.sample_rate.into(),
             bits_per_sample: 32,
             sample_format: hound::SampleFormat::Float,
         };
 
         let mut writer = hound::WavWriter::create(path, spec).unwrap();
-        for s in impulse_response.data.iter().copied() {
+        for s in ir.data {
             writer.write_sample(s).unwrap();
         }
         writer.finalize().unwrap();

@@ -1,36 +1,87 @@
-use std::time::SystemTime;
+use std::{sync::Arc, time::SystemTime};
 
 use crate::{
+    data::impulse_response,
     data::{self, SampleRate},
     icon,
-    ui::impulse_response,
     widget::sidebar,
 };
 
 use chrono::{DateTime, Utc};
 use iced::{
-    widget::{button, column, container, right, row, rule, stack, text, text::Wrapping},
+    task::Sipper,
+    widget::{button, column, container, right, row, rule, stack, text},
     Color, Element,
     Length::{Fill, Shrink},
+    Task,
 };
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Select,
-    OpenSaveFileDialog,
+    Save,
 }
 
 #[derive(Debug, Clone)]
 pub struct ImpulseResponse {
     pub sample_rate: SampleRate,
     pub data: Vec<f32>,
-    pub origin: raumklang_core::ImpulseResponse,
+    pub origin: data::ImpulseResponse,
+}
+
+#[derive(Debug, Clone)]
+pub enum State {
+    Computing(data::ImpulseResponse),
+    Computed(ImpulseResponse),
+}
+
+impl State {
+    pub(crate) fn from_data(impulse_response: data::ImpulseResponse) -> State {
+        match ImpulseResponse::from_data(&impulse_response) {
+            Some(ir) => State::Computed(ir),
+            None => State::Computing(impulse_response),
+        }
+    }
+
+    pub(crate) fn progress(&self) -> impulse_response::Progress {
+        match self {
+            State::Computing(ir) => ir.progress(),
+            State::Computed(_) => impulse_response::Progress::Computed,
+        }
+    }
+
+    pub(crate) fn inner(&self) -> Option<&ImpulseResponse> {
+        match self {
+            State::Computing(_) => None,
+            State::Computed(ref impulse_response) => Some(impulse_response),
+        }
+    }
+
+    pub(crate) fn compute(
+        &self,
+        loopback: &raumklang_core::Loopback,
+        measurement: &raumklang_core::Measurement,
+    ) -> Option<impl Sipper<data::ImpulseResponse, data::ImpulseResponse>> {
+        match self {
+            State::Computing(ref impulse_response) => {
+                impulse_response.clone().compute(loopback, measurement)
+            }
+            State::Computed(_) => None,
+        }
+    }
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self::Computing(data::ImpulseResponse::default())
+    }
 }
 
 impl ImpulseResponse {
-    pub fn from_data(impulse_response: data::ImpulseResponse) -> Self {
+    pub fn from_data(data: &data::ImpulseResponse) -> Option<Self> {
+        let impulse_response = data.inner()?;
+
         let max = impulse_response
-            .origin
             .data
             .iter()
             .map(|s| s.re.abs())
@@ -38,18 +89,17 @@ impl ImpulseResponse {
             .unwrap();
 
         let normalized = impulse_response
-            .origin
             .data
             .iter()
             .map(|s| s.re)
             .map(|s| s / max.abs())
             .collect();
 
-        Self {
-            sample_rate: SampleRate::new(impulse_response.origin.sample_rate),
+        Some(Self {
+            sample_rate: SampleRate::new(impulse_response.sample_rate),
             data: normalized,
-            origin: impulse_response.origin,
-        }
+            origin: data.clone(),
+        })
     }
 }
 
@@ -63,7 +113,7 @@ pub fn view<'a>(
         let dt: DateTime<Utc> = date_time.into();
         let ir_btn = button(
             column![
-                text(name).size(16).wrapping(Wrapping::WordOrGlyph),
+                text(name).size(16).wrapping(text::Wrapping::WordOrGlyph),
                 text!("{}", dt.format("%x %X")).size(10)
             ]
             .clip(true)
@@ -84,7 +134,7 @@ pub fn view<'a>(
 
         let save_btn = button(icon::download().size(10))
             .style(button::secondary)
-            .on_press_with(move || Message::OpenSaveFileDialog);
+            .on_press_with(move || Message::Save);
 
         let content = row![
             ir_btn,
@@ -101,13 +151,6 @@ pub fn view<'a>(
         }
         _ => entry,
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum Progress {
-    None,
-    Computing,
-    Finished,
 }
 
 fn processing_overlay<'a, Message>(
