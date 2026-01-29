@@ -95,6 +95,14 @@ impl Analysis {
     ) -> Option<impl Future<Output = data::FrequencyResponse>> {
         let impulse_response = self.impulse_response().cloned()?;
 
+        if self
+            .frequency_response()
+            .and_then(FrequencyResponse::result)
+            .is_some()
+        {
+            return None;
+        }
+
         Some(data::frequency_response::compute(
             impulse_response.origin,
             window,
