@@ -10,6 +10,17 @@ use crate::{
 #[derive(Debug, Clone, Default)]
 pub struct Analysis(State);
 
+#[derive(Debug, Clone, Default)]
+enum State {
+    #[default]
+    None,
+    ImpulseResponseComputing(FrequencyResponse),
+    ImpulseResponse {
+        impulse_response: ImpulseResponse,
+        frequency_response: FrequencyResponse,
+    },
+}
+
 pub enum Event {
     ImpulseResponseComputed(ImpulseResponse),
     FrequencyResponseComputed(data::FrequencyResponse),
@@ -112,15 +123,4 @@ impl Analysis {
             window,
         ))
     }
-}
-
-#[derive(Debug, Clone, Default)]
-enum State {
-    #[default]
-    None,
-    ImpulseResponseComputing(FrequencyResponse),
-    ImpulseResponse {
-        impulse_response: ImpulseResponse,
-        frequency_response: FrequencyResponse,
-    },
 }

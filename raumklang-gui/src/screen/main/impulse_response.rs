@@ -115,26 +115,3 @@ impl WindowSettings {
         Self { window }
     }
 }
-
-pub fn processing_overlay<'a, Message>(
-    status: &'a str,
-    entry: impl Into<Element<'a, Message>>,
-) -> Element<'a, Message>
-where
-    Message: 'a,
-{
-    stack([
-        container(entry).style(container::bordered_box).into(),
-        container(column![text("Computing..."), text(status).size(12)])
-            .center(Length::Fill)
-            .style(|theme| container::Style {
-                border: container::rounded_box(theme).border,
-                background: Some(iced::Background::Color(Color::from_rgba(
-                    0.0, 0.0, 0.0, 0.8,
-                ))),
-                ..Default::default()
-            })
-            .into(),
-    ])
-    .into()
-}

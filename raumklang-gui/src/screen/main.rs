@@ -11,10 +11,10 @@ use crate::{
     },
     icon, load_project, log,
     screen::main::{
-        chart::waveform, impulse_response::processing_overlay,
-        spectral_decay_config::SpectralDecayConfig, spectrogram_config::SpectrogramConfig,
+        chart::waveform, spectral_decay_config::SpectralDecayConfig,
+        spectrogram_config::SpectrogramConfig,
     },
-    ui::{self, analysis, Analysis, Loopback},
+    ui::{self, analysis, measurement, Analysis, ImpulseResponse, Loopback, Measurement},
     widget::sidebar,
     PickAndLoadError,
 };
@@ -44,16 +44,17 @@ use rfd::FileHandle;
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
+    future::Future,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 pub struct Main {
     state: State,
-    selected: Option<ui::measurement::Selected>,
+    selected: Option<measurement::Selected>,
 
-    loopback: Option<ui::Loopback>,
-    measurements: ui::measurement::List,
+    loopback: Option<Loopback>,
+    measurements: measurement::List,
 
     project_path: Option<PathBuf>,
 
@@ -75,8 +76,8 @@ enum State {
     Collecting,
     Analysing {
         active_tab: Tab,
-        selected: Option<ui::measurement::Id>,
-        analyses: BTreeMap<ui::measurement::Id, Analysis>,
+        selected: Option<measurement::Id>,
+        analyses: BTreeMap<measurement::Id, Analysis>,
     },
 }
 
@@ -154,54 +155,55 @@ pub enum ModalAction {
 pub enum Message {
     NewProject,
     LoadProject,
-    SaveProject,
-    RecentProject(usize),
     ProjectLoaded(Result<(Arc<data::Project>, PathBuf), PickAndLoadError>),
+    SaveProject,
     ProjectSaved(Result<PathBuf, PickAndSaveError>),
+    LoadRecentProject(usize),
 
-    TabSelected(TabId),
+    LoadLoopback,
+    LoopbackLoaded(Loopback),
+
+    LoadMeasurement,
+    MeasurementLoaded(Measurement),
+
+    Measurement(measurement::Message),
+
     OpenMeasurements,
     OpenImpulseResponses,
     OpenFrequencyResponses,
 
-    MeasurementChart(waveform::Interaction),
-    ImpulseResponseSelected(ui::measurement::Id),
+    ImpulseResponseSelected(measurement::Id),
+    ImpulseResponseComputed(measurement::Id, data::ImpulseResponse),
 
-    FrequencyResponseToggled(ui::measurement::Id, bool),
+    FrequencyResponseComputed(measurement::Id, data::FrequencyResponse),
+    ImpulseResponseSaved(measurement::Id, Option<Arc<Path>>),
+
+    FrequencyResponseToggled(measurement::Id, bool),
     SmoothingChanged(frequency_response::Smoothing),
-    FrequencyResponseSmoothed((ui::measurement::Id, Box<[f32]>)),
-    FrequencyResponseComputed(ui::measurement::Id, data::FrequencyResponse),
-
-    ImpulseResponses(impulse_response::Message),
-    SaveImpulseResponseFileDialog(ui::measurement::Id),
-    SaveImpulseResponse(ui::measurement::Id, Arc<Path>),
-    ImpulseResponsesSaved(Arc<Path>),
+    FrequencyResponseSmoothed((measurement::Id, Box<[f32]>)),
 
     ShiftKeyPressed,
     ShiftKeyReleased,
 
-    ImpulseResponseComputed(ui::measurement::Id, data::ImpulseResponse),
+    MeasurementChart(waveform::Interaction),
 
+    ImpulseResponse(ui::measurement::Id, ui::impulse_response::Message),
+    SaveImpulseResponse(measurement::Id, Arc<Path>),
+    // SaveImpulseResponseFileDialog(measurement::Id),
     Recording(recording::Message),
     StartRecording(recording::Kind),
 
-    SpectralDecayComputed(ui::measurement::Id, data::SpectralDecay),
+    SpectralDecayComputed(measurement::Id, data::SpectralDecay),
 
     Spectrogram(chart::spectrogram::Interaction),
-    SpectrogramComputed(ui::measurement::Id, data::Spectrogram),
+    SpectrogramComputed(measurement::Id, data::Spectrogram),
 
     Modal(ModalAction),
     OpenSpectralDecayConfig,
     SpectralDecayConfig(spectral_decay_config::Message),
     OpenSpectrogramConfig,
     SpectrogramConfig(spectrogram_config::Message),
-    Measurement(ui::measurement::Message),
-
-    LoadLoopback,
-    LoopbackLoaded(Loopback),
-
-    LoadMeasurement,
-    MeasurementLoaded(ui::Measurement),
+    ImpulseResponseChart(impulse_response::Message),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,7 +229,7 @@ impl Main {
 
         let load_measurements = project.measurements.into_iter().map(|measurement| {
             Task::perform(
-                ui::Measurement::from_file(measurement.path),
+                Measurement::from_file(measurement.path),
                 Message::MeasurementLoaded,
             )
         });
@@ -243,14 +245,11 @@ impl Main {
 
     pub fn update(&mut self, recent_projects: &mut RecentProjects, msg: Message) -> Task<Message> {
         match msg {
-            Message::LoadLoopback => {
-                Task::future(pick_file("Load Loopback ...")).and_then(|path| {
-                    Task::perform(ui::Loopback::from_file(path), Message::LoopbackLoaded)
-                })
-            }
+            Message::LoadLoopback => Task::future(pick_file("Load Loopback ..."))
+                .and_then(|path| Task::perform(Loopback::from_file(path), Message::LoopbackLoaded)),
             Message::LoadMeasurement => {
                 Task::future(pick_file("Load measurement ...")).and_then(|path| {
-                    Task::perform(ui::Measurement::from_file(path), Message::MeasurementLoaded)
+                    Task::perform(Measurement::from_file(path), Message::MeasurementLoaded)
                 })
             }
             Message::LoopbackLoaded(loopback) => {
@@ -282,11 +281,11 @@ impl Main {
             }
             Message::Measurement(msg) => {
                 match msg {
-                    ui::measurement::Message::Select(selected) => {
+                    measurement::Message::Select(selected) => {
                         self.selected = Some(selected);
                         self.signal_cache.clear();
                     }
-                    ui::measurement::Message::Remove(id) => {
+                    measurement::Message::Remove(id) => {
                         self.measurements.remove(id);
 
                         if self.measurements.loaded().next().is_none() {
@@ -304,7 +303,7 @@ impl Main {
 
                 Task::none()
             }
-            Message::ImpulseResponseSelected(id) => {
+            Message::ImpulseResponse(id, ui::impulse_response::Message::Select) => {
                 let State::Analysing {
                     active_tab: tab,
                     selected,
@@ -326,6 +325,46 @@ impl Main {
                     Tab::Spectrogram => todo!(),
                 }
             }
+            Message::ImpulseResponse(id, ui::impulse_response::Message::OpenSaveFileDialog) => {
+                Task::future(choose_impulse_response_file_path())
+                    .and_then(move |path| Task::done(Message::SaveImpulseResponse(id, path)))
+            }
+            Message::SaveImpulseResponse(id, path) => {
+                let State::Analysing {
+                    ref mut analyses, ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
+                // FIXME: ugly as hell
+                let ir = analyses
+                    .get(&id)
+                    .and_then(Analysis::impulse_response)
+                    .cloned();
+
+                let ir_fut = self.impulse_response_future(id);
+
+                Task::sip(
+                    sipper(async move |mut progress| {
+                        let ir = if let Some(ir) = ir {
+                            ir
+                        } else {
+                            let ir = ir_fut?.await;
+
+                            progress.send(ir.clone()).await;
+
+                            ui::ImpulseResponse::from_data(ir)
+                        };
+
+                        save_impulse_response(path.clone(), ir).await;
+
+                        Some(path)
+                    }),
+                    Message::ImpulseResponseComputed.with(id),
+                    Message::ImpulseResponseSaved.with(id),
+                )
+            }
             Message::ImpulseResponseComputed(id, new_ir) => {
                 let State::Analysing {
                     selected,
@@ -337,7 +376,7 @@ impl Main {
                     return Task::none();
                 };
 
-                let new_ir = ui::ImpulseResponse::from_data(new_ir);
+                let new_ir = ImpulseResponse::from_data(new_ir);
 
                 let analysis = analyses.entry(id).or_default();
                 analysis.apply(analysis::Event::ImpulseResponseComputed(new_ir.clone()));
@@ -428,11 +467,7 @@ impl Main {
                 *tab = Tab::FrequencyResponses;
 
                 // FIXME get rid of vec alloc
-                let ids: Vec<_> = self
-                    .measurements
-                    .loaded()
-                    .map(ui::Measurement::id)
-                    .collect();
+                let ids: Vec<_> = self.measurements.loaded().map(Measurement::id).collect();
 
                 let tasks = ids
                     .into_iter()
@@ -1226,7 +1261,7 @@ impl Main {
                         .filter_map(|(i, p)| p.to_str().map(|f| (i, f)))
                         .map(|(i, s)| {
                             button(s)
-                                .on_press(Message::RecentProject(i))
+                                .on_press(Message::LoadRecentProject(i))
                                 .style(button::subtle)
                                 .width(Length::Fill)
                                 .into()
@@ -1490,7 +1525,7 @@ impl Main {
                         .style(button::secondary),
                 )
                 .push_entry_maybe(self.loopback.as_ref().map(|loopback| {
-                    let active = self.selected == Some(ui::measurement::Selected::Loopback);
+                    let active = self.selected == Some(measurement::Selected::Loopback);
                     loopback.view(active).map(Message::Measurement)
                 }));
 
@@ -1506,8 +1541,8 @@ impl Main {
                         .style(button::secondary),
                 )
                 .extend_entries(self.measurements.iter().map(|measurement| {
-                    let active = self.selected
-                        == Some(ui::measurement::Selected::Measurement(measurement.id()));
+                    let active =
+                        self.selected == Some(measurement::Selected::Measurement(measurement.id()));
                     measurement.view(active).map(Message::Measurement)
                 }));
 
@@ -1543,13 +1578,13 @@ impl Main {
 
             let content = if let Some(measurement) =
                 self.selected.and_then(|selected| match selected {
-                    ui::measurement::Selected::Loopback => self
+                    measurement::Selected::Loopback => self
                         .loopback
                         .as_ref()
                         .and_then(Loopback::loaded)
                         .map(AsRef::as_ref),
-                    ui::measurement::Selected::Measurement(id) => {
-                        self.measurements.get(id).and_then(ui::Measurement::signal)
+                    measurement::Selected::Measurement(id) => {
+                        self.measurements.get(id).and_then(Measurement::signal)
                     }
                 }) {
                 chart::waveform(measurement, &self.signal_cache, self.zoom, self.offset)
@@ -1571,27 +1606,30 @@ impl Main {
 
     pub fn impulse_responses_tab<'a>(
         &'a self,
-        selected: Option<ui::measurement::Id>,
+        selected: Option<measurement::Id>,
         chart: &'a impulse_response::Chart,
         window_settings: &'a WindowSettings,
-        analyses: &'a BTreeMap<ui::measurement::Id, Analysis>,
+        analyses: &'a BTreeMap<measurement::Id, Analysis>,
     ) -> Element<'a, Message> {
         let sidebar = {
             let header = sidebar::header("Impulse Responses");
 
             let entries = self.measurements.iter().flat_map(|measurement| {
+                let active = selected == Some(measurement.id());
                 let signal = measurement.signal()?;
-                let impulse_response = analyses
+                let progress = analyses
                     .get(&measurement.id())
                     .map(Analysis::impulse_response_progress);
 
-                Some(impulse_response_item(
-                    selected,
-                    measurement.id(),
+                let entry = ui::impulse_response::view(
                     &measurement.name,
-                    signal,
-                    impulse_response,
-                ))
+                    signal.modified,
+                    progress,
+                    active,
+                )
+                .map(Message::ImpulseResponse.with(measurement.id()));
+
+                Some(entry)
             });
 
             container(column![header, scrollable(column(entries))].spacing(6))
@@ -1612,7 +1650,7 @@ impl Main {
                 .map_or(placeholder, |impulse_response| {
                     chart
                         .view(impulse_response, window_settings)
-                        .map(Message::ImpulseResponses)
+                        .map(Message::ImpulseResponseChart)
                 })
         };
 
@@ -1629,7 +1667,7 @@ impl Main {
     fn frequency_responses_tab<'a>(
         &'a self,
         chart_settings: &'a frequency_response::ChartData,
-        analyses: &'a BTreeMap<ui::measurement::Id, Analysis>,
+        analyses: &'a BTreeMap<measurement::Id, Analysis>,
     ) -> Element<'a, Message> {
         let sidebar = {
             let header = sidebar::header("Frequency Responses");
@@ -1644,7 +1682,7 @@ impl Main {
                     Message::FrequencyResponseToggled.with(measurement.id()),
                 );
 
-                Some(sidebar::item(content, false))
+                Some(content)
             });
 
             container(column![header, scrollable(column(entries).spacing(6))].spacing(6))
@@ -2005,7 +2043,33 @@ impl Main {
 
     //     is_loopback_loaded && self.measurements.iter().any(ui::Measurement::is_loaded)
     // }
-    fn compute_impulse_response(&mut self, id: ui::measurement::Id) -> Task<Message> {
+    fn impulse_response_future(
+        &mut self,
+        id: measurement::Id,
+    ) -> Option<impl Future<Output = data::ImpulseResponse>> {
+        let State::Analysing {
+            ref mut analyses, ..
+        } = self.state
+        else {
+            return None;
+        };
+
+        let analysis = analyses.entry(id).or_default();
+
+        let Some(loopback) = self.loopback.as_ref().and_then(Loopback::loaded) else {
+            return None;
+        };
+
+        let measurement = self
+            .measurements
+            .get(id)
+            .and_then(Measurement::signal)
+            .unwrap();
+
+        analysis.compute_impulse_response(loopback.clone(), measurement.clone())
+    }
+
+    fn compute_impulse_response(&mut self, id: measurement::Id) -> Task<Message> {
         let State::Analysing {
             ref mut analyses, ..
         } = self.state
@@ -2022,7 +2086,7 @@ impl Main {
         let measurement = self
             .measurements
             .get(id)
-            .and_then(ui::Measurement::signal)
+            .and_then(Measurement::signal)
             .unwrap();
 
         analysis
@@ -2031,7 +2095,7 @@ impl Main {
             .unwrap_or_default()
     }
 
-    fn compute_frequency_response(&mut self, id: ui::measurement::Id) -> Task<Message> {
+    fn compute_frequency_response(&mut self, id: measurement::Id) -> Task<Message> {
         let State::Analysing {
             ref mut analyses, ..
         } = self.state
@@ -2048,59 +2112,6 @@ impl Main {
     }
 }
 
-fn impulse_response_item<'a>(
-    selected: Option<ui::measurement::Id>,
-    id: ui::measurement::Id,
-    name: &'a str,
-    signal: &'a raumklang_core::Measurement,
-    impulse_response: Option<ui::impulse_response::Progress>,
-) -> Element<'a, Message> {
-    let is_active = selected.is_some_and(|selected| selected == id);
-
-    let entry = {
-        let dt: DateTime<Utc> = signal.modified.into();
-        let ir_btn = button(
-            column![
-                text(name).size(16).wrapping(Wrapping::WordOrGlyph),
-                text!("{}", dt.format("%x %X")).size(10)
-            ]
-            .clip(true)
-            .spacing(6),
-        )
-        .on_press_with(move || Message::ImpulseResponseSelected(id))
-        .width(Length::Fill)
-        .style(move |theme: &Theme, status| {
-            let background = theme.extended_palette().background;
-            let base = button::subtle(theme, status);
-
-            if is_active {
-                base.with_background(background.weak.color)
-            } else {
-                base
-            }
-        });
-
-        let save_btn = button(icon::download().size(10))
-            .style(button::secondary)
-            .on_press_with(move || Message::SaveImpulseResponseFileDialog(id));
-
-        let content = row![
-            ir_btn,
-            rule::vertical(1.0),
-            right(save_btn).width(Length::Shrink).padding([0, 6])
-        ];
-
-        sidebar::item(content, is_active)
-    };
-
-    match impulse_response {
-        Some(ui::impulse_response::Progress::Computing) => {
-            impulse_response::processing_overlay("Impulse Response", entry)
-        }
-        _ => entry,
-    }
-}
-
 impl Default for Main {
     fn default() -> Self {
         Self {
@@ -2108,7 +2119,7 @@ impl Default for Main {
             selected: None,
 
             loopback: None,
-            measurements: ui::measurement::List::default(),
+            measurements: measurement::List::default(),
 
             project_path: None,
 
@@ -2133,10 +2144,10 @@ async fn choose_impulse_response_file_path() -> Option<Arc<Path>> {
         .save_file()
         .await
         .as_ref()
-        .map(|h| h.path().to_path_buf().into())
+        .map(|h| h.path().into())
 }
 
-async fn save_impulse_response(path: Arc<Path>, impulse_response: ui::ImpulseResponse) {
+async fn save_impulse_response(path: Arc<Path>, impulse_response: ImpulseResponse) {
     tokio::task::spawn_blocking(move || {
         let spec = hound::WavSpec {
             channels: 1,
@@ -2225,86 +2236,6 @@ async fn save_impulse_response(path: Arc<Path>, impulse_response: ui::ImpulseRes
 //         compute_impulse_response(loopback, measurement)
 //     }
 // }
-
-impl TabId {
-    pub fn iter() -> impl Iterator<Item = Self> {
-        [
-            TabId::Measurements,
-            TabId::ImpulseResponses,
-            TabId::FrequencyResponses,
-            TabId::SpectralDecay,
-            TabId::Spectrogram,
-        ]
-        .into_iter()
-    }
-
-    pub fn view<'a>(self, is_analysing: bool) -> Element<'a, Message> {
-        let mut row = row![];
-
-        for tab in TabId::iter() {
-            let is_active = self == tab;
-
-            let is_enabled = match tab {
-                TabId::Measurements => true,
-                TabId::ImpulseResponses
-                | TabId::FrequencyResponses
-                | TabId::SpectralDecay
-                | TabId::Spectrogram => is_analysing,
-            };
-
-            let button = button(text(tab.to_string()).size(16))
-                .padding(10)
-                .style(move |theme: &Theme, status| {
-                    if is_active {
-                        let palette = theme.extended_palette();
-
-                        button::Style {
-                            background: Some(palette.background.base.color.into()),
-                            text_color: palette.background.base.text,
-                            ..button::text(theme, status)
-                        }
-                    } else {
-                        button::text(theme, status)
-                    }
-                })
-                .on_press_maybe(if is_enabled {
-                    Some(Message::TabSelected(tab))
-                } else {
-                    None
-                });
-
-            row = row.push(button);
-        }
-
-        row.spacing(5).align_y(Alignment::Center).into()
-    }
-}
-
-impl Display for TabId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let label = match self {
-            TabId::Measurements => "Measurements",
-            TabId::ImpulseResponses => "Impulse Responses",
-            TabId::FrequencyResponses => "Frequency Responses",
-            TabId::SpectralDecay => "Spectral Decay",
-            TabId::Spectrogram => "Spectorgram",
-        };
-
-        write!(f, "{}", label)
-    }
-}
-
-impl From<&Tab> for TabId {
-    fn from(tab: &Tab) -> Self {
-        match tab {
-            Tab::Measurements { .. } => TabId::Measurements,
-            Tab::ImpulseResponses { .. } => TabId::ImpulseResponses,
-            Tab::FrequencyResponses => TabId::FrequencyResponses,
-            Tab::SpectralDecay => TabId::SpectralDecay,
-            Tab::Spectrogram => TabId::Spectrogram,
-        }
-    }
-}
 
 fn modal<'a, Message>(
     base: impl Into<Element<'a, Message>>,

@@ -1,40 +1,23 @@
-use crate::data::{self, SampleRate};
+use std::time::SystemTime;
 
-#[derive(Debug, Clone, Default)]
-pub enum State {
-    #[default]
-    None,
-    Computing,
-    Computed(ImpulseResponse),
-}
+use crate::{
+    data::{self, SampleRate},
+    icon,
+    ui::impulse_response,
+    widget::sidebar,
+};
 
-impl State {
-    pub fn progress(&self) -> Progress {
-        match self {
-            State::None => Progress::None,
-            State::Computing => Progress::Computing,
-            State::Computed(_) => Progress::Finished,
-        }
-    }
-
-    pub(crate) fn computed(&mut self, impulse_response: ImpulseResponse) {
-        *self = State::Computed(impulse_response)
-    }
-
-    pub(crate) fn result(&self) -> Option<&ImpulseResponse> {
-        let State::Computed(ir) = self else {
-            return None;
-        };
-
-        Some(ir)
-    }
-}
+use chrono::{DateTime, Utc};
+use iced::{
+    widget::{button, column, container, right, row, rule, stack, text, text::Wrapping},
+    Color, Element,
+    Length::{Fill, Shrink},
+};
 
 #[derive(Debug, Clone)]
-pub enum Progress {
-    None,
-    Computing,
-    Finished,
+pub enum Message {
+    Select,
+    OpenSaveFileDialog,
 }
 
 #[derive(Debug, Clone)]
@@ -68,4 +51,84 @@ impl ImpulseResponse {
             origin: impulse_response.origin,
         }
     }
+}
+
+pub fn view<'a>(
+    name: &'a str,
+    date_time: SystemTime,
+    progress: Option<impulse_response::Progress>,
+    active: bool,
+) -> Element<'a, Message> {
+    let entry = {
+        let dt: DateTime<Utc> = date_time.into();
+        let ir_btn = button(
+            column![
+                text(name).size(16).wrapping(Wrapping::WordOrGlyph),
+                text!("{}", dt.format("%x %X")).size(10)
+            ]
+            .clip(true)
+            .spacing(6),
+        )
+        .on_press_with(move || Message::Select)
+        .width(Fill)
+        .style(move |theme, status| {
+            let base = button::subtle(theme, status);
+            let background = theme.extended_palette().background;
+
+            if active {
+                base.with_background(background.weak.color)
+            } else {
+                base
+            }
+        });
+
+        let save_btn = button(icon::download().size(10))
+            .style(button::secondary)
+            .on_press_with(move || Message::OpenSaveFileDialog);
+
+        let content = row![
+            ir_btn,
+            rule::vertical(1.0),
+            right(save_btn).width(Shrink).padding([0, 6])
+        ];
+
+        sidebar::item(content, active)
+    };
+
+    match progress {
+        Some(impulse_response::Progress::Computing) => {
+            processing_overlay("Impulse Response", entry)
+        }
+        _ => entry,
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Progress {
+    None,
+    Computing,
+    Finished,
+}
+
+fn processing_overlay<'a, Message>(
+    status: &'a str,
+    entry: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message>
+where
+    Message: 'a,
+{
+    stack([
+        container(entry).style(container::bordered_box).into(),
+        container(column![text("Computing..."), text(status).size(12)])
+            .center(Fill)
+            .style(|theme| container::Style {
+                border: container::rounded_box(theme).border,
+                background: Some(iced::Background::Color(Color::from_rgba(
+                    0.0, 0.0, 0.0, 0.8,
+                ))),
+                ..Default::default()
+            })
+            .into(),
+    ])
+    .into()
 }
