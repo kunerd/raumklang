@@ -179,8 +179,8 @@ pub enum Message {
     ImpulseResponseSaved(measurement::Id, Option<Arc<Path>>),
 
     FrequencyResponseToggled(measurement::Id, bool),
-    SmoothingChanged(frequency_response::Smoothing),
-    FrequencyResponseSmoothed((measurement::Id, Box<[f32]>)),
+    ChangeSmoothing(frequency_response::Smoothing),
+    FrequencyResponseSmoothed(measurement::Id, Box<[f32]>),
 
     ShiftKeyPressed,
     ShiftKeyReleased,
@@ -415,8 +415,8 @@ impl Main {
 
                 if let Some(fraction) = self.smoothing.fraction() {
                     Task::perform(
-                        frequency_response::smooth_frequency_response(id, new_fr, fraction),
-                        Message::FrequencyResponseSmoothed,
+                        frequency_response::smooth_frequency_response(new_fr, fraction),
+                        Message::FrequencyResponseSmoothed.with(id),
                     )
                 } else {
                     Task::none()
@@ -439,6 +439,61 @@ impl Main {
 
                 fr.is_shown = state;
 
+                self.charts.frequency_responses.cache.clear();
+
+                Task::none()
+            }
+            Message::ChangeSmoothing(smoothing) => {
+                let State::Analysing {
+                    ref mut analyses, ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
+                self.smoothing = smoothing;
+
+                if let Some(fraction) = smoothing.fraction() {
+                    let tasks = analyses
+                        .iter()
+                        .flat_map(|(id, analyses)| {
+                            Some((id, analyses.frequency_response()?.data.as_ref()?.clone()))
+                        })
+                        .map(|(id, fr)| {
+                            Task::perform(
+                                frequency_response::smooth_frequency_response(fr, fraction),
+                                Message::FrequencyResponseSmoothed.with(*id),
+                            )
+                        });
+
+                    Task::batch(tasks)
+                } else {
+                    analyses
+                        .values_mut()
+                        .flat_map(Analysis::frequency_response_mut)
+                        .for_each(|fr| fr.smoothed = None);
+
+                    self.charts.frequency_responses.cache.clear();
+
+                    Task::none()
+                }
+            }
+            Message::FrequencyResponseSmoothed(id, smoothed) => {
+                let State::Analysing {
+                    ref mut analyses, ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
+                let Some(fr) = analyses
+                    .get_mut(&id)
+                    .and_then(Analysis::frequency_response_mut)
+                else {
+                    return Task::none();
+                };
+
+                fr.smoothed = Some(smoothed);
                 self.charts.frequency_responses.cache.clear();
 
                 Task::none()
@@ -1718,7 +1773,7 @@ impl Main {
             row![pick_list(
                 frequency_response::Smoothing::ALL,
                 Some(&self.smoothing),
-                Message::SmoothingChanged,
+                Message::ChangeSmoothing,
             )]
         };
 
