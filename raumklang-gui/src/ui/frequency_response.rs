@@ -1,6 +1,7 @@
 use std::fmt::{self, Display};
 
 use crate::ui::impulse_response;
+use crate::widget::sidebar;
 use crate::{data, icon};
 
 use iced::widget::stack;
@@ -48,7 +49,7 @@ impl FrequencyResponse {
         on_toggle: impl Fn(bool) -> Message + 'a,
     ) -> Element<'a, Message>
     where
-        Message: 'a,
+        Message: Clone + 'a,
     {
         let item = {
             let color_dot = icon::record().color(self.color).align_y(Alignment::Center);
@@ -80,7 +81,7 @@ impl FrequencyResponse {
                 .into()
         };
 
-        match impulse_response_progess {
+        let content = match impulse_response_progess {
             impulse_response::Progress::None | impulse_response::Progress::Computing => {
                 processing_overlay("Impulse Response", item)
             }
@@ -90,7 +91,9 @@ impl FrequencyResponse {
                 }
                 Progress::Finished => item,
             },
-        }
+        };
+
+        sidebar::item(content, false).into()
     }
 
     pub(crate) fn result(&self) -> Option<&data::FrequencyResponse> {
