@@ -422,6 +422,27 @@ impl Main {
                     Task::none()
                 }
             }
+            Message::FrequencyResponseToggled(id, state) => {
+                let State::Analysing {
+                    ref mut analyses, ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
+                let Some(fr) = analyses
+                    .get_mut(&id)
+                    .and_then(Analysis::frequency_response_mut)
+                else {
+                    return Task::none();
+                };
+
+                fr.is_shown = state;
+
+                self.charts.frequency_responses.cache.clear();
+
+                Task::none()
+            }
             Message::OpenMeasurements => {
                 let State::Analysing {
                     active_tab: ref mut tab,
@@ -1701,11 +1722,11 @@ impl Main {
             )]
         };
 
-        let frequency_responses = analyses.values().map(Analysis::frequency_response);
+        let frequency_responses = analyses.values().flat_map(Analysis::frequency_response);
 
-        let content = if frequency_responses.clone().any(|o| o.is_some()) {
+        let content = if frequency_responses.clone().any(|fr| fr.is_shown) {
             let series_list = frequency_responses
-                .flatten()
+                .filter(|fr| fr.is_shown)
                 .flat_map(|item| {
                     let Some(frequency_response) = item.result() else {
                         return [None, None];
