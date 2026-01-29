@@ -42,7 +42,7 @@ impl FrequencyResponse {
     pub fn view<'a, Message>(
         &'a self,
         measurement_name: &'a str,
-        impulse_response_progess: Option<impulse_response::Progress>,
+        impulse_response_progess: impulse_response::Progress,
         on_toggle: impl Fn(bool) -> Message + 'a,
     ) -> Element<'a, Message>
     where
@@ -77,10 +77,10 @@ impl FrequencyResponse {
             item
         } else {
             match impulse_response_progess {
-                Some(impulse_response::Progress::Computing) => {
+                impulse_response::Progress::Computing => {
                     processing_overlay("Impulse Response", item)
                 }
-                Some(impulse_response::Progress::Finished) => {
+                impulse_response::Progress::Finished => {
                     processing_overlay(self.progress.to_string(), item)
                 }
                 _ => item,
