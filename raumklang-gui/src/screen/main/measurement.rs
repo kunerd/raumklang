@@ -1,15 +1,5 @@
-use crate::{
-    icon,
-    ui::{self, measurement, Loopback},
-    widget::sidebar,
-};
+use crate::ui::{self};
 
-use chrono::{DateTime, Utc};
-use iced::{
-    widget::{button, column, right, row, rule, text, tooltip},
-    Element,
-    Length::{self, Fill},
-};
 use raumklang_core::WavLoadError;
 use rfd::FileHandle;
 
@@ -17,15 +7,8 @@ use std::{fmt::Display, path::Path, sync::Arc};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Select(Selected),
     Load(Kind),
     Loaded(Result<Arc<LoadedKind>, Arc<WavLoadError>>),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
-pub enum Selected {
-    Loopback,
-    Measurement(measurement::Id),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -50,62 +33,6 @@ impl Display for Kind {
 pub enum LoadedKind {
     Loopback(ui::Loopback),
     Normal(ui::Measurement),
-}
-
-pub fn loopback_entry<'a>(
-    selected: Option<Selected>,
-    loopback: &'a Loopback,
-) -> Element<'a, Message> {
-    let is_active = selected.is_some_and(|s| matches!(s, Selected::Loopback));
-
-    let info: Element<_> = match &loopback.state {
-        measurement::loopback::State::Loaded(loopback) => {
-            let dt: DateTime<Utc> = loopback.as_ref().modified.into();
-            column![
-                text("Last modified:").size(10),
-                text!("{}", dt.format("%x %X")).size(10)
-            ]
-            .into()
-        }
-        measurement::loopback::State::NotLoaded(err) => tooltip(
-            text("Offline").style(text::danger),
-            text!("{err}").style(text::danger),
-            tooltip::Position::default(),
-        )
-        .into(),
-    };
-
-    let measurement_btn = button(column![text(&loopback.name).size(16)].push(info).spacing(5))
-        .on_press_maybe(
-            loopback
-                .loaded()
-                .map(|_| Message::Select(Selected::Loopback)),
-        )
-        .style(move |theme, status| {
-            let background = theme.extended_palette().background;
-            let base = button::subtle(theme, status);
-
-            if is_active {
-                base.with_background(background.weak.color)
-            } else {
-                base
-            }
-        })
-        .width(Fill);
-
-    let delete_btn = button(icon::delete())
-        // .on_press(Message::RemoveLoopback)
-        .width(30)
-        .height(30)
-        .style(button::danger);
-
-    let content = row![
-        measurement_btn,
-        rule::vertical(1.0),
-        right(delete_btn).width(Length::Shrink).padding([0, 6])
-    ];
-
-    sidebar::item(content, is_active)
 }
 
 pub async fn load_measurement(

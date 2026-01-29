@@ -20,8 +20,14 @@ use crate::{icon, widget::sidebar};
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Select(Id),
+    Select(Selected),
     Remove(Id),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub enum Selected {
+    Loopback,
+    Measurement(Id),
 }
 
 #[derive(Debug, Clone)]
@@ -97,7 +103,11 @@ impl Measurement {
         let measurement_btn = button(
             column![text(&self.name).wrapping(text::Wrapping::WordOrGlyph), info].spacing(5),
         )
-        .on_press_maybe(self.is_loaded().then_some(Message::Select(self.id)))
+        .on_press_maybe(
+            self.is_loaded()
+                .then_some(Selected::Measurement(self.id))
+                .map(Message::Select),
+        )
         .style(move |theme, status| {
             let background = theme.extended_palette().background;
             let base = button::subtle(theme, status);
