@@ -1,8 +1,8 @@
 use std::fmt::{self, Display};
 
-use crate::ui::impulse_response;
 use crate::widget::sidebar;
 use crate::{data, icon};
+use data::impulse_response;
 
 use iced::widget::stack;
 use iced::widget::text::IntoFragment;
@@ -85,7 +85,7 @@ impl FrequencyResponse {
             impulse_response::Progress::None | impulse_response::Progress::Computing => {
                 processing_overlay("Impulse Response", item)
             }
-            impulse_response::Progress::Finished => match self.progress {
+            impulse_response::Progress::Computed => match self.progress {
                 Progress::None | Progress::Computing => {
                     processing_overlay(self.progress.to_string(), item)
                 }
