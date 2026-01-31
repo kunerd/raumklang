@@ -70,11 +70,14 @@ pub struct Main {
     // spectral_decay_config: data::spectral_decay::Config,
     // spectrogram_config: spectrogram::Preferences,
     window: Option<Window<Samples>>,
-    charts: Charts,
+
+    ir_chart: impulse_response::Chart,
 }
 
 #[allow(clippy::large_enum_variant)]
+#[derive(Default)]
 enum State {
+    #[default]
     Collecting,
     Analysing {
         active_tab: Tab,
@@ -100,17 +103,10 @@ impl State {
     }
 }
 
-impl Default for State {
-    fn default() -> Self {
-        State::Collecting
-    }
-}
-
-#[allow(clippy::large_enum_variant)]
 pub enum Tab {
     Measurements { recording: Option<Recording> },
     ImpulseResponses { window_settings: WindowSettings },
-    FrequencyResponses,
+    FrequencyResponses { cache: canvas::Cache },
     SpectralDecay,
     Spectrogram,
 }
@@ -119,14 +115,6 @@ impl Default for Tab {
     fn default() -> Self {
         Self::Measurements { recording: None }
     }
-}
-
-#[derive(Debug, Default)]
-struct Charts {
-    impulse_responses: impulse_response::Chart,
-    frequency_responses: frequency_response::ChartData,
-    spectral_decay_cache: canvas::Cache,
-    spectrogram: Spectrogram,
 }
 
 #[derive(Debug, Default)]
@@ -176,9 +164,12 @@ pub enum Message {
 
     ImpulseResponseSelected(measurement::Id),
     ImpulseResponseComputed(measurement::Id, data::ImpulseResponse),
+    SaveImpulseResponseToFile(measurement::Id, Option<Arc<Path>>),
 
     FrequencyResponseComputed(measurement::Id, data::FrequencyResponse),
     ImpulseResponseSaved(measurement::Id, Arc<Path>),
+    ImpulseResponseChart(impulse_response::Message),
+    ImpulseResponse(ui::measurement::Id, ui::impulse_response::Message),
 
     FrequencyResponseToggled(measurement::Id, bool),
     ChangeSmoothing(frequency_response::Smoothing),
@@ -189,8 +180,6 @@ pub enum Message {
 
     MeasurementChart(waveform::Interaction),
 
-    ImpulseResponse(ui::measurement::Id, ui::impulse_response::Message),
-    SaveImpulseResponse(measurement::Id, Arc<Path>),
     // SaveImpulseResponseFileDialog(measurement::Id),
     Recording(recording::Message),
     StartRecording(recording::Kind),
@@ -200,13 +189,11 @@ pub enum Message {
     Spectrogram(chart::spectrogram::Interaction),
     SpectrogramComputed(measurement::Id, data::Spectrogram),
 
-    Modal(ModalAction),
     OpenSpectralDecayConfig,
     SpectralDecayConfig(spectral_decay_config::Message),
     OpenSpectrogramConfig,
     SpectrogramConfig(spectrogram_config::Message),
-    ImpulseResponseChart(impulse_response::Message),
-    SaveImpulseResponseToFile(measurement::Id, Option<Arc<Path>>),
+    Modal(ModalAction),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -318,7 +305,7 @@ impl Main {
                 };
 
                 *selected = Some(id);
-                self.charts.impulse_responses.data_cache.clear();
+                self.ir_chart.data_cache.clear();
 
                 match tab {
                     Tab::Measurements { .. } => Task::none(),
@@ -328,7 +315,7 @@ impl Main {
                         self.loopback.as_ref(),
                         &self.measurements,
                     ),
-                    Tab::FrequencyResponses => Task::none(),
+                    Tab::FrequencyResponses { .. } => Task::none(),
                     Tab::SpectralDecay => todo!(),
                     Tab::Spectrogram => todo!(),
                 }
@@ -395,7 +382,7 @@ impl Main {
                 match active_tab {
                     Tab::Measurements { .. } => Task::none(),
                     Tab::ImpulseResponses { .. } => Task::none(),
-                    Tab::FrequencyResponses => compute_frequency_response(
+                    Tab::FrequencyResponses { .. } => compute_frequency_response(
                         analyses,
                         id,
                         self.loopback.as_ref(),
@@ -410,7 +397,9 @@ impl Main {
                 log::debug!("Frequency response computed: {id}");
 
                 let State::Analysing {
-                    ref mut analyses, ..
+                    ref mut analyses,
+                    active_tab: Tab::FrequencyResponses { ref cache },
+                    ..
                 } = self.state
                 else {
                     return Task::none();
@@ -427,35 +416,34 @@ impl Main {
 
                 let analysis = analyses.entry(id).or_default();
                 analysis.frequency_response.set_result(new_fr);
-
-                self.charts.frequency_responses.cache.clear();
+                cache.clear();
 
                 task
             }
             Message::FrequencyResponseToggled(id, state) => {
                 let State::Analysing {
-                    ref mut analyses, ..
+                    ref mut analyses,
+                    active_tab: Tab::FrequencyResponses { ref cache },
+                    ..
                 } = self.state
                 else {
                     return Task::none();
                 };
 
-                let Some(fr) = analyses
-                    .get_mut(&id)
-                    .and_then(Analysis::frequency_response_mut)
-                else {
+                let Some(fr) = analyses.get_mut(&id).map(Analysis::frequency_response_mut) else {
                     return Task::none();
                 };
 
                 fr.is_shown = state;
-
-                self.charts.frequency_responses.cache.clear();
+                cache.clear();
 
                 Task::none()
             }
             Message::ChangeSmoothing(smoothing) => {
                 let State::Analysing {
-                    ref mut analyses, ..
+                    ref mut analyses,
+                    active_tab: Tab::FrequencyResponses { ref cache },
+                    ..
                 } = self.state
                 else {
                     return Task::none();
@@ -477,31 +465,28 @@ impl Main {
                 } else {
                     analyses
                         .values_mut()
-                        .flat_map(Analysis::frequency_response_mut)
+                        .map(Analysis::frequency_response_mut)
                         .for_each(|fr| fr.smoothed = None);
 
-                    self.charts.frequency_responses.cache.clear();
+                    cache.clear();
 
                     Task::none()
                 }
             }
             Message::FrequencyResponseSmoothed(id, smoothed) => {
                 let State::Analysing {
-                    ref mut analyses, ..
+                    ref mut analyses,
+                    active_tab: Tab::FrequencyResponses { ref cache },
+                    ..
                 } = self.state
                 else {
                     return Task::none();
                 };
 
-                let Some(fr) = analyses
-                    .get_mut(&id)
-                    .and_then(Analysis::frequency_response_mut)
-                else {
-                    return Task::none();
-                };
-
-                fr.smoothed = Some(smoothed);
-                self.charts.frequency_responses.cache.clear();
+                if let Some(fr) = analyses.get_mut(&id).map(|a| &mut a.frequency_response) {
+                    fr.smoothed = Some(smoothed);
+                    cache.clear();
+                }
 
                 Task::none()
             }
@@ -548,14 +533,10 @@ impl Main {
                     return Task::none();
                 };
 
-                *active_tab = Tab::FrequencyResponses;
+                *active_tab = Tab::FrequencyResponses {
+                    cache: canvas::Cache::new(),
+                };
 
-                // FIXME get rid of vec alloc
-                // let ids: Vec<_> = self.measurements.loaded().map(Measurement::id).collect();
-
-                // let tasks = ids
-                //     .into_iter()
-                //     .map(|id| self.compute_frequency_response(id));
                 let tasks = self.measurements.loaded().map(Measurement::id).map(|id| {
                     compute_frequency_response(
                         analyses,
@@ -1418,7 +1399,7 @@ impl Main {
                 ),
                 tab(
                     "Frequency Responses",
-                    matches!(active_tab, Some(Tab::FrequencyResponses)),
+                    matches!(active_tab, Some(Tab::FrequencyResponses { .. })),
                     active_tab
                         .is_some()
                         .then_some(Message::OpenFrequencyResponses)
@@ -1453,15 +1434,15 @@ impl Main {
                     selected,
                     ref analyses,
                 } => match active_tab {
-                    Tab::Measurements { recording } => self.measurements_tab(),
+                    Tab::Measurements { .. } => self.measurements_tab(),
                     Tab::ImpulseResponses { window_settings } => self.impulse_responses_tab(
                         selected,
-                        &self.charts.impulse_responses,
+                        &self.ir_chart,
                         window_settings,
                         analyses,
                     ),
-                    Tab::FrequencyResponses => {
-                        self.frequency_responses_tab(&self.charts.frequency_responses, analyses)
+                    Tab::FrequencyResponses { cache } => {
+                        self.frequency_responses_tab(cache, analyses)
                     }
                     Tab::SpectralDecay => todo!(),
                     Tab::Spectrogram => todo!(),
@@ -1760,7 +1741,7 @@ impl Main {
 
     fn frequency_responses_tab<'a>(
         &'a self,
-        chart_settings: &'a frequency_response::ChartData,
+        cache: &'a canvas::Cache,
         analyses: &'a BTreeMap<measurement::Id, Analysis>,
     ) -> Element<'a, Message> {
         let sidebar = {
@@ -1794,9 +1775,12 @@ impl Main {
             )]
         };
 
-        let frequency_responses = analyses.values().flat_map(Analysis::frequency_response);
+        let frequency_responses = analyses.values().map(|a| &a.frequency_response);
+        let chart_needed = frequency_responses
+            .clone()
+            .any(|fr| fr.result().is_some() && fr.is_shown);
 
-        let content = if frequency_responses.clone().any(|fr| fr.is_shown) {
+        let content = if chart_needed {
             let series_list = frequency_responses
                 .filter(|fr| fr.is_shown)
                 .flat_map(|item| {
@@ -1841,10 +1825,9 @@ impl Main {
                                 .collect(),
                         ),
                 )
-                .x_range(chart_settings.x_range.clone().unwrap_or(20.0..=22_500.0))
                 .y_labels(Labels::default().format(&|v| format!("{v:.0}")))
                 .extend_series(series_list)
-                .cache(&chart_settings.cache);
+                .cache(&cache);
 
             container(chart)
         } else {
@@ -2238,8 +2221,9 @@ impl Default for Main {
             // spectrogram_config: spectrogram::Preferences::default(),
             window: None,
 
-            charts: Charts::default(),
             signal_cache: canvas::Cache::default(),
+
+            ir_chart: impulse_response::Chart::default(),
         }
     }
 }
