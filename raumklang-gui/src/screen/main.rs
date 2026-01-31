@@ -1,9 +1,11 @@
 mod chart;
 mod frequency_response;
 mod impulse_response;
+mod modal;
 mod recording;
-mod spectral_decay_config;
 mod spectrogram_config;
+
+use modal::Modal;
 
 use crate::{
     data::{
@@ -11,8 +13,8 @@ use crate::{
     },
     icon, load_project, log,
     screen::main::{
-        chart::waveform, spectral_decay_config::SpectralDecayConfig,
-        spectrogram_config::SpectrogramConfig,
+        chart::waveform,
+        modal::{pending_window, spectral_decay_config, SpectralDecayConfig},
     },
     ui::{self, analysis, measurement, Analysis, Loopback, Measurement},
     widget::{processing_overlay, sidebar},
@@ -126,23 +128,6 @@ struct Spectrogram {
     pub cache: canvas::Cache,
 }
 
-#[derive(Default, Debug)]
-enum Modal {
-    #[default]
-    None,
-    PendingWindow {
-        goto_tab: TabId,
-    },
-    SpectralDecayConfig(SpectralDecayConfig),
-    SpectrogramConfig(SpectrogramConfig),
-}
-
-#[derive(Debug, Clone)]
-pub enum ModalAction {
-    Discard,
-    Apply,
-}
-
 #[derive(Debug, Clone)]
 pub enum Message {
     NewProject,
@@ -196,7 +181,7 @@ pub enum Message {
     SpectralDecayConfig(spectral_decay_config::Message),
     OpenSpectrogramConfig,
     SpectrogramConfig(spectrogram_config::Message),
-    Modal(ModalAction),
+    Modal(pending_window::Message),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1581,41 +1566,13 @@ impl Main {
 
         match self.modal {
             Modal::None => content.into(),
-            Modal::PendingWindow { .. } => {
-                let pending_window = {
-                    container(
-                            column![
-                                text("Window pending!").size(18),
-                                column![
-                                    text("You have modified the window used for frequency response computations."),
-                                    text("You need to discard or apply your changes before proceeding."),
-                                ].spacing(5),
-                                row![
-                                    space::horizontal(),
-                                    button("Discard")
-                                        .style(button::danger)
-                                        .on_press(Message::Modal(ModalAction::Discard)),
-                                    button("Apply")
-                                        .style(button::success)
-                                        .on_press(Message::Modal(ModalAction::Apply))
-                                ]
-                                .spacing(5)
-                            ]
-                            .spacing(10))
-                            .padding(20)
-                            .width(400)
-                            .style(container::bordered_box)
-                };
-
-                modal(content, pending_window)
-            }
             Modal::SpectralDecayConfig(ref config) => {
                 modal(content, config.view().map(Message::SpectralDecayConfig))
-            }
-            Modal::SpectrogramConfig(ref spectrogram_config) => modal(
-                content,
-                spectrogram_config.view().map(Message::SpectrogramConfig),
-            ),
+            } // Modal::SpectrogramConfig(ref spectrogram_config) => modal(
+              //     content,
+              //     spectrogram_config.view().map(Message::SpectrogramConfig),
+              // ),
+              // Modal::PendingWindow { .. } => modal::pending_window().map(Message::Modal),
         }
     }
     // pub fn view<'a>(&'a self, recent_projects: &'a RecentProjects) -> Element<'a, Message> {
