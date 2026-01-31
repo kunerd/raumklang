@@ -41,6 +41,7 @@ use iced::{
 };
 use prism::{axis, line_series, Axis, Chart, Labels};
 use rfd::FileHandle;
+use tracing::instrument::WithSubscriber;
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -177,7 +178,7 @@ pub enum Message {
     ImpulseResponseComputed(measurement::Id, data::ImpulseResponse),
 
     FrequencyResponseComputed(measurement::Id, data::FrequencyResponse),
-    ImpulseResponseSaved(measurement::Id, Option<Arc<Path>>),
+    ImpulseResponseSaved(measurement::Id, Arc<Path>),
 
     FrequencyResponseToggled(measurement::Id, bool),
     ChangeSmoothing(frequency_response::Smoothing),
@@ -205,6 +206,7 @@ pub enum Message {
     OpenSpectrogramConfig,
     SpectrogramConfig(spectrogram_config::Message),
     ImpulseResponseChart(impulse_response::Message),
+    SaveImpulseResponseToFile(measurement::Id, Option<Arc<Path>>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -332,6 +334,20 @@ impl Main {
                 }
             }
             Message::ImpulseResponse(id, ui::impulse_response::Message::Save) => {
+                let State::Analysing { .. } = self.state else {
+                    return Task::none();
+                };
+
+                Task::perform(
+                    choose_impulse_response_file_path(),
+                    Message::SaveImpulseResponseToFile.with(id),
+                )
+            }
+            Message::SaveImpulseResponseToFile(id, path) => {
+                let Some(path) = path else {
+                    return Task::none();
+                };
+
                 let State::Analysing {
                     ref mut analyses, ..
                 } = self.state
@@ -339,35 +355,24 @@ impl Main {
                     return Task::none();
                 };
 
-                let loopback = self.loopback.as_ref().and_then(Loopback::loaded).unwrap();
-                let measurement = self
-                    .measurements
-                    .get(id)
-                    .and_then(Measurement::signal)
-                    .unwrap();
-
                 let analysis = analyses.entry(id).or_default();
-                let fut = analysis.impulse_response.compute(loopback, measurement);
-                dbg!(fut.is_some());
-
-                Task::sip(
-                    sipper(async move |mut progress| {
-                        let path = choose_impulse_response_file_path().await?;
-
-                        let ir = fut?.run(&progress).await;
-                        progress.send(ir.clone()).await;
-
-                        let ir = ui::ImpulseResponse::from_data(&ir)?;
-
-                        save_impulse_response(path.clone(), ir).await;
-
-                        Some(path)
-                    }),
-                    Message::ImpulseResponseComputed.with(id),
-                    Message::ImpulseResponseSaved.with(id),
-                )
+                if let Some(ir) = analysis.impulse_response.result().cloned() {
+                    Task::perform(save_impulse_response(path.clone(), ir.clone()), move |_| {
+                        Message::ImpulseResponseSaved(id, path)
+                    })
+                } else {
+                    compute_impulse_response(
+                        analyses,
+                        id,
+                        self.loopback.as_ref(),
+                        &self.measurements,
+                    )
+                    .chain(Task::done(Message::SaveImpulseResponseToFile(
+                        id,
+                        Some(path),
+                    )))
+                }
             }
-            Message::SaveImpulseResponse(id, path) => Task::none(),
             Message::ImpulseResponseSaved(id, path) => {
                 eprintln!("IR (#{:?}) saved to: {:?}", id, path);
 
@@ -375,7 +380,6 @@ impl Main {
             }
             Message::ImpulseResponseComputed(id, impulse_response) => {
                 let State::Analysing {
-                    selected,
                     ref active_tab,
                     ref mut analyses,
                     ..
@@ -384,22 +388,9 @@ impl Main {
                     return Task::none();
                 };
 
-                // let new_ir = ImpulseResponse::from_data(new_ir);
-
-                log::debug!("IR progress: {:?}", impulse_response.progress());
                 let analysis = analyses.entry(id).or_default();
                 analysis.impulse_response =
                     ui::impulse_response::State::from_data(impulse_response);
-                // analysis.apply(analysis::Event::ImpulseResponseComputed(new_ir.clone()));
-
-                // if selected.is_some_and(|selected| selected == id) {
-                //     self.charts
-                //         .impulse_responses
-                //         .x_range
-                //         .get_or_insert(0.0..=new_ir.data.len() as f32);
-
-                //     self.charts.impulse_responses.data_cache.clear();
-                // }
 
                 match active_tab {
                     Tab::Measurements { .. } => Task::none(),
@@ -425,19 +416,21 @@ impl Main {
                     return Task::none();
                 };
 
-                let analysis = analyses.entry(id).or_default();
-                // analysis.apply(analysis::Event::FrequencyResponseComputed(new_fr.clone()));
-
-                self.charts.frequency_responses.cache.clear();
-
-                if let Some(fraction) = self.smoothing.fraction() {
+                let task = if let Some(fraction) = self.smoothing.fraction() {
                     Task::perform(
-                        frequency_response::smooth_frequency_response(new_fr, fraction),
+                        frequency_response::smooth_frequency_response(new_fr.clone(), fraction),
                         Message::FrequencyResponseSmoothed.with(id),
                     )
                 } else {
                     Task::none()
-                }
+                };
+
+                let analysis = analyses.entry(id).or_default();
+                analysis.frequency_response.set_result(new_fr);
+
+                self.charts.frequency_responses.cache.clear();
+
+                task
             }
             Message::FrequencyResponseToggled(id, state) => {
                 let State::Analysing {
@@ -471,21 +464,14 @@ impl Main {
                 self.smoothing = smoothing;
 
                 if let Some(fraction) = smoothing.fraction() {
-                    let tasks = analyses
-                        .iter()
-                        .flat_map(|(id, analysis)| {
-                            let fr = analysis.frequency_response()?;
-                            // TODO: refactor FR model
-                            let data = fr.data.as_ref()?;
+                    let tasks = analyses.iter().flat_map(|(id, analysis)| {
+                        let fr = analysis.frequency_response.result()?;
 
-                            Some((id, data.clone()))
-                        })
-                        .map(|(id, fr)| {
-                            Task::perform(
-                                frequency_response::smooth_frequency_response(fr, fraction),
-                                Message::FrequencyResponseSmoothed.with(*id),
-                            )
-                        });
+                        Some(Task::perform(
+                            frequency_response::smooth_frequency_response(fr.clone(), fraction),
+                            Message::FrequencyResponseSmoothed.with(*id),
+                        ))
+                    });
 
                     Task::batch(tasks)
                 } else {
@@ -1782,9 +1768,8 @@ impl Main {
 
             let entries = self.measurements.iter().flat_map(|measurement| {
                 let analysis = analyses.get(&measurement.id())?;
-                let frequency_response = analysis.frequency_response()?;
 
-                let content = frequency_response.view(
+                let content = analysis.frequency_response.view(
                     &measurement.name,
                     analysis.impulse_response.progress(),
                     Message::FrequencyResponseToggled.with(measurement.id()),
@@ -2185,29 +2170,24 @@ fn compute_frequency_response(
     measurements: &measurement::List,
     window: data::Window<data::Samples>,
 ) -> Task<Message> {
-    // let Some(loopback) = loopback.and_then(Loopback::loaded).cloned() else {
-    //     return Task::none();
-    // };
+    let analysis = analyses.entry(id).or_default();
 
-    // let Some(measurement) = measurements.get(id).and_then(Measurement::signal).cloned() else {
-    //     return Task::none();
-    // };
+    if analysis.frequency_response.result().is_some() {
+        return Task::none();
+    }
 
-    // let analysis = analyses.entry(id).or_default();
-
-    // Task::sip(
-    //     analysis
-    //         .impulse_response
-    //         .clone()
-    //         .compute(loopback, measurement),
-    //     Message::ImpulseResponseComputed.with(id),
-    //     Message::ImpulseResponseComputed.with(id),
-    // )
-    // analysis
-    //     .compute_frequency_response(window)
-    //     .map(|f| Task::perform(f, Message::FrequencyResponseComputed.with(id)))
-    // .unwrap_or_else(|| compute_impulse_response(analyses, id, loopback, measurements))
-    Task::none()
+    if let Some(ir) = analysis.impulse_response.result() {
+        // TODO move into analysis itself
+        analysis.frequency_response.state = ui::frequency_response::State::Computing;
+        Task::perform(
+            data::frequency_response::compute(ir.data.clone(), window),
+            Message::FrequencyResponseComputed.with(id),
+        )
+    } else {
+        analysis.frequency_response.state =
+            ui::frequency_response::State::WaitingForImpulseResponse;
+        compute_impulse_response(analyses, id, loopback, measurements)
+    }
 }
 
 fn compute_impulse_response(
@@ -2288,7 +2268,7 @@ async fn save_impulse_response(path: Arc<Path>, ir: ui::ImpulseResponse) {
         };
 
         let mut writer = hound::WavWriter::create(path, spec).unwrap();
-        for s in ir.data {
+        for s in ir.normalized {
             writer.write_sample(s).unwrap();
         }
         writer.finalize().unwrap();

@@ -10,6 +10,7 @@ use crate::{
 #[derive(Debug, Clone, Default)]
 pub struct Analysis {
     pub impulse_response: impulse_response::State,
+    pub frequency_response: FrequencyResponse,
 }
 
 // #[derive(Debug, Clone, Default)]
@@ -57,7 +58,7 @@ impl Analysis {
     // }
 
     pub(crate) fn impulse_response(&self) -> Option<&ImpulseResponse> {
-        self.impulse_response.inner()
+        self.impulse_response.result()
     }
 
     pub(crate) fn frequency_response(&self) -> Option<&FrequencyResponse> {
