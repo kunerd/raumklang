@@ -1,19 +1,16 @@
-pub mod frequency_responses;
-pub mod impulse_responses;
-pub mod measurements;
+mod impulse_response;
 
-pub use frequency_responses::FrequencyResponses;
-pub use impulse_responses::ImpulseReponses;
-pub use measurements::Measurements;
+pub use impulse_response::ImpulseResponses;
+pub use impulse_response::WindowSettings;
+
+use crate::screen::main::recording::Recording;
+
+use iced::widget::canvas;
 
 pub enum Tab {
-    Measurements(Measurements),
-    ImpulseResponses,
-    FrequencyResponses,
-}
-
-impl Default for Tab {
-    fn default() -> Self {
-        Self::Measurements(Measurements::new())
-    }
+    Measurements { recording: Option<Recording> },
+    ImpulseResponses { window_settings: WindowSettings },
+    FrequencyResponses { cache: canvas::Cache },
+    SpectralDecay,
+    Spectrogram,
 }
