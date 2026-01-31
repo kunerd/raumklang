@@ -1,17 +1,16 @@
 use std::time::SystemTime;
 
 use crate::{
-    data::impulse_response,
-    data::{self, SampleRate},
+    data::{self, impulse_response, SampleRate},
     icon,
-    widget::sidebar,
+    widget::{processing_overlay, sidebar},
 };
 
 use chrono::{DateTime, Utc};
 use iced::{
     task::Sipper,
-    widget::{button, column, container, right, row, rule, stack, text},
-    Color, Element,
+    widget::{button, column, right, row, rule, text},
+    Element,
     Length::{Fill, Shrink},
 };
 
@@ -150,27 +149,4 @@ pub fn view<'a>(
         }
         _ => entry,
     }
-}
-
-fn processing_overlay<'a, Message>(
-    status: &'a str,
-    entry: impl Into<Element<'a, Message>>,
-) -> Element<'a, Message>
-where
-    Message: 'a,
-{
-    stack([
-        container(entry).style(container::bordered_box).into(),
-        container(column![text("Computing..."), text(status).size(12)])
-            .center(Fill)
-            .style(|theme| container::Style {
-                border: container::rounded_box(theme).border,
-                background: Some(iced::Background::Color(Color::from_rgba(
-                    0.0, 0.0, 0.0, 0.8,
-                ))),
-                ..Default::default()
-            })
-            .into(),
-    ])
-    .into()
 }

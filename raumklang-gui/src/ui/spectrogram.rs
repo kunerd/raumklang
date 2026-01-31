@@ -9,11 +9,7 @@ pub enum State {
 }
 
 impl State {
-    pub(crate) fn computed(&mut self, data: data::Spectrogram) {
-        *self = State::Computed(data)
-    }
-
-    pub(crate) fn result(&self) -> Option<&data::Spectrogram> {
+    pub fn result(&self) -> Option<&data::Spectrogram> {
         let State::Computed(data) = self else {
             return None;
         };

@@ -1,16 +1,12 @@
-use std::{future::Future, mem};
-
-use raumklang_core::{Loopback, Measurement};
-
-use crate::{
-    data,
-    ui::{frequency_response, impulse_response, FrequencyResponse, ImpulseResponse},
+use crate::ui::{
+    impulse_response, spectral_decay::SpectralDecay, FrequencyResponse, ImpulseResponse,
 };
 
 #[derive(Debug, Clone, Default)]
 pub struct Analysis {
     pub impulse_response: impulse_response::State,
     pub frequency_response: FrequencyResponse,
+    pub spectral_decay: SpectralDecay,
 }
 
 impl Analysis {
