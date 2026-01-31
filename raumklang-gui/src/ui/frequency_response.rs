@@ -1,7 +1,8 @@
 use std::fmt::{self, Display};
 
-use crate::ui::impulse_response;
+use crate::widget::sidebar;
 use crate::{data, icon};
+use data::impulse_response;
 
 use iced::widget::stack;
 use iced::widget::text::IntoFragment;
@@ -17,9 +18,19 @@ use rand::Rng as _;
 pub struct FrequencyResponse {
     pub color: iced::Color,
     pub is_shown: bool,
-    pub progress: Progress,
-    pub data: Option<data::FrequencyResponse>,
+
+    // pub data: Option<data::FrequencyResponse>,
     pub smoothed: Option<Box<[f32]>>,
+
+    pub state: State,
+}
+
+#[derive(Debug, Clone)]
+pub enum State {
+    None,
+    WaitingForImpulseResponse,
+    Computing,
+    Computed(data::FrequencyResponse),
 }
 
 impl FrequencyResponse {
@@ -29,14 +40,10 @@ impl FrequencyResponse {
         Self {
             color,
             is_shown: true,
-            progress: Progress::None,
-            data: None,
             smoothed: None,
-        }
-    }
 
-    pub fn computed(&mut self, data: data::FrequencyResponse) {
-        self.data = Some(data);
+            state: State::None,
+        }
     }
 
     pub fn view<'a, Message>(
@@ -46,50 +53,58 @@ impl FrequencyResponse {
         on_toggle: impl Fn(bool) -> Message + 'a,
     ) -> Element<'a, Message>
     where
-        Message: 'a,
+        Message: Clone + 'a,
     {
-        let item = row![
-            icon::record().color(self.color).align_y(Alignment::Center),
-            container(
+        let item = {
+            let color_dot = icon::record().color(self.color).align_y(Alignment::Center);
+
+            let content = container(
                 text(measurement_name)
                     .size(16)
                     .style(|theme| {
                         let mut base = text::default(theme);
 
-                        let text_color = theme.extended_palette().background.weakest.text;
-                        base.color = Some(text_color);
+                        let palette = theme.extended_palette();
+                        base.color = Some(palette.background.weakest.text);
 
                         base
                     })
-                    .align_y(Alignment::Center)
-                    .wrapping(text::Wrapping::Glyph),
+                    .wrapping(text::Wrapping::Glyph)
+                    .align_y(Alignment::Center),
             )
             .width(Length::Fill)
-            .clip(true),
-            container(toggler(self.is_shown).on_toggle(on_toggle)).align_right(Length::Shrink)
-        ]
-        .align_y(Alignment::Center)
-        .spacing(10)
-        .padding(6)
-        .into();
+            .clip(true);
 
-        if self.data.is_some() {
-            item
-        } else {
-            match impulse_response_progess {
-                impulse_response::Progress::None => item,
-                impulse_response::Progress::Computing => {
-                    processing_overlay("Impulse Response", item)
-                }
-                impulse_response::Progress::Finished => {
-                    processing_overlay(self.progress.to_string(), item)
-                }
-            }
-        }
+            let switch =
+                container(toggler(self.is_shown).on_toggle(on_toggle)).align_right(Length::Shrink);
+
+            row![color_dot, content, switch]
+                .align_y(Alignment::Center)
+                .spacing(10)
+                .padding(20)
+                .into()
+        };
+
+        let content = match self.state {
+            State::None => item,
+            State::WaitingForImpulseResponse => processing_overlay("Impulse Response", item),
+            State::Computing => processing_overlay("Computing ...", item),
+            State::Computed(_) => item,
+        };
+
+        sidebar::item(content, false).into()
     }
 
-    pub(crate) fn result(&self) -> Option<&data::FrequencyResponse> {
-        self.data.as_ref()
+    pub fn result(&self) -> Option<&data::FrequencyResponse> {
+        let State::Computed(ref result) = self.state else {
+            return None;
+        };
+
+        Some(result)
+    }
+
+    pub fn set_result(&mut self, fr: data::FrequencyResponse) {
+        self.state = State::Computed(fr)
     }
 }
 
@@ -104,6 +119,7 @@ pub enum Progress {
     #[default]
     None,
     Computing,
+    Finished,
 }
 
 impl Display for Progress {
@@ -111,6 +127,7 @@ impl Display for Progress {
         let text = match self {
             Self::None => "Not Started",
             Self::Computing => "Impulse Response",
+            Self::Finished => "Finished",
         };
 
         write!(f, "{}", text)

@@ -15,7 +15,7 @@ use screen::{
 
 use data::{project, RecentProjects};
 
-use iced::{futures::FutureExt, Element, Font, Subscription, Task, Theme};
+use iced::{Element, Font, Subscription, Task, Theme};
 
 use std::{
     path::{Path, PathBuf},
@@ -97,13 +97,9 @@ impl Raumklang {
 
                     Task::none()
                 }
-                landing::Message::Load => Task::perform(
-                    pick_project_file().then(async |res| {
-                        let path = res?;
-                        load_project(path).await
-                    }),
-                    Message::ProjectLoaded,
-                ),
+                landing::Message::Load => Task::future(pick_project_file())
+                    .and_then(|path| Task::future(load_project(path)))
+                    .map(Message::ProjectLoaded),
                 landing::Message::Recent(id) => match self.recent_projects.get(id) {
                     Some(path) => Task::perform(load_project(path.clone()), Message::ProjectLoaded),
                     None => Task::none(),

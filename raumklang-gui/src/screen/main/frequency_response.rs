@@ -75,10 +75,9 @@ impl fmt::Display for Smoothing {
 }
 
 pub async fn smooth_frequency_response(
-    id: ui::measurement::Id,
     frequency_response: data::FrequencyResponse,
     fraction: u8,
-) -> (ui::measurement::Id, Box<[f32]>) {
+) -> Box<[f32]> {
     let data = tokio::task::spawn_blocking(move || {
         data::smooth_fractional_octave(&frequency_response.data.clone(), fraction)
     })
@@ -86,5 +85,5 @@ pub async fn smooth_frequency_response(
     .unwrap()
     .into_boxed_slice();
 
-    (id, data)
+    data
 }
