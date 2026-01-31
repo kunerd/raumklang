@@ -37,7 +37,7 @@ impl SpectralDecay {
         }
     }
 
-    pub fn compute_spectral_decay(
+    pub fn compute(
         &mut self,
         impulse_response: &impulse_response::State,
         config: data::spectral_decay::Config,
@@ -47,13 +47,13 @@ impl SpectralDecay {
         }
 
         if let Some(impulse_response) = impulse_response.result() {
-            self.0 = ui::spectral_decay::State::Computing;
+            self.0 = State::Computing;
 
             let computation = data::spectral_decay::compute(impulse_response.data.clone(), config);
 
             Some(computation)
         } else {
-            self.0 = ui::spectral_decay::State::WaitingForImpulseResponse;
+            self.0 = State::WaitingForImpulseResponse;
             None
         }
     }

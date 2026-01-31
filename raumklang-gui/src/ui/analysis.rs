@@ -1,5 +1,6 @@
 use crate::ui::{
-    impulse_response, spectral_decay::SpectralDecay, FrequencyResponse, ImpulseResponse,
+    impulse_response, spectral_decay::SpectralDecay, spectrogram::Spectrogram, FrequencyResponse,
+    ImpulseResponse,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -7,6 +8,7 @@ pub struct Analysis {
     pub impulse_response: impulse_response::State,
     pub frequency_response: FrequencyResponse,
     pub spectral_decay: SpectralDecay,
+    pub spectrogram: Spectrogram,
 }
 
 impl Analysis {

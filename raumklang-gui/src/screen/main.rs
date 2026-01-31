@@ -70,12 +70,13 @@ pub struct Main {
     offset: chart::Offset,
 
     smoothing: frequency_response::Smoothing,
-    // project_path: Option<PathBuf>,
-    spectral_decay_config: data::spectral_decay::Config,
-    // spectrogram_config: spectrogram::Preferences,
     window: Option<Window<Samples>>,
 
     ir_chart: impulse_response::Chart,
+    spectrogram: Spectrogram,
+
+    spectral_decay_config: data::spectral_decay::Config,
+    spectrogram_config: spectrogram::Preferences,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -149,6 +150,7 @@ pub enum Message {
     OpenImpulseResponses,
     OpenFrequencyResponses,
     OpenSpectralDecays,
+    OpenSpectrograms,
 
     ImpulseResponseSelected(measurement::Id),
     ImpulseResponseComputed(measurement::Id, data::ImpulseResponse),
@@ -298,17 +300,39 @@ impl Main {
                 };
 
                 if let Some(id) = selected {
-                    // FIXME duplicate
-                    // compute spectral decay
-                    let analysis = analyses.entry(id).or_default();
-                    if let Some(computation) = analysis.spectral_decay.compute_spectral_decay(
-                        &analysis.impulse_response,
+                    compute_spectral_decay(
+                        id,
+                        analyses,
                         self.spectral_decay_config,
-                    ) {
-                        Task::perform(computation, Message::SpectralDecayComputed.with(id))
-                    } else {
-                        Task::none()
-                    }
+                        self.loopback.as_ref(),
+                        &self.measurements,
+                    )
+                } else {
+                    Task::none()
+                }
+            }
+            Message::OpenSpectrograms => {
+                let State::Analysing {
+                    selected,
+                    ref mut active_tab,
+                    ref mut analyses,
+                    ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
+                *active_tab = Tab::Spectrogram;
+                self.spectrogram.cache.clear();
+
+                if let Some(id) = selected {
+                    compute_spectrogram(
+                        id,
+                        analyses,
+                        &self.spectrogram_config,
+                        self.loopback.as_ref(),
+                        &self.measurements,
+                    )
                 } else {
                     Task::none()
                 }
@@ -412,7 +436,13 @@ impl Main {
                         &self.measurements,
                     ),
 
-                    Tab::Spectrogram => todo!(),
+                    Tab::Spectrogram => compute_spectrogram(
+                        id,
+                        analyses,
+                        &self.spectrogram_config,
+                        self.loopback.as_ref(),
+                        &self.measurements,
+                    ),
                 }
             }
             Message::ImpulseResponse(id, ui::impulse_response::Message::Save) => {
@@ -486,13 +516,16 @@ impl Main {
                     ),
                     Tab::SpectralDecay { .. } => analysis
                         .spectral_decay
-                        .compute_spectral_decay(
-                            &analysis.impulse_response,
-                            self.spectral_decay_config,
-                        )
+                        .compute(&analysis.impulse_response, self.spectral_decay_config)
                         .map(|f| Task::perform(f, Message::SpectralDecayComputed.with(id)))
                         .unwrap_or_default(),
-                    Tab::Spectrogram => todo!(),
+                    Tab::Spectrogram => compute_spectrogram(
+                        id,
+                        analyses,
+                        &self.spectrogram_config,
+                        self.loopback.as_ref(),
+                        &self.measurements,
+                    ),
                 }
             }
             Message::FrequencyResponseComputed(id, new_fr) => {
@@ -658,6 +691,25 @@ impl Main {
                             .unwrap_or_default()
                     }
                 }
+            }
+            Message::SpectrogramComputed(id, spectrogram) => {
+                let State::Analysing {
+                    selected,
+                    ref mut analyses,
+                    ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
+                let analysis = analyses.entry(id).or_default();
+                analysis.spectrogram.set_result(spectrogram);
+
+                if selected.is_some_and(|selected| selected == id) {
+                    self.spectrogram.cache.clear();
+                }
+
+                Task::none()
             }
             _ => Task::none(),
         }
@@ -1522,7 +1574,7 @@ impl Main {
                 tab(
                     "Spectrogram",
                     matches!(active_tab, Some(Tab::Spectrogram)),
-                    None // Message::OpenFrequencyResponses
+                    active_tab.is_some().then_some(Message::OpenSpectrograms)
                 ),
             ]
             .spacing(5)
@@ -1557,7 +1609,7 @@ impl Main {
                     Tab::SpectralDecay { cache } => {
                         self.spectral_decay_tab(selected, &analyses, &cache)
                     }
-                    Tab::Spectrogram => todo!(),
+                    Tab::Spectrogram => self.spectrogram_tab(selected, analyses, &self.spectrogram),
                 },
             }
         };
@@ -2061,103 +2113,109 @@ impl Main {
         .into()
     }
 
-    // fn spectrogram_tab<'a>(
-    //     &'a self,
-    //     selected: Option<ui::measurement::Id>,
-    //     spectrogram: &'a Spectrogram,
-    // ) -> Element<'a, Message> {
-    //     let sidebar = {
-    //         let header = {
-    //             let config_btn = button(icon::settings().center())
-    //                 .style(button::subtle)
-    //                 .on_press(Message::OpenSpectrogramConfig);
-    //             Category::new("Spectrograms").push_button(config_btn)
-    //         };
+    fn spectrogram_tab<'a>(
+        &'a self,
+        selected: Option<measurement::Id>,
+        analyses: &'a BTreeMap<measurement::Id, Analysis>,
+        spectrogram: &'a Spectrogram,
+    ) -> Element<'a, Message> {
+        let sidebar = {
+            let header = {
+                let config_btn = button(icon::settings().center())
+                    .style(button::subtle)
+                    .on_press(Message::OpenSpectrogramConfig);
+                Category::new("Spectrograms").push_button(config_btn)
+            };
 
-    //         let entries = self.measurements.iter().flat_map(|measurement| {
-    //             let id = measurement.id();
-    //             let is_active = selected.is_some_and(|selected| selected == id);
+            let entries = self.measurements.iter().flat_map(|measurement| {
+                let id = measurement.id();
+                let is_active = selected.is_some_and(|selected| selected == id);
 
-    //             let signal = measurement.signal()?;
-    //             let entry = {
-    //                 let dt: DateTime<Utc> = signal.modified.into();
-    //                 let btn = button(
-    //                     column![
-    //                         text(&measurement.name)
-    //                             .size(16)
-    //                             .wrapping(Wrapping::WordOrGlyph),
-    //                         text!("{}", dt.format("%x %X")).size(10)
-    //                     ]
-    //                     .clip(true)
-    //                     .spacing(6),
-    //                 )
-    //                 .on_press_with(move || Message::ImpulseResponseSelected(id))
-    //                 .width(Length::Fill)
-    //                 .style(move |theme: &Theme, status| {
-    //                     let base = button::subtle(theme, status);
-    //                     let background = theme.extended_palette().background;
+                let signal = measurement.signal()?;
+                let entry = {
+                    let dt: DateTime<Utc> = signal.modified.into();
+                    let btn = button(
+                        column![
+                            text(&measurement.name)
+                                .size(16)
+                                .wrapping(text::Wrapping::WordOrGlyph),
+                            text!("{}", dt.format("%x %X")).size(10)
+                        ]
+                        .clip(true)
+                        .spacing(6),
+                    )
+                    .on_press_with(move || {
+                        Message::ImpulseResponse(id, ui::impulse_response::Message::Select)
+                    })
+                    .width(Length::Fill)
+                    .style(move |theme: &Theme, status| {
+                        let base = button::subtle(theme, status);
+                        let background = theme.extended_palette().background;
 
-    //                     if is_active {
-    //                         base.with_background(background.weak.color)
-    //                     } else {
-    //                         base
-    //                     }
-    //                 });
+                        if is_active {
+                            base.with_background(background.weak.color)
+                        } else {
+                            base
+                        }
+                    });
 
-    //                 sidebar::item(btn, is_active)
-    //             };
+                    sidebar::item(btn, is_active)
+                };
 
-    //             let analysis = measurement.analysis()?;
-    //             let entry = match analysis.spectrogram_progress() {
-    //                 ui::spectrogram::Progress::None => entry,
-    //                 ui::spectrogram::Progress::ComputingImpulseResponse => {
-    //                     processing_overlay("Impulse Response", entry)
-    //                 }
-    //                 ui::spectrogram::Progress::Computing => {
-    //                     processing_overlay("Spectral Decay", entry)
-    //                 }
-    //                 ui::spectrogram::Progress::Finished => entry,
-    //             };
+                let spectrogram = &analyses.get(&id).map(|a| &a.spectrogram);
+                let entry = if let Some(spectrogram) = spectrogram {
+                    match spectrogram.progress() {
+                        ui::spectrogram::Progress::None => entry,
+                        ui::spectrogram::Progress::ComputingImpulseResponse => {
+                            processing_overlay("Impulse Response", entry)
+                        }
+                        ui::spectrogram::Progress::Computing => {
+                            processing_overlay("Spectrogram", entry)
+                        }
+                        ui::spectrogram::Progress::Finished => entry,
+                    }
+                } else {
+                    entry
+                };
 
-    //             Some(entry)
-    //         });
+                Some(entry)
+            });
 
-    //         container(column![header, scrollable(column(entries))].spacing(6))
-    //             .padding(6)
-    //             .style(|theme| {
-    //                 container::rounded_box(theme)
-    //                     .background(theme.extended_palette().background.weakest.color)
-    //             })
-    //     };
+            container(column![header, scrollable(column(entries))].spacing(6))
+                .padding(6)
+                .style(|theme| {
+                    container::rounded_box(theme)
+                        .background(theme.extended_palette().background.weakest.color)
+                })
+        };
 
-    //     let spectrogram_data = selected
-    //         .and_then(|id| self.measurements.get(id))
-    //         .and_then(ui::Measurement::analysis)
-    //         .and_then(|analysis| analysis.spectrogram.result());
+        let spectrogram_data = selected
+            .and_then(|id| analyses.get(&id))
+            .and_then(|analysis| analysis.spectrogram.result());
 
-    //     let content = if let Some(data) = spectrogram_data {
-    //         let chart = chart::spectrogram(
-    //             data,
-    //             &spectrogram.cache,
-    //             spectrogram.zoom,
-    //             spectrogram.offset,
-    //         )
-    //         .map(Message::Spectrogram);
+        let content = if let Some(data) = spectrogram_data {
+            let chart = chart::spectrogram(
+                data,
+                &spectrogram.cache,
+                spectrogram.zoom,
+                spectrogram.offset,
+            )
+            .map(Message::Spectrogram);
 
-    //         container(chart)
-    //     } else {
-    //         container(text("Please select a frequency respone."))
-    //     };
+            container(chart)
+        } else {
+            container(text("Please select a frequency respone."))
+        };
 
-    //     row![
-    //         container(sidebar)
-    //             .width(Length::FillPortion(2))
-    //             .style(container::bordered_box),
-    //         container(content).width(Length::FillPortion(5))
-    //     ]
-    //     .spacing(10)
-    //     .into()
-    // }
+        row![
+            container(sidebar)
+                .width(Length::FillPortion(2))
+                .style(container::bordered_box),
+            container(content).width(Length::FillPortion(5))
+        ]
+        .spacing(10)
+        .into()
+    }
 
     pub fn subscription(&self) -> Subscription<Message> {
         use keyboard::key;
@@ -2309,9 +2367,28 @@ fn compute_spectral_decay(
 
     if let Some(computation) = analysis
         .spectral_decay
-        .compute_spectral_decay(&analysis.impulse_response, config)
+        .compute(&analysis.impulse_response, config)
     {
         Task::perform(computation, Message::SpectralDecayComputed.with(id))
+    } else {
+        compute_impulse_response(analyses, id, loopback, measurements)
+    }
+}
+
+fn compute_spectrogram(
+    id: measurement::Id,
+    analyses: &mut BTreeMap<measurement::Id, Analysis>,
+    config: &spectrogram::Preferences,
+    loopback: Option<&ui::Loopback>,
+    measurements: &measurement::List,
+) -> Task<Message> {
+    let analysis = analyses.entry(id).or_default();
+
+    if let Some(computation) = analysis
+        .spectrogram
+        .compute(&analysis.impulse_response, config)
+    {
+        Task::perform(computation, Message::SpectrogramComputed.with(id))
     } else {
         compute_impulse_response(analyses, id, loopback, measurements)
     }
@@ -2334,12 +2411,13 @@ impl Default for Main {
             zoom: chart::Zoom::default(),
             offset: chart::Offset::default(),
             smoothing: frequency_response::Smoothing::default(),
-            // spectrogram_config: spectrogram::Preferences::default(),
             window: None,
 
             signal_cache: canvas::Cache::default(),
 
             ir_chart: impulse_response::Chart::default(),
+            spectrogram: Spectrogram::default(),
+            spectrogram_config: spectrogram::Preferences::default(),
         }
     }
 }
@@ -2376,31 +2454,6 @@ async fn save_impulse_response(path: Arc<Path>, ir: ui::ImpulseResponse) {
     .await
     .unwrap();
 }
-
-// fn compute_spectrogram(
-//     loopback: &ui::Loopback,
-//     measurement: &mut ui::Measurement,
-//     config: &spectrogram::Preferences,
-// ) -> Task<Message> {
-//     let Some(analysis) = measurement.analysis_mut() else {
-//         return Task::none();
-//     };
-
-//     if analysis.spectrogram.result().is_some() {
-//         return Task::none();
-//     }
-
-//     if let Some(impulse_response) = analysis.impulse_response.result() {
-//         analysis.spectrogram = ui::spectrogram::State::Computing;
-
-//         Task::perform(
-//             data::spectrogram::compute(impulse_response.origin.clone(), *config),
-//             Message::SpectrogramComputed.with(measurement.id()),
-//         )
-//     } else {
-//         compute_impulse_response(loopback, measurement)
-//     }
-// }
 
 fn modal<'a, Message>(
     base: impl Into<Element<'a, Message>>,
