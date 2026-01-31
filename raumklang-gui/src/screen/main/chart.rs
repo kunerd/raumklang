@@ -102,7 +102,7 @@ pub fn impulse_response<'a>(
         canvas::Canvas::new(BarChart {
             window,
             datapoints: impulse_response
-                .data
+                .normalized
                 .iter()
                 .copied()
                 .map(f32::abs)

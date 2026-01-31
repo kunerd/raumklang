@@ -18,10 +18,19 @@ use rand::Rng as _;
 pub struct FrequencyResponse {
     pub color: iced::Color,
     pub is_shown: bool,
-    pub progress: Progress,
 
-    pub data: Option<data::FrequencyResponse>,
+    // pub data: Option<data::FrequencyResponse>,
     pub smoothed: Option<Box<[f32]>>,
+
+    pub state: State,
+}
+
+#[derive(Debug, Clone)]
+pub enum State {
+    None,
+    WaitingForImpulseResponse,
+    Computing,
+    Computed(data::FrequencyResponse),
 }
 
 impl FrequencyResponse {
@@ -31,15 +40,10 @@ impl FrequencyResponse {
         Self {
             color,
             is_shown: true,
-            progress: Progress::None,
-            data: None,
             smoothed: None,
-        }
-    }
 
-    pub fn computed(&mut self, data: data::FrequencyResponse) {
-        self.data = Some(data);
-        self.progress = Progress::Finished;
+            state: State::None,
+        }
     }
 
     pub fn view<'a, Message>(
@@ -81,23 +85,26 @@ impl FrequencyResponse {
                 .into()
         };
 
-        let content = match impulse_response_progess {
-            impulse_response::Progress::None | impulse_response::Progress::Computing => {
-                processing_overlay("Impulse Response", item)
-            }
-            impulse_response::Progress::Computed => match self.progress {
-                Progress::None | Progress::Computing => {
-                    processing_overlay(self.progress.to_string(), item)
-                }
-                Progress::Finished => item,
-            },
+        let content = match self.state {
+            State::None => item,
+            State::WaitingForImpulseResponse => processing_overlay("Impulse Response", item),
+            State::Computing => processing_overlay("Computing ...", item),
+            State::Computed(_) => item,
         };
 
         sidebar::item(content, false).into()
     }
 
-    pub(crate) fn result(&self) -> Option<&data::FrequencyResponse> {
-        self.data.as_ref()
+    pub fn result(&self) -> Option<&data::FrequencyResponse> {
+        let State::Computed(ref result) = self.state else {
+            return None;
+        };
+
+        Some(result)
+    }
+
+    pub fn set_result(&mut self, fr: data::FrequencyResponse) {
+        self.state = State::Computed(fr)
     }
 }
 

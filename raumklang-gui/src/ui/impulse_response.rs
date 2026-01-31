@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::SystemTime};
+use std::time::SystemTime;
 
 use crate::{
     data::impulse_response,
@@ -13,20 +13,12 @@ use iced::{
     widget::{button, column, container, right, row, rule, stack, text},
     Color, Element,
     Length::{Fill, Shrink},
-    Task,
 };
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Select,
     Save,
-}
-
-#[derive(Debug, Clone)]
-pub struct ImpulseResponse {
-    pub sample_rate: SampleRate,
-    pub data: Vec<f32>,
-    pub origin: data::ImpulseResponse,
 }
 
 #[derive(Debug, Clone)]
@@ -50,7 +42,7 @@ impl State {
         }
     }
 
-    pub(crate) fn inner(&self) -> Option<&ImpulseResponse> {
+    pub(crate) fn result(&self) -> Option<&ImpulseResponse> {
         match self {
             State::Computing(_) => None,
             State::Computed(ref impulse_response) => Some(impulse_response),
@@ -71,15 +63,16 @@ impl State {
     }
 }
 
-impl Default for State {
-    fn default() -> Self {
-        Self::Computing(data::ImpulseResponse::default())
-    }
+#[derive(Debug, Clone)]
+pub struct ImpulseResponse {
+    pub sample_rate: SampleRate,
+    pub normalized: Vec<f32>,
+    pub data: raumklang_core::ImpulseResponse,
 }
 
 impl ImpulseResponse {
     pub fn from_data(data: &data::ImpulseResponse) -> Option<Self> {
-        let impulse_response = data.inner()?;
+        let impulse_response = data.result()?;
 
         let max = impulse_response
             .data
@@ -97,9 +90,15 @@ impl ImpulseResponse {
 
         Some(Self {
             sample_rate: SampleRate::new(impulse_response.sample_rate),
-            data: normalized,
-            origin: data.clone(),
+            normalized,
+            data: impulse_response.clone(),
         })
+    }
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self::Computing(data::ImpulseResponse::default())
     }
 }
 
@@ -119,7 +118,7 @@ pub fn view<'a>(
             .clip(true)
             .spacing(6),
         )
-        .on_press_with(move || Message::Select)
+        .on_press(Message::Select)
         .width(Fill)
         .style(move |theme, status| {
             let base = button::subtle(theme, status);
