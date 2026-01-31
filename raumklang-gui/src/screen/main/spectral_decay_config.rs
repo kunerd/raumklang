@@ -22,8 +22,9 @@ pub(crate) enum Message {
 }
 
 pub(crate) enum Action {
-    Apply(spectral_decay::Config),
+    None,
     Discard,
+    Apply(spectral_decay::Config),
 }
 
 #[derive(Debug)]
@@ -54,29 +55,29 @@ impl SpectralDecayConfig {
         self.right_window_width = config.right_window_width.as_millis().to_string();
     }
 
-    pub(crate) fn update(&mut self, message: Message) -> Option<Action> {
+    pub(crate) fn update(&mut self, message: Message) -> Action {
         match message {
-            Message::Apply(config) => Some(Action::Apply(config)),
-            Message::Discard => Some(Action::Discard),
+            Message::Apply(config) => Action::Apply(config),
+            Message::Discard => Action::Discard,
             Message::ShiftChanged(shift) => {
                 self.shift = shift;
-                None
+                Action::None
             }
             Message::LeftWidthChanged(left_width) => {
                 self.left_window_width = left_width;
-                None
+                Action::None
             }
             Message::RightWidthChanged(right_width) => {
                 self.right_window_width = right_width;
-                None
+                Action::None
             }
             Message::ResetToDefault => {
                 self.reset_to_default();
-                None
+                Action::None
             }
             Message::ResetToPrevious => {
                 self.reset_to_config(self.prev_config);
-                None
+                Action::None
             }
         }
     }
