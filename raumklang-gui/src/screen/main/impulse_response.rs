@@ -10,8 +10,6 @@ use iced::{
     widget::{canvas, column, container, pick_list, row},
 };
 
-use std::ops::RangeInclusive;
-
 #[derive(Debug, Clone)]
 pub enum ChartOperation {
     TimeUnitChanged(data::chart::TimeSeriesUnit),
@@ -21,7 +19,6 @@ pub enum ChartOperation {
 
 #[derive(Debug, Default)]
 pub struct Chart {
-    pub x_range: Option<RangeInclusive<f32>>,
     shift_key_pressed: bool,
     pub amplitude_unit: data::chart::AmplitudeUnit,
     pub time_unit: data::chart::TimeSeriesUnit,

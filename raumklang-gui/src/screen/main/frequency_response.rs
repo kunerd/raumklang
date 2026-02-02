@@ -1,20 +1,6 @@
-use std::{
-    fmt::{self},
-    ops::RangeInclusive,
-};
+use std::fmt::{self};
 
-use crate::{
-    data,
-    ui::{self},
-};
-
-use iced::widget::canvas;
-
-#[derive(Debug, Default)]
-pub struct ChartData {
-    pub x_range: Option<RangeInclusive<f32>>,
-    pub cache: canvas::Cache,
-}
+use crate::data;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Smoothing {

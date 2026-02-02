@@ -18,10 +18,10 @@ use crate::{
         chart::waveform,
         modal::{SpectralDecayConfig, pending_window, spectral_decay_config, spectrogram_config},
     },
-    ui::{self, Analysis, Loopback, Measurement, analysis, measurement},
+    ui::{self, Analysis, Loopback, Measurement, measurement},
     widget::{processing_overlay, sidebar},
 };
-use raumklang_core::{WavLoadError, dbfs};
+use raumklang_core::dbfs;
 
 use impulse_response::ChartOperation;
 use recording::Recording;
@@ -32,26 +32,18 @@ use generic_overlay::generic_overlay::{dropdown_menu, dropdown_root};
 use iced::{
     Alignment::{self, Center},
     Color, Element, Function, Length, Subscription, Task, Theme,
-    advanced::{
-        Renderer, graphics::text::cosmic_text::skrifa::raw::tables::layout::SelectedScript,
-    },
     alignment::{Horizontal, Vertical},
-    futures::{FutureExt, TryFutureExt},
     keyboard, padding,
-    task::{Sipper, sipper},
     widget::{
-        Button, button, canvas, center, column, container, opaque, pick_list, right, row, rule,
-        scrollable, space, stack, text,
+        Button, button, canvas, center, column, container, opaque, pick_list, row, rule,
+        scrollable, stack, text,
     },
 };
 use prism::{Axis, Chart, Labels, axis, line_series};
 use rfd::FileHandle;
-use tracing::instrument::WithSubscriber;
 
 use std::{
-    collections::{BTreeMap, HashMap},
-    fmt::Display,
-    future::Future,
+    collections::BTreeMap,
     mem,
     path::{Path, PathBuf},
     sync::Arc,
@@ -134,12 +126,6 @@ pub enum Message {
     Measurement(measurement::Message),
 
     OpenTab(tab::Id),
-    // OpenMeasurements,
-    // OpenImpulseResponses,
-    // OpenFrequencyResponses,
-    // OpenSpectralDecays,
-    // OpenSpectrograms,
-    ImpulseResponseSelected(measurement::Id),
     ImpulseResponseComputed(measurement::Id, data::ImpulseResponse),
     SaveImpulseResponseToFile(measurement::Id, Option<Arc<Path>>),
 
@@ -157,29 +143,19 @@ pub enum Message {
 
     MeasurementChart(waveform::Interaction),
 
-    // SaveImpulseResponseFileDialog(measurement::Id),
     Recording(recording::Message),
     StartRecording(recording::Kind),
 
-    SpectralDecayComputed(measurement::Id, data::SpectralDecay),
-
-    Spectrogram(chart::spectrogram::Interaction),
-    SpectrogramComputed(measurement::Id, data::Spectrogram),
-
     OpenSpectralDecayConfig,
     SpectralDecayConfig(spectral_decay_config::Message),
+    SpectralDecayComputed(measurement::Id, data::SpectralDecay),
+
     OpenSpectrogramConfig,
     SpectrogramConfig(spectrogram_config::Message),
-    PendingWindow(pending_window::Message),
-}
+    SpectrogramComputed(measurement::Id, data::Spectrogram),
+    Spectrogram(chart::spectrogram::Interaction),
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TabId {
-    Measurements,
-    ImpulseResponses,
-    FrequencyResponses,
-    SpectralDecay,
-    Spectrogram,
+    PendingWindow(pending_window::Message),
 }
 
 impl Main {
@@ -301,7 +277,7 @@ impl Main {
                             return Task::none();
                         };
 
-                        *tab = Tab::Measurements { recording: None };
+                        *tab = Tab::Measurements;
 
                         Task::none()
                     }
@@ -808,6 +784,20 @@ impl Main {
 
                 Task::none()
             }
+            Message::Spectrogram(interaction) => {
+                match interaction {
+                    chart::spectrogram::Interaction::ZoomChanged(zoom) => {
+                        self.spectrogram.zoom = zoom
+                    }
+                    chart::spectrogram::Interaction::OffsetChanged(offset) => {
+                        self.spectrogram.offset = offset
+                    }
+                }
+
+                self.spectrogram.cache.clear();
+
+                Task::none()
+            }
             Message::OpenSpectrogramConfig => {
                 self.modal = Modal::SpectrogramConfig(modal::SpectrogramConfig::new(
                     self.spectrogram_config,
@@ -917,6 +907,14 @@ impl Main {
                         Task::none()
                     }
                 }
+            }
+            Message::ShiftKeyPressed => {
+                self.ir_chart.shift_key_pressed();
+                Task::none()
+            }
+            Message::ShiftKeyReleased => {
+                self.ir_chart.shift_key_released();
+                Task::none()
             }
             _ => Task::none(),
         }
@@ -2094,7 +2092,6 @@ impl Main {
 
                 let content = analysis.frequency_response.view(
                     &measurement.name,
-                    analysis.impulse_response.progress(),
                     Message::FrequencyResponseToggled.with(measurement.id()),
                 );
 

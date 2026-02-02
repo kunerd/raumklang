@@ -4,7 +4,6 @@ pub use loopback::Loopback;
 
 use chrono::{DateTime, Utc};
 use iced::{
-    Alignment::Center,
     Element,
     Length::{Fill, Shrink},
     widget::{button, column, right, row, rule, text},
@@ -161,16 +160,8 @@ impl List {
         self.0.iter()
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Measurement> {
-        self.0.iter_mut()
-    }
-
     pub fn loaded(&self) -> impl Iterator<Item = &Measurement> {
         self.0.iter().filter(|m| m.is_loaded())
-    }
-
-    pub fn loaded_mut(&mut self) -> impl Iterator<Item = &mut Measurement> {
-        self.0.iter_mut().filter(|m| m.is_loaded())
     }
 
     pub fn push(&mut self, measurement: Measurement) {
@@ -190,10 +181,6 @@ impl List {
 
     pub fn get(&self, id: Id) -> Option<&Measurement> {
         self.0.iter().find(|m| m.id == id)
-    }
-
-    pub fn get_mut(&mut self, id: Id) -> Option<&mut Measurement> {
-        self.0.iter_mut().find(|m| m.id == id)
     }
 
     pub fn is_empty(&self) -> bool {

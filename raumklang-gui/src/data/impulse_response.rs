@@ -61,14 +61,6 @@ impl ImpulseResponse {
             State::Computed(_) => Progress::Computed,
         }
     }
-
-    pub fn into_inner(self) -> Option<Arc<raumklang_core::ImpulseResponse>> {
-        let State::Computed(inner) = self.0 else {
-            return None;
-        };
-
-        Some(inner)
-    }
 }
 
 #[derive(Debug, Clone)]

@@ -1,15 +1,12 @@
-use std::fmt::{self, Display};
-
 use crate::widget::sidebar;
 use crate::{data, icon};
-use data::impulse_response;
 
+use iced::Alignment;
 use iced::widget::stack;
 use iced::widget::text::IntoFragment;
-use iced::Alignment;
 use iced::{
-    widget::{column, container, row, text, toggler},
     Element, Length,
+    widget::{column, container, row, text, toggler},
 };
 
 use rand::Rng as _;
@@ -19,7 +16,6 @@ pub struct FrequencyResponse {
     pub color: iced::Color,
     pub is_shown: bool,
 
-    // pub data: Option<data::FrequencyResponse>,
     pub smoothed: Option<Box<[f32]>>,
 
     pub state: State,
@@ -49,7 +45,6 @@ impl FrequencyResponse {
     pub fn view<'a, Message>(
         &'a self,
         measurement_name: &'a str,
-        impulse_response_progess: impulse_response::Progress,
         on_toggle: impl Fn(bool) -> Message + 'a,
     ) -> Element<'a, Message>
     where
@@ -111,26 +106,6 @@ impl FrequencyResponse {
 impl Default for FrequencyResponse {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub enum Progress {
-    #[default]
-    None,
-    Computing,
-    Finished,
-}
-
-impl Display for Progress {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let text = match self {
-            Self::None => "Not Started",
-            Self::Computing => "Impulse Response",
-            Self::Finished => "Finished",
-        };
-
-        write!(f, "{}", text)
     }
 }
 

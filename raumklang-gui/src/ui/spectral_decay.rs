@@ -1,11 +1,6 @@
+use crate::{data, ui::impulse_response};
+
 use std::future::Future;
-
-use iced::Task;
-
-use crate::{
-    Message, data,
-    ui::{self, impulse_response},
-};
 
 #[derive(Debug, Clone, Default)]
 pub struct SpectralDecay(State);
