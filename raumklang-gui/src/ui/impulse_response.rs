@@ -1,17 +1,17 @@
 use std::time::SystemTime;
 
 use crate::{
-    data::{self, impulse_response, SampleRate},
+    data::{self, SampleRate, impulse_response},
     icon,
     widget::{processing_overlay, sidebar},
 };
 
 use chrono::{DateTime, Utc};
 use iced::{
-    task::Sipper,
-    widget::{button, column, right, row, rule, text},
     Element,
     Length::{Fill, Shrink},
+    task::Sipper,
+    widget::{button, column, right, row, rule, text},
 };
 
 #[derive(Debug, Clone)]
@@ -44,7 +44,7 @@ impl State {
     pub(crate) fn result(&self) -> Option<&ImpulseResponse> {
         match self {
             State::Computing(_) => None,
-            State::Computed(ref impulse_response) => Some(impulse_response),
+            State::Computed(impulse_response) => Some(impulse_response),
         }
     }
 
@@ -52,9 +52,9 @@ impl State {
         &self,
         loopback: &raumklang_core::Loopback,
         measurement: &raumklang_core::Measurement,
-    ) -> Option<impl Sipper<data::ImpulseResponse, data::ImpulseResponse>> {
+    ) -> Option<impl Sipper<data::ImpulseResponse, data::ImpulseResponse> + use<>> {
         match self {
-            State::Computing(ref impulse_response) => {
+            State::Computing(impulse_response) => {
                 impulse_response.clone().compute(loopback, measurement)
             }
             State::Computed(_) => None,

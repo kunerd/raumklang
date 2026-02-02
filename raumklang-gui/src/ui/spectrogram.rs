@@ -36,7 +36,7 @@ impl Spectrogram {
         &mut self,
         impulse_response: &super::impulse_response::State,
         config: &spectrogram::Preferences,
-    ) -> Option<impl Future<Output = data::Spectrogram>> {
+    ) -> Option<impl Future<Output = data::Spectrogram> + use<>> {
         if self.result().is_some() {
             return None;
         }

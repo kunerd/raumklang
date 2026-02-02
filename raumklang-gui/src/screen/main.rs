@@ -3,23 +3,25 @@ mod frequency_response;
 mod impulse_response;
 mod modal;
 mod recording;
+mod tab;
 
 use modal::Modal;
+use tab::Tab;
 
 use crate::{
+    PickAndLoadError,
     data::{
-        self, project, spectrogram, window, Project, RecentProjects, SampleRate, Samples, Window,
+        self, Project, RecentProjects, SampleRate, Samples, Window, project, spectrogram, window,
     },
     icon, load_project, log,
     screen::main::{
         chart::waveform,
-        modal::{pending_window, spectral_decay_config, spectrogram_config, SpectralDecayConfig},
+        modal::{SpectralDecayConfig, pending_window, spectral_decay_config, spectrogram_config},
     },
-    ui::{self, analysis, measurement, Analysis, Loopback, Measurement},
+    ui::{self, Analysis, Loopback, Measurement, analysis, measurement},
     widget::{processing_overlay, sidebar},
-    PickAndLoadError,
 };
-use raumklang_core::{dbfs, WavLoadError};
+use raumklang_core::{WavLoadError, dbfs};
 
 use impulse_response::{ChartOperation, WindowSettings};
 use recording::Recording;
@@ -28,21 +30,21 @@ use chrono::{DateTime, Utc};
 use generic_overlay::generic_overlay::{dropdown_menu, dropdown_root};
 
 use iced::{
+    Alignment::{self, Center},
+    Color, Element, Function, Length, Subscription, Task, Theme,
     advanced::{
-        graphics::text::cosmic_text::skrifa::raw::tables::layout::SelectedScript, Renderer,
+        Renderer, graphics::text::cosmic_text::skrifa::raw::tables::layout::SelectedScript,
     },
     alignment::{Horizontal, Vertical},
     futures::{FutureExt, TryFutureExt},
     keyboard, padding,
-    task::{sipper, Sipper},
+    task::{Sipper, sipper},
     widget::{
-        button, canvas, center, column, container, opaque, pick_list, right, row, rule, scrollable,
-        space, stack, text, Button,
+        Button, button, canvas, center, column, container, opaque, pick_list, right, row, rule,
+        scrollable, space, stack, text,
     },
-    Alignment::{self, Center},
-    Color, Element, Function, Length, Subscription, Task, Theme,
 };
-use prism::{axis, line_series, Axis, Chart, Labels};
+use prism::{Axis, Chart, Labels, axis, line_series};
 use rfd::FileHandle;
 use tracing::instrument::WithSubscriber;
 
@@ -50,6 +52,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
     future::Future,
+    mem,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -107,20 +110,6 @@ impl State {
     }
 }
 
-pub enum Tab {
-    Measurements { recording: Option<Recording> },
-    ImpulseResponses { window_settings: WindowSettings },
-    FrequencyResponses { cache: canvas::Cache },
-    SpectralDecay { cache: canvas::Cache },
-    Spectrogram,
-}
-
-impl Default for Tab {
-    fn default() -> Self {
-        Self::Measurements { recording: None }
-    }
-}
-
 #[derive(Debug, Default)]
 struct Spectrogram {
     pub zoom: chart::Zoom,
@@ -139,25 +128,23 @@ pub enum Message {
 
     LoadLoopback,
     LoopbackLoaded(Loopback),
-
     LoadMeasurement,
     MeasurementLoaded(Measurement),
-
     Measurement(measurement::Message),
 
-    OpenMeasurements,
-    OpenImpulseResponses,
-    OpenFrequencyResponses,
-    OpenSpectralDecays,
-    OpenSpectrograms,
-
+    OpenTab(tab::Id),
+    // OpenMeasurements,
+    // OpenImpulseResponses,
+    // OpenFrequencyResponses,
+    // OpenSpectralDecays,
+    // OpenSpectrograms,
     ImpulseResponseSelected(measurement::Id),
     ImpulseResponseComputed(measurement::Id, data::ImpulseResponse),
     SaveImpulseResponseToFile(measurement::Id, Option<Arc<Path>>),
 
     FrequencyResponseComputed(measurement::Id, data::FrequencyResponse),
     ImpulseResponseSaved(measurement::Id, Arc<Path>),
-    ImpulseResponseChart(impulse_response::Message),
+    ImpulseResponseChart(impulse_response::ChartOperation),
     ImpulseResponse(ui::measurement::Id, ui::impulse_response::Message),
 
     FrequencyResponseToggled(measurement::Id, bool),
@@ -182,7 +169,7 @@ pub enum Message {
     SpectralDecayConfig(spectral_decay_config::Message),
     OpenSpectrogramConfig,
     SpectrogramConfig(spectrogram_config::Message),
-    Modal(pending_window::Message),
+    PendingWindow(pending_window::Message),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,116 +211,140 @@ impl Main {
 
     pub fn update(&mut self, recent_projects: &mut RecentProjects, msg: Message) -> Task<Message> {
         match msg {
-            Message::OpenMeasurements => {
+            Message::OpenTab(tab) => {
                 let State::Analysing {
-                    active_tab: ref mut tab,
+                    ref active_tab,
                     ..
+                    // selected,
+                    // analyses,
                 } = self.state
                 else {
                     return Task::none();
                 };
 
-                *tab = Tab::Measurements { recording: None };
-
-                Task::none()
-            }
-            Message::OpenImpulseResponses => {
-                let State::Analysing {
-                    active_tab: ref mut tab,
-                    ..
-                } = self.state
-                else {
+                if let Tab::ImpulseResponses { window_settings } = active_tab
+                    && !matches!(tab, tab::Id::ImpulseResponses)
+                    && self
+                        .window
+                        .as_ref()
+                        .is_none_or(|window| &window_settings.window != window)
+                {
+                    self.modal = Modal::PendingWindow { goto_tab: tab };
                     return Task::none();
-                };
-
-                let Some(window) = &self.window else {
-                    return Task::none();
-                };
-
-                *tab = Tab::ImpulseResponses {
-                    window_settings: WindowSettings::new(window.clone()),
-                };
-
-                return Task::none();
-            }
-
-            Message::OpenFrequencyResponses => {
-                let State::Analysing {
-                    ref mut active_tab,
-                    ref mut analyses,
-                    ..
-                } = self.state
-                else {
-                    return Task::none();
-                };
-
-                *active_tab = Tab::FrequencyResponses {
-                    cache: canvas::Cache::new(),
-                };
-
-                let tasks = self.measurements.loaded().map(Measurement::id).map(|id| {
-                    compute_frequency_response(
-                        analyses,
-                        id,
-                        self.loopback.as_ref(),
-                        &self.measurements,
-                        self.window.as_ref().cloned().unwrap(),
-                    )
-                });
-
-                Task::batch(tasks)
-            }
-            Message::OpenSpectralDecays => {
-                let State::Analysing {
-                    selected,
-                    ref mut active_tab,
-                    ref mut analyses,
-                    ..
-                } = self.state
-                else {
-                    return Task::none();
-                };
-
-                *active_tab = Tab::SpectralDecay {
-                    cache: canvas::Cache::new(),
-                };
-
-                if let Some(id) = selected {
-                    compute_spectral_decay(
-                        id,
-                        analyses,
-                        self.spectral_decay_config,
-                        self.loopback.as_ref(),
-                        &self.measurements,
-                    )
-                } else {
-                    Task::none()
                 }
-            }
-            Message::OpenSpectrograms => {
-                let State::Analysing {
-                    selected,
-                    ref mut active_tab,
-                    ref mut analyses,
-                    ..
-                } = self.state
-                else {
-                    return Task::none();
-                };
 
-                *active_tab = Tab::Spectrogram;
-                self.spectrogram.cache.clear();
+                match tab {
+                    tab::Id::Measurements => {
+                        let State::Analysing {
+                            active_tab: ref mut tab,
+                            ..
+                        } = self.state
+                        else {
+                            return Task::none();
+                        };
 
-                if let Some(id) = selected {
-                    compute_spectrogram(
-                        id,
-                        analyses,
-                        &self.spectrogram_config,
-                        self.loopback.as_ref(),
-                        &self.measurements,
-                    )
-                } else {
-                    Task::none()
+                        *tab = Tab::Measurements { recording: None };
+
+                        Task::none()
+                    }
+                    tab::Id::ImpulseResponses => {
+                        let State::Analysing {
+                            active_tab: ref mut tab,
+                            ..
+                        } = self.state
+                        else {
+                            return Task::none();
+                        };
+
+                        let Some(window) = &self.window else {
+                            return Task::none();
+                        };
+
+                        *tab = Tab::ImpulseResponses {
+                            window_settings: WindowSettings::new(window.clone()),
+                        };
+
+                        return Task::none();
+                    }
+                    tab::Id::FrequencyResponses => {
+                        let State::Analysing {
+                            ref mut active_tab,
+                            ref mut analyses,
+                            ..
+                        } = self.state
+                        else {
+                            return Task::none();
+                        };
+
+                        *active_tab = Tab::FrequencyResponses {
+                            cache: canvas::Cache::new(),
+                        };
+
+                        let tasks = self.measurements.loaded().map(Measurement::id).map(|id| {
+                            compute_frequency_response(
+                                analyses,
+                                id,
+                                self.loopback.as_ref(),
+                                &self.measurements,
+                                self.window.as_ref().cloned().unwrap(),
+                            )
+                        });
+
+                        Task::batch(tasks)
+                    }
+                    tab::Id::SpectralDecays => {
+                        let State::Analysing {
+                            selected,
+                            ref mut active_tab,
+                            ref mut analyses,
+                            ..
+                        } = self.state
+                        else {
+                            return Task::none();
+                        };
+
+                        *active_tab = Tab::SpectralDecays {
+                            cache: canvas::Cache::new(),
+                        };
+
+                        if let Some(id) = selected {
+                            compute_spectral_decay(
+                                id,
+                                analyses,
+                                self.spectral_decay_config,
+                                self.loopback.as_ref(),
+                                &self.measurements,
+                            )
+                        } else {
+                            Task::none()
+                        }
+                    }
+                    tab::Id::Spectrograms => {
+                        let State::Analysing {
+                            selected,
+                            ref mut active_tab,
+                            ref mut analyses,
+                            ..
+                        } = self.state
+                        else {
+                            return Task::none();
+                        };
+
+                        *active_tab = Tab::Spectrograms;
+                        self.spectrogram.cache.clear();
+
+                        if let Some(id) = selected {
+                            compute_spectrogram(
+                                id,
+                                analyses,
+                                &self.spectrogram_config,
+                                self.loopback.as_ref(),
+                                &self.measurements,
+                            )
+                        } else {
+                            Task::none()
+                        }
+                    }
                 }
             }
             Message::LoadLoopback => Task::future(pick_file("Load Loopback ..."))
@@ -427,7 +438,7 @@ impl Main {
                         &self.measurements,
                     ),
                     Tab::FrequencyResponses { .. } => Task::none(),
-                    Tab::SpectralDecay { .. } => compute_spectral_decay(
+                    Tab::SpectralDecays { .. } => compute_spectral_decay(
                         id,
                         analyses,
                         self.spectral_decay_config,
@@ -435,7 +446,7 @@ impl Main {
                         &self.measurements,
                     ),
 
-                    Tab::Spectrogram => compute_spectrogram(
+                    Tab::Spectrograms => compute_spectrogram(
                         id,
                         analyses,
                         &self.spectrogram_config,
@@ -499,9 +510,10 @@ impl Main {
                     return Task::none();
                 };
 
-                let analysis = analyses.entry(id).or_default();
-                analysis.impulse_response =
-                    ui::impulse_response::State::from_data(impulse_response);
+                analyses.entry(id).and_modify(|analysis| {
+                    analysis.impulse_response =
+                        ui::impulse_response::State::from_data(impulse_response);
+                });
 
                 match active_tab {
                     Tab::Measurements { .. } => Task::none(),
@@ -513,12 +525,14 @@ impl Main {
                         &self.measurements,
                         self.window.as_ref().cloned().unwrap(),
                     ),
-                    Tab::SpectralDecay { .. } => analysis
-                        .spectral_decay
-                        .compute(&analysis.impulse_response, self.spectral_decay_config)
-                        .map(|f| Task::perform(f, Message::SpectralDecayComputed.with(id)))
-                        .unwrap_or_default(),
-                    Tab::Spectrogram => compute_spectrogram(
+                    Tab::SpectralDecays { .. } => compute_spectral_decay(
+                        id,
+                        analyses,
+                        self.spectral_decay_config,
+                        self.loopback.as_ref(),
+                        &self.measurements,
+                    ),
+                    Tab::Spectrograms => compute_spectrogram(
                         id,
                         analyses,
                         &self.spectrogram_config,
@@ -526,6 +540,33 @@ impl Main {
                         &self.measurements,
                     ),
                 }
+            }
+            Message::PendingWindow(action) => {
+                let State::Analysing {
+                    active_tab,
+                    analyses,
+                    ..
+                } = &mut self.state
+                else {
+                    return Task::none();
+                };
+
+                let Modal::PendingWindow { goto_tab } = mem::take(&mut self.modal) else {
+                    return Task::none();
+                };
+
+                let tab = mem::take(active_tab);
+                if let Tab::ImpulseResponses { window_settings } = tab {
+                    match action {
+                        pending_window::Message::Discard => self.ir_chart.overlay_cache.clear(),
+                        pending_window::Message::Apply => {
+                            self.window = Some(window_settings.window);
+                            analyses.values_mut().for_each(|a| *a = Analysis::default());
+                        }
+                    }
+                }
+
+                self.update(recent_projects, Message::OpenTab(goto_tab))
             }
             Message::FrequencyResponseComputed(id, new_fr) => {
                 log::debug!("Frequency response computed: {id}");
@@ -628,7 +669,7 @@ impl Main {
             Message::SpectralDecayComputed(id, sd) => {
                 let State::Analysing {
                     ref mut analyses,
-                    active_tab: Tab::SpectralDecay { ref cache },
+                    active_tab: Tab::SpectralDecays { ref cache },
                     ..
                 } = self.state
                 else {
@@ -723,10 +764,8 @@ impl Main {
                 };
 
                 let State::Analysing {
-                    selected,
-                    ref mut analyses,
-                    ..
-                } = self.state
+                    selected, analyses, ..
+                } = &mut self.state
                 else {
                     return Task::none();
                 };
@@ -747,16 +786,47 @@ impl Main {
                         if let Some(id) = selected {
                             analyses
                                 .get_mut(&id)
-                                .and_then(|a| {
+                                .and_then(move |a| {
                                     a.spectrogram.compute(&a.impulse_response, &preferences)
                                 })
-                                .map(|f| Task::perform(f, Message::SpectrogramComputed.with(id)))
+                                .map(|f| Task::perform(f, Message::SpectrogramComputed.with(*id)))
                                 .unwrap_or_default()
                         } else {
                             Task::none()
                         }
                     }
                 }
+            }
+            Message::ImpulseResponseChart(operation) => {
+                let State::Analysing {
+                    active_tab:
+                        Tab::ImpulseResponses {
+                            ref mut window_settings,
+                        },
+                    ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
+                if let ChartOperation::Interaction(ref interaction) = operation {
+                    match interaction {
+                        chart::Interaction::HandleMoved(index, new_pos) => {
+                            let mut handles: window::Handles = Into::into(&window_settings.window);
+                            handles.update(*index, *new_pos);
+                            window_settings.window.update(handles);
+                        }
+                        chart::Interaction::ZoomChanged(zoom) => {
+                            self.ir_chart.zoom = *zoom;
+                        }
+                        chart::Interaction::OffsetChanged(offset) => {
+                            self.ir_chart.offset = *offset;
+                        }
+                    }
+                }
+                self.ir_chart.update(operation);
+
+                Task::none()
             }
             _ => Task::none(),
         }
@@ -1571,7 +1641,7 @@ impl Main {
                 .width(Length::Fill)
             };
 
-            let tab = |s, is_active, message| {
+            let tab = |s, is_active, id: Option<_>| {
                 button(text(s).size(20))
                     .padding(10)
                     .style(move |theme: &Theme, status| {
@@ -1589,39 +1659,35 @@ impl Main {
                             base
                         }
                     })
-                    .on_press_maybe(message)
+                    .on_press_maybe(id.map(Message::OpenTab))
             };
 
             let active_tab = self.state.active_tab();
             let tabs = row![
                 tab(
                     "Measurements",
-                    active_tab.is_none(),
-                    Some(Message::OpenMeasurements)
+                    active_tab.is_none() || matches!(active_tab, Some(Tab::Measurements { .. })),
+                    Some(tab::Id::Measurements)
                 ),
                 tab(
                     "Impulse Responses",
                     matches!(active_tab, Some(Tab::ImpulseResponses { .. })),
-                    active_tab
-                        .is_some()
-                        .then_some(Message::OpenImpulseResponses)
+                    active_tab.is_some().then_some(tab::Id::ImpulseResponses)
                 ),
                 tab(
                     "Frequency Responses",
                     matches!(active_tab, Some(Tab::FrequencyResponses { .. })),
-                    active_tab
-                        .is_some()
-                        .then_some(Message::OpenFrequencyResponses)
+                    active_tab.is_some().then_some(tab::Id::FrequencyResponses)
                 ),
                 tab(
                     "Spectral Decays",
-                    matches!(active_tab, Some(Tab::SpectralDecay { .. })),
-                    active_tab.is_some().then_some(Message::OpenSpectralDecays)
+                    matches!(active_tab, Some(Tab::SpectralDecays { .. })),
+                    active_tab.is_some().then_some(tab::Id::SpectralDecays)
                 ),
                 tab(
                     "Spectrogram",
-                    matches!(active_tab, Some(Tab::Spectrogram)),
-                    active_tab.is_some().then_some(Message::OpenSpectrograms)
+                    matches!(active_tab, Some(Tab::Spectrograms)),
+                    active_tab.is_some().then_some(tab::Id::Spectrograms)
                 ),
             ]
             .spacing(5)
@@ -1653,10 +1719,12 @@ impl Main {
                     Tab::FrequencyResponses { cache } => {
                         self.frequency_responses_tab(cache, analyses)
                     }
-                    Tab::SpectralDecay { cache } => {
+                    Tab::SpectralDecays { cache } => {
                         self.spectral_decay_tab(selected, &analyses, &cache)
                     }
-                    Tab::Spectrogram => self.spectrogram_tab(selected, analyses, &self.spectrogram),
+                    Tab::Spectrograms => {
+                        self.spectrogram_tab(selected, analyses, &self.spectrogram)
+                    }
                 },
             }
         };
@@ -1665,6 +1733,9 @@ impl Main {
 
         match self.modal {
             Modal::None => content.into(),
+            Modal::PendingWindow { .. } => {
+                modal(content, modal::pending_window().map(Message::PendingWindow))
+            }
             Modal::SpectralDecayConfig(ref config) => {
                 modal(content, config.view().map(Message::SpectralDecayConfig))
             }

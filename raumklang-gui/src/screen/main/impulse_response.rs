@@ -6,16 +6,11 @@ use crate::{
 };
 
 use iced::{
-    widget::{canvas, column, container, pick_list, row, stack, text},
-    Alignment, Color, Element, Length,
+    Alignment, Element, Length,
+    widget::{canvas, column, container, pick_list, row},
 };
 
 use std::ops::RangeInclusive;
-
-#[derive(Debug, Clone)]
-pub enum Message {
-    Chart(ChartOperation),
-}
 
 #[derive(Debug, Clone)]
 pub enum ChartOperation {
@@ -57,12 +52,12 @@ impl Chart {
         &'a self,
         impulse_response: &'a ImpulseResponse,
         window_settings: &'a WindowSettings,
-    ) -> Element<'a, Message> {
+    ) -> Element<'a, ChartOperation> {
         let header = {
             pick_list(
                 &data::chart::AmplitudeUnit::ALL[..],
                 Some(&self.amplitude_unit),
-                |unit| Message::Chart(ChartOperation::AmplitudeUnitChanged(unit)),
+                |unit| ChartOperation::AmplitudeUnitChanged(unit),
             )
         };
 
@@ -78,19 +73,20 @@ impl Chart {
                     &self.data_cache,
                     &self.overlay_cache,
                 )
-                .map(ChartOperation::Interaction)
-                .map(Message::Chart),
+                .map(ChartOperation::Interaction),
             )
             .style(container::rounded_box)
         };
 
         let footer = {
-            row![container(pick_list(
-                &data::chart::TimeSeriesUnit::ALL[..],
-                Some(&self.time_unit),
-                |unit| Message::Chart(ChartOperation::TimeUnitChanged(unit))
-            ))
-            .align_right(Length::Fill)]
+            row![
+                container(pick_list(
+                    &data::chart::TimeSeriesUnit::ALL[..],
+                    Some(&self.time_unit),
+                    |unit| ChartOperation::TimeUnitChanged(unit)
+                ))
+                .align_right(Length::Fill)
+            ]
             .align_y(Alignment::Center)
         };
 
@@ -106,6 +102,7 @@ impl Chart {
     }
 }
 
+// FIXME
 pub struct WindowSettings {
     pub window: data::Window<data::Samples>,
 }

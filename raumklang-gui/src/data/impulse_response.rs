@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use iced::task::{sipper, Sipper};
+use iced::task::{Sipper, sipper};
 
 #[derive(Debug, Clone, Default)]
 pub struct ImpulseResponse(State);
@@ -18,7 +18,7 @@ impl ImpulseResponse {
         self,
         loopback: &raumklang_core::Loopback,
         measurement: &raumklang_core::Measurement,
-    ) -> Option<impl Sipper<Self, Self>> {
+    ) -> Option<impl Sipper<Self, Self> + use<>> {
         if let State::Computing = self.0 {
             return None;
         }

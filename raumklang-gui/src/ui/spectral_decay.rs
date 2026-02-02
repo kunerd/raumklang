@@ -3,9 +3,8 @@ use std::future::Future;
 use iced::Task;
 
 use crate::{
-    data,
+    Message, data,
     ui::{self, impulse_response},
-    Message,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -41,7 +40,7 @@ impl SpectralDecay {
         &mut self,
         impulse_response: &impulse_response::State,
         config: data::spectral_decay::Config,
-    ) -> Option<impl Future<Output = data::SpectralDecay>> {
+    ) -> Option<impl Future<Output = data::SpectralDecay> + use<>> {
         if self.result().is_some() {
             return None;
         }
