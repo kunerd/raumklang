@@ -1,7 +1,7 @@
 use super::chart;
 
 use crate::{
-    data::{self},
+    data::{self, Window},
     ui::ImpulseResponse,
 };
 
@@ -51,7 +51,7 @@ impl Chart {
     pub(crate) fn view<'a>(
         &'a self,
         impulse_response: &'a ImpulseResponse,
-        window_settings: &'a WindowSettings,
+        window: &'a Window,
     ) -> Element<'a, ChartOperation> {
         let header = {
             pick_list(
@@ -64,7 +64,7 @@ impl Chart {
         let chart = {
             container(
                 chart::impulse_response(
-                    &window_settings.window,
+                    &window,
                     impulse_response,
                     &self.time_unit,
                     &self.amplitude_unit,
@@ -99,16 +99,5 @@ impl Chart {
 
     pub(crate) fn shift_key_pressed(&mut self) {
         self.shift_key_pressed = true
-    }
-}
-
-// FIXME
-pub struct WindowSettings {
-    pub window: data::Window<data::Samples>,
-}
-
-impl WindowSettings {
-    pub(crate) fn new(window: data::Window<data::Samples>) -> Self {
-        Self { window }
     }
 }

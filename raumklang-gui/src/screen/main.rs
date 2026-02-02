@@ -23,7 +23,7 @@ use crate::{
 };
 use raumklang_core::{WavLoadError, dbfs};
 
-use impulse_response::{ChartOperation, WindowSettings};
+use impulse_response::ChartOperation;
 use recording::Recording;
 
 use chrono::{DateTime, Utc};
@@ -222,12 +222,12 @@ impl Main {
                     return Task::none();
                 };
 
-                if let Tab::ImpulseResponses { window_settings } = active_tab
+                if let Tab::ImpulseResponses { pending_window } = active_tab
                     && !matches!(tab, tab::Id::ImpulseResponses)
                     && self
                         .window
                         .as_ref()
-                        .is_none_or(|window| &window_settings.window != window)
+                        .is_none_or(|window| pending_window != window)
                 {
                     self.modal = Modal::PendingWindow { goto_tab: tab };
                     return Task::none();
@@ -261,7 +261,7 @@ impl Main {
                         };
 
                         *tab = Tab::ImpulseResponses {
-                            window_settings: WindowSettings::new(window.clone()),
+                            pending_window: window.clone(),
                         };
 
                         return Task::none();
@@ -556,11 +556,11 @@ impl Main {
                 };
 
                 let tab = mem::take(active_tab);
-                if let Tab::ImpulseResponses { window_settings } = tab {
+                if let Tab::ImpulseResponses { pending_window } = tab {
                     match action {
                         pending_window::Message::Discard => self.ir_chart.overlay_cache.clear(),
                         pending_window::Message::Apply => {
-                            self.window = Some(window_settings.window);
+                            self.window = Some(pending_window);
                             analyses.values_mut().for_each(|a| *a = Analysis::default());
                         }
                     }
@@ -799,12 +799,9 @@ impl Main {
             }
             Message::ImpulseResponseChart(operation) => {
                 let State::Analysing {
-                    active_tab:
-                        Tab::ImpulseResponses {
-                            ref mut window_settings,
-                        },
+                    active_tab: Tab::ImpulseResponses { pending_window },
                     ..
-                } = self.state
+                } = &mut self.state
                 else {
                     return Task::none();
                 };
@@ -812,9 +809,9 @@ impl Main {
                 if let ChartOperation::Interaction(ref interaction) = operation {
                     match interaction {
                         chart::Interaction::HandleMoved(index, new_pos) => {
-                            let mut handles: window::Handles = Into::into(&window_settings.window);
+                            let mut handles = window::Handles::from(&*pending_window);
                             handles.update(*index, *new_pos);
-                            window_settings.window.update(handles);
+                            pending_window.update(handles);
                         }
                         chart::Interaction::ZoomChanged(zoom) => {
                             self.ir_chart.zoom = *zoom;
@@ -1710,7 +1707,9 @@ impl Main {
                     ref analyses,
                 } => match active_tab {
                     Tab::Measurements { .. } => self.measurements_tab(),
-                    Tab::ImpulseResponses { window_settings } => self.impulse_responses_tab(
+                    Tab::ImpulseResponses {
+                        pending_window: window_settings,
+                    } => self.impulse_responses_tab(
                         selected,
                         &self.ir_chart,
                         window_settings,
@@ -1936,7 +1935,7 @@ impl Main {
         &'a self,
         selected: Option<measurement::Id>,
         chart: &'a impulse_response::Chart,
-        window_settings: &'a WindowSettings,
+        window: &'a Window,
         analyses: &'a BTreeMap<measurement::Id, Analysis>,
     ) -> Element<'a, Message> {
         let sidebar = {
@@ -1977,7 +1976,7 @@ impl Main {
                 .and_then(Analysis::impulse_response)
                 .map(|impulse_response| {
                     chart
-                        .view(impulse_response, window_settings)
+                        .view(impulse_response, window)
                         .map(Message::ImpulseResponseChart)
                 })
                 .unwrap_or(placeholder.into())

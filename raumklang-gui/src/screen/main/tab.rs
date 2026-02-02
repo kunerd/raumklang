@@ -1,10 +1,10 @@
 use iced::widget::canvas;
 
-use crate::screen::main::{impulse_response::WindowSettings, recording::Recording};
+use crate::{data::Window, screen::main::recording::Recording};
 
 pub enum Tab {
     Measurements { recording: Option<Recording> },
-    ImpulseResponses { window_settings: WindowSettings },
+    ImpulseResponses { pending_window: Window },
     FrequencyResponses { cache: canvas::Cache },
     SpectralDecays { cache: canvas::Cache },
     Spectrograms,

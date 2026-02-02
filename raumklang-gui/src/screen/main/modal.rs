@@ -6,7 +6,7 @@ pub use pending_window::pending_window;
 pub use spectral_decay_config::SpectralDecayConfig;
 pub use spectrogram_config::SpectrogramConfig;
 
-use crate::screen::main::{impulse_response::WindowSettings, tab};
+use crate::screen::main::tab;
 
 #[derive(Default, Debug)]
 pub enum Modal {
