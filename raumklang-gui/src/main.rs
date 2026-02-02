@@ -8,12 +8,11 @@ mod ui;
 mod widget;
 
 use screen::{
-    landing,
+    Screen, landing,
     main::{self},
-    Screen,
 };
 
-use data::{project, RecentProjects};
+use data::{RecentProjects, project};
 
 use iced::{Element, Font, Subscription, Task, Theme};
 

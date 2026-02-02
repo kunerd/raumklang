@@ -124,7 +124,7 @@ pub enum Message {
     LoadProject,
     ProjectLoaded(Result<(Arc<data::Project>, PathBuf), PickAndLoadError>),
     SaveProject,
-    ProjectSaved(Result<PathBuf, PickAndSaveError>),
+    ProjectSaved(Result<PathBuf, project::Error>),
     LoadRecentProject(usize),
 
     LoadLoopback,
@@ -212,14 +212,71 @@ impl Main {
 
     pub fn update(&mut self, recent_projects: &mut RecentProjects, msg: Message) -> Task<Message> {
         match msg {
+            Message::NewProject => {
+                *self = Self::default();
+                Task::none()
+            }
+            Message::LoadProject => Task::future(pick_project_file_to_load())
+                .and_then(|path| Task::perform(load_project(path), Message::ProjectLoaded)),
+            Message::LoadRecentProject(index) => {
+                let Some(path) = recent_projects.get(index) else {
+                    return Task::none();
+                };
+
+                Task::perform(load_project(path.clone()), Message::ProjectLoaded)
+            }
+            Message::ProjectLoaded(Ok((project, path))) => {
+                let Some(project) = Arc::into_inner(project) else {
+                    return Task::none();
+                };
+
+                let (view, tasks) = Self::from_project(path, project);
+
+                *self = view;
+                tasks
+            }
+            Message::SaveProject => {
+                let loopback = self
+                    .loopback
+                    .as_ref()
+                    .cloned()
+                    .and_then(|l| l.path)
+                    .map(|path| project::Loopback(project::Measurement { path }));
+
+                let measurements = self
+                    .measurements
+                    .loaded()
+                    .flat_map(|m| m.path.as_ref())
+                    .cloned()
+                    .map(|path| project::Measurement { path })
+                    .collect();
+
+                let project = Project {
+                    loopback,
+                    measurements,
+                };
+
+                if let Some(path) = self.project_path.as_ref() {
+                    let path = path.clone();
+                    Task::perform(project.save(path.clone()), |res| {
+                        Message::ProjectSaved(res.map(|_| path))
+                    })
+                } else {
+                    Task::future(pick_project_file_to_save()).and_then(move |path| {
+                        Task::perform(project.clone().save(path.clone()), |res| {
+                            Message::ProjectSaved(res.map(|_| path))
+                        })
+                    })
+                }
+            }
+            Message::ProjectSaved(Ok(path)) => {
+                self.project_path = Some(path.clone());
+                recent_projects.insert(path);
+
+                Task::future(recent_projects.clone().save()).discard()
+            }
             Message::OpenTab(tab) => {
-                let State::Analysing {
-                    ref active_tab,
-                    ..
-                    // selected,
-                    // analyses,
-                } = self.state
-                else {
+                let State::Analysing { ref active_tab, .. } = self.state else {
                     return Task::none();
                 };
 
@@ -348,13 +405,12 @@ impl Main {
                     }
                 }
             }
-            Message::LoadLoopback => Task::future(pick_file("Load Loopback ..."))
+            Message::LoadLoopback => Task::future(pick_measurement_file("Load Loopback ..."))
                 .and_then(|path| Task::perform(Loopback::from_file(path), Message::LoopbackLoaded)),
-            Message::LoadMeasurement => {
-                Task::future(pick_file("Load measurement ...")).and_then(|path| {
+            Message::LoadMeasurement => Task::future(pick_measurement_file("Load measurement ..."))
+                .and_then(|path| {
                     Task::perform(Measurement::from_file(path), Message::MeasurementLoaded)
-                })
-            }
+                }),
             Message::LoopbackLoaded(loopback) => {
                 self.window = loopback
                     .loaded()
@@ -1905,7 +1961,9 @@ impl Main {
                 }));
 
             container(scrollable(
-                column![loopback, measurements].spacing(20).padding(10),
+                column![loopback, rule::horizontal(1), measurements]
+                    .spacing(10)
+                    .padding(10),
             ))
             .style(|theme| {
                 container::rounded_box(theme)
@@ -2684,25 +2742,7 @@ where
     }
 }
 
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum PickAndSaveError {
-    #[error("dialog closed")]
-    DialogClosed,
-    #[error(transparent)]
-    File(#[from] project::Error),
-}
-
-async fn pick_project_file() -> Result<PathBuf, PickAndSaveError> {
-    let handle = rfd::AsyncFileDialog::new()
-        .set_title("Save project file ...")
-        .save_file()
-        .await
-        .ok_or(PickAndSaveError::DialogClosed)?;
-
-    Ok(handle.path().to_path_buf())
-}
-
-pub async fn pick_file(title: impl AsRef<str>) -> Option<PathBuf> {
+pub async fn pick_measurement_file(title: impl AsRef<str>) -> Option<PathBuf> {
     let handle = rfd::AsyncFileDialog::new()
         .set_title(title.as_ref())
         .add_filter("wav", &["wav", "wave"])
@@ -2711,4 +2751,24 @@ pub async fn pick_file(title: impl AsRef<str>) -> Option<PathBuf> {
         .await;
 
     handle.as_ref().map(FileHandle::path).map(Path::to_path_buf)
+}
+
+async fn pick_project_file_to_load() -> Option<PathBuf> {
+    let handle = rfd::AsyncFileDialog::new()
+        .set_title("Load project...")
+        .add_filter("json", &["json"])
+        .add_filter("all", &["*"])
+        .pick_file()
+        .await?;
+
+    Some(handle.path().to_path_buf())
+}
+
+async fn pick_project_file_to_save() -> Option<PathBuf> {
+    let handle = rfd::AsyncFileDialog::new()
+        .set_title("Save project file ...")
+        .save_file()
+        .await?;
+
+    Some(handle.path().to_path_buf())
 }
