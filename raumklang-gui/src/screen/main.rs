@@ -60,6 +60,7 @@ use std::{
 pub struct Main {
     state: State,
     modal: Modal,
+    recording: Option<Recording>,
     selected: Option<measurement::Selected>,
 
     loopback: Option<Loopback>,
@@ -824,6 +825,42 @@ impl Main {
                 self.ir_chart.update(operation);
 
                 Task::none()
+            }
+            Message::StartRecording(kind) => {
+                self.recording = Some(Recording::new(kind));
+                Task::none()
+            }
+            Message::Recording(msg) => {
+                let Some(recording) = &mut self.recording else {
+                    return Task::none();
+                };
+
+                match recording.update(msg) {
+                    recording::Action::None => Task::none(),
+                    recording::Action::Cancel => {
+                        self.recording = None;
+                        Task::none()
+                    }
+                    recording::Action::Task(task) => task.map(Message::Recording),
+                    recording::Action::Finished(result) => {
+                        match result {
+                            recording::Result::Loopback(loopback) => {
+                                self.loopback =
+                                    Some(ui::Loopback::new("Loopback".to_string(), loopback));
+                            }
+                            recording::Result::Measurement(measurement) => {
+                                self.measurements.push(ui::Measurement::new(
+                                    "Measurement".to_string(),
+                                    None,
+                                    Some(measurement),
+                                ));
+                            }
+                        }
+
+                        self.recording = None;
+                        Task::none()
+                    }
+                }
             }
             _ => Task::none(),
         }
@@ -1728,7 +1765,11 @@ impl Main {
             }
         };
 
-        let content = container(column![header, container(content).padding(10)]);
+        let content = if let Some(recording) = &self.recording {
+            container(recording.view().map(Message::Recording)).padding(10)
+        } else {
+            container(column![header, container(content).padding(10)])
+        };
 
         match self.modal {
             Modal::None => content.into(),
@@ -2345,23 +2386,13 @@ impl Main {
             _ => None,
         });
 
-        // let recording = match &self.state {
-        //     State::CollectingMeasuremnts {
-        //         recording: Some(recording),
-        //         ..
-        //     }
-        //     | State::Analysing {
-        //         active_tab:
-        //             Tab::Measurements {
-        //                 recording: Some(recording),
-        //             },
-        //         ..
-        //     } => recording.subscription().map(Message::Recording),
-        //     _ => Subscription::none(),
-        // };
+        let recording = self
+            .recording
+            .as_ref()
+            .map(Recording::subscription)
+            .unwrap_or(Subscription::none());
 
-        // Subscription::batch([hotkeys, recording])
-        Subscription::batch([hotkeys])
+        Subscription::batch([hotkeys, recording.map(Message::Recording)])
     }
 
     // fn analysing_possible(&self) -> bool {
@@ -2505,6 +2536,7 @@ impl Default for Main {
         Self {
             state: State::default(),
             modal: Modal::None,
+            recording: None,
             selected: None,
 
             loopback: None,
@@ -2672,7 +2704,7 @@ async fn pick_project_file() -> Result<PathBuf, PickAndSaveError> {
 
 pub async fn pick_file(title: impl AsRef<str>) -> Option<PathBuf> {
     let handle = rfd::AsyncFileDialog::new()
-        .set_title(format!("Choose {} file", title.as_ref()))
+        .set_title(title.as_ref())
         .add_filter("wav", &["wav", "wave"])
         .add_filter("all", &["*"])
         .pick_file()

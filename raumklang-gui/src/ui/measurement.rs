@@ -52,7 +52,7 @@ enum State {
 }
 
 impl Measurement {
-    pub(crate) fn new(
+    pub fn new(
         name: String,
         path: Option<PathBuf>,
         signal: Option<raumklang_core::Measurement>,
