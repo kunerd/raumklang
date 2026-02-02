@@ -4,10 +4,10 @@ pub use loopback::Loopback;
 
 use chrono::{DateTime, Utc};
 use iced::{
-    widget::{button, column, right, row, rule, text},
     Alignment::Center,
     Element,
     Length::{Fill, Shrink},
+    widget::{button, column, right, row, rule, text},
 };
 
 use std::{
@@ -121,11 +121,9 @@ impl Measurement {
         .width(Fill)
         .clip(true);
 
-        let delete_btn = button(icon::delete().align_x(Center).align_y(Center))
-            .on_press_with(move || Message::Remove(self.id))
-            .width(30)
-            .height(30)
-            .style(button::danger);
+        let delete_btn = sidebar::button(icon::delete())
+            .style(button::danger)
+            .on_press_with(move || Message::Remove(self.id));
 
         let content = row![
             measurement_btn,

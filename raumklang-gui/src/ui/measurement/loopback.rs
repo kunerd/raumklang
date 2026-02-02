@@ -3,9 +3,9 @@ use super::{Message, Selected};
 use crate::{icon, widget::sidebar};
 
 use iced::{
-    widget::{button, column, right, row, rule, text, tooltip},
     Element,
     Length::{Fill, Shrink},
+    widget::{button, column, right, row, rule, text, tooltip},
 };
 
 use chrono::{DateTime, Utc};
@@ -97,11 +97,7 @@ impl Loopback {
             })
             .width(Fill);
 
-        let delete_btn = button(icon::delete())
-            // .on_press(Message::RemoveLoopback)
-            .width(30)
-            .height(30)
-            .style(button::danger);
+        let delete_btn = sidebar::button(icon::delete()).style(button::danger);
 
         let content = row![
             measurement_btn,

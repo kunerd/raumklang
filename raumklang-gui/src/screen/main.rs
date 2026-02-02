@@ -1841,15 +1841,10 @@ impl Main {
     fn measurements_tab<'a>(&'a self) -> Element<'a, Message> {
         let sidebar = {
             let loopback = Category::new("Loopback")
+                .push_button(sidebar::button(icon::plus()).on_press(Message::LoadLoopback))
                 .push_button(
-                    button("+")
-                        .on_press(Message::LoadLoopback)
-                        .style(button::secondary),
-                )
-                .push_button(
-                    button(icon::record())
-                        .on_press(Message::StartRecording(recording::Kind::Loopback))
-                        .style(button::secondary),
+                    sidebar::button(icon::record())
+                        .on_press(Message::StartRecording(recording::Kind::Loopback)),
                 )
                 .push_entry_maybe(self.loopback.as_ref().map(|loopback| {
                     let active = self.selected == Some(measurement::Selected::Loopback);
@@ -1857,15 +1852,10 @@ impl Main {
                 }));
 
             let measurements = Category::new("Measurements")
+                .push_button(sidebar::button(icon::plus()).on_press(Message::LoadMeasurement))
                 .push_button(
-                    button("+")
-                        .style(button::secondary)
-                        .on_press(Message::LoadMeasurement),
-                )
-                .push_button(
-                    button(icon::record())
-                        .on_press(Message::StartRecording(recording::Kind::Measurement))
-                        .style(button::secondary),
+                    sidebar::button(icon::record())
+                        .on_press(Message::StartRecording(recording::Kind::Measurement)),
                 )
                 .extend_entries(self.measurements.iter().map(|measurement| {
                     let active =
@@ -2641,7 +2631,7 @@ where
     pub fn view(self) -> Element<'a, Message> {
         let header = row![sidebar::header(self.title),]
             .padding(padding::right(6))
-            .extend(self.buttons.into_iter().map(|btn| btn.width(30).into()))
+            .extend(self.buttons.into_iter().map(|btn| btn.into()))
             .spacing(6)
             .align_y(Alignment::Center);
 
