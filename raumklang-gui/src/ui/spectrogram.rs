@@ -57,6 +57,10 @@ impl Spectrogram {
     pub fn set_result(&mut self, spectrogram: data::Spectrogram) {
         self.0 = State::Computed(spectrogram);
     }
+
+    pub fn reset(&mut self) {
+        self.0 = State::None
+    }
 }
 
 #[derive(Debug, Clone)]

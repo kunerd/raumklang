@@ -3,7 +3,6 @@ mod frequency_response;
 mod impulse_response;
 mod modal;
 mod recording;
-mod spectrogram_config;
 
 use modal::Modal;
 
@@ -14,7 +13,7 @@ use crate::{
     icon, load_project, log,
     screen::main::{
         chart::waveform,
-        modal::{pending_window, spectral_decay_config, SpectralDecayConfig},
+        modal::{pending_window, spectral_decay_config, spectrogram_config, SpectralDecayConfig},
     },
     ui::{self, analysis, measurement, Analysis, Loopback, Measurement},
     widget::{processing_overlay, sidebar},
@@ -710,6 +709,54 @@ impl Main {
                 }
 
                 Task::none()
+            }
+            Message::OpenSpectrogramConfig => {
+                self.modal = Modal::SpectrogramConfig(modal::SpectrogramConfig::new(
+                    self.spectrogram_config,
+                ));
+
+                Task::none()
+            }
+            Message::SpectrogramConfig(message) => {
+                let Modal::SpectrogramConfig(config) = &mut self.modal else {
+                    return Task::none();
+                };
+
+                let State::Analysing {
+                    selected,
+                    ref mut analyses,
+                    ..
+                } = self.state
+                else {
+                    return Task::none();
+                };
+
+                match config.update(message) {
+                    spectrogram_config::Action::None => Task::none(),
+                    spectrogram_config::Action::Close => {
+                        self.modal = Modal::None;
+
+                        Task::none()
+                    }
+                    spectrogram_config::Action::ConfigChanged(preferences) => {
+                        self.modal = Modal::None;
+                        self.spectrogram_config = preferences;
+
+                        analyses.values_mut().for_each(|a| a.spectrogram.reset());
+
+                        if let Some(id) = selected {
+                            analyses
+                                .get_mut(&id)
+                                .and_then(|a| {
+                                    a.spectrogram.compute(&a.impulse_response, &preferences)
+                                })
+                                .map(|f| Task::perform(f, Message::SpectrogramComputed.with(id)))
+                                .unwrap_or_default()
+                        } else {
+                            Task::none()
+                        }
+                    }
+                }
             }
             _ => Task::none(),
         }
@@ -1620,11 +1667,10 @@ impl Main {
             Modal::None => content.into(),
             Modal::SpectralDecayConfig(ref config) => {
                 modal(content, config.view().map(Message::SpectralDecayConfig))
-            } // Modal::SpectrogramConfig(ref spectrogram_config) => modal(
-              //     content,
-              //     spectrogram_config.view().map(Message::SpectrogramConfig),
-              // ),
-              // Modal::PendingWindow { .. } => modal::pending_window().map(Message::Modal),
+            }
+            Modal::SpectrogramConfig(ref config) => {
+                modal(content, config.view().map(Message::SpectrogramConfig))
+            }
         }
     }
     // pub fn view<'a>(&'a self, recent_projects: &'a RecentProjects) -> Element<'a, Message> {

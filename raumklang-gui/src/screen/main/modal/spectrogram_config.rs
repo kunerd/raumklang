@@ -9,7 +9,7 @@ use iced::{
 };
 
 #[derive(Debug, Clone)]
-pub(crate) enum Message {
+pub enum Message {
     Close,
     ResetToDefault,
     ResetToPrevious,
@@ -19,14 +19,14 @@ pub(crate) enum Message {
     Apply(spectrogram::Preferences),
 }
 
-pub(crate) enum Action {
+pub enum Action {
     None,
     Close,
     ConfigChanged(spectrogram::Preferences),
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct SpectrogramConfig {
+pub struct SpectrogramConfig {
     window_width: String,
     span_before_peak: String,
     span_after_peak: String,
@@ -34,7 +34,7 @@ pub(crate) struct SpectrogramConfig {
 }
 
 impl SpectrogramConfig {
-    pub(crate) fn new(config: spectrogram::Preferences) -> Self {
+    pub fn new(config: spectrogram::Preferences) -> Self {
         Self {
             window_width: config.window_width.as_millis().to_string(),
             span_before_peak: config.span_before_peak.as_millis().to_string(),
@@ -44,7 +44,7 @@ impl SpectrogramConfig {
     }
 
     #[must_use]
-    pub(crate) fn update(&mut self, message: Message) -> Action {
+    pub fn update(&mut self, message: Message) -> Action {
         match message {
             Message::Close => Action::Close,
             Message::WindowWidthChanged(width) => {
@@ -71,7 +71,7 @@ impl SpectrogramConfig {
         }
     }
 
-    pub(crate) fn view(&self) -> Element<'_, Message> {
+    pub fn view(&self) -> Element<'_, Message> {
         let window_width = self.window_width.parse().map(Duration::from_millis);
         let span_before_peak = self.span_before_peak.parse().map(Duration::from_millis);
         let span_after_peak = self.span_after_peak.parse().map(Duration::from_millis);
