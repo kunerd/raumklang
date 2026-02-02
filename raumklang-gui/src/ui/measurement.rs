@@ -44,10 +44,7 @@ pub struct Id(usize);
 #[derive(Debug, Clone)]
 enum State {
     NotLoaded,
-    Loaded {
-        signal: raumklang_core::Measurement,
-        // analysis: Analysis,
-    },
+    Loaded { signal: raumklang_core::Measurement },
 }
 
 impl Measurement {
