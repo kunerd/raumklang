@@ -87,7 +87,7 @@ impl FrequencyResponse {
             State::Computed(_) => item,
         };
 
-        sidebar::item(content, false).into()
+        sidebar::item(content, false)
     }
 
     pub fn result(&self) -> Option<&data::FrequencyResponse> {

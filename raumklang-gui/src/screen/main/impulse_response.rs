@@ -54,14 +54,14 @@ impl Chart {
             pick_list(
                 &data::chart::AmplitudeUnit::ALL[..],
                 Some(&self.amplitude_unit),
-                |unit| ChartOperation::AmplitudeUnitChanged(unit),
+                ChartOperation::AmplitudeUnitChanged,
             )
         };
 
         let chart = {
             container(
                 chart::impulse_response(
-                    &window,
+                    window,
                     impulse_response,
                     &self.time_unit,
                     &self.amplitude_unit,
@@ -80,7 +80,7 @@ impl Chart {
                 container(pick_list(
                     &data::chart::TimeSeriesUnit::ALL[..],
                     Some(&self.time_unit),
-                    |unit| ChartOperation::TimeUnitChanged(unit)
+                    ChartOperation::TimeUnitChanged
                 ))
                 .align_right(Length::Fill)
             ]

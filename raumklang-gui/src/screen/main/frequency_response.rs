@@ -64,12 +64,10 @@ pub async fn smooth_frequency_response(
     frequency_response: data::FrequencyResponse,
     fraction: u8,
 ) -> Box<[f32]> {
-    let data = tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         data::smooth_fractional_octave(&frequency_response.data.clone(), fraction)
     })
     .await
     .unwrap()
-    .into_boxed_slice();
-
-    data
+    .into_boxed_slice()
 }

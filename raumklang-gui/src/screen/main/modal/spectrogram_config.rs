@@ -3,9 +3,9 @@ use std::time::Duration;
 use crate::{data::spectrogram, icon, widget::number_input};
 
 use iced::{
-    widget::{button, column, container, row, rule, scrollable, space, text, tooltip},
     Alignment::Center,
     Element,
+    widget::{button, column, container, row, rule, scrollable, space, text, tooltip},
 };
 
 #[derive(Debug, Clone)]
@@ -65,7 +65,7 @@ impl SpectrogramConfig {
                 Action::None
             }
             Message::ResetToPrevious => {
-                self.reset_to_config(self.prev_config);
+                self.reset_to_config(self.prev_config.clone());
                 Action::None
             }
         }
@@ -151,7 +151,7 @@ impl SpectrogramConfig {
                     space::horizontal(),
                     tooltip(
                         button(icon::reset().center())
-                            .on_press_maybe(config.map(|_| Message::ResetToPrevious))
+                            .on_press_maybe(config.is_some().then_some(Message::ResetToPrevious))
                             .style(button::secondary),
                         "Reset to defaults.",
                         tooltip::Position::default()

@@ -298,7 +298,7 @@ impl Main {
                             pending_window: window.clone(),
                         };
 
-                        return Task::none();
+                        Task::none()
                     }
                     tab::Id::FrequencyResponses => {
                         let State::Analysing {
@@ -463,7 +463,7 @@ impl Main {
                 self.ir_chart.data_cache.clear();
 
                 match tab {
-                    Tab::Measurements { .. } => Task::none(),
+                    Tab::Measurements => Task::none(),
                     Tab::ImpulseResponses { .. } => compute_impulse_response(
                         analyses,
                         id,
@@ -549,7 +549,7 @@ impl Main {
                 });
 
                 match active_tab {
-                    Tab::Measurements { .. } => Task::none(),
+                    Tab::Measurements => Task::none(),
                     Tab::ImpulseResponses { .. } => Task::none(),
                     Tab::FrequencyResponses { .. } => compute_frequency_response(
                         analyses,
@@ -800,7 +800,7 @@ impl Main {
             }
             Message::OpenSpectrogramConfig => {
                 self.modal = Modal::SpectrogramConfig(modal::SpectrogramConfig::new(
-                    self.spectrogram_config,
+                    self.spectrogram_config.clone(),
                 ));
 
                 Task::none()
@@ -826,21 +826,23 @@ impl Main {
                     }
                     spectrogram_config::Action::ConfigChanged(preferences) => {
                         self.modal = Modal::None;
-                        self.spectrogram_config = preferences;
 
-                        analyses.values_mut().for_each(|a| a.spectrogram.reset());
-
-                        if let Some(id) = selected {
+                        let task = if let Some(id) = selected {
                             analyses
-                                .get_mut(&id)
-                                .and_then(move |a| {
+                                .get_mut(id)
+                                .and_then(|a| {
                                     a.spectrogram.compute(&a.impulse_response, &preferences)
                                 })
                                 .map(|f| Task::perform(f, Message::SpectrogramComputed.with(*id)))
                                 .unwrap_or_default()
                         } else {
                             Task::none()
-                        }
+                        };
+
+                        self.spectrogram_config = preferences;
+                        analyses.values_mut().for_each(|a| a.spectrogram.reset());
+
+                        task
                     }
                 }
             }
@@ -983,7 +985,7 @@ impl Main {
             let tabs = row![
                 tab(
                     "Measurements",
-                    active_tab.is_none() || matches!(active_tab, Some(Tab::Measurements { .. })),
+                    active_tab.is_none() || matches!(active_tab, Some(Tab::Measurements)),
                     Some(tab::Id::Measurements)
                 ),
                 tab(
@@ -1026,7 +1028,7 @@ impl Main {
                     selected,
                     ref analyses,
                 } => match active_tab {
-                    Tab::Measurements { .. } => self.measurements_tab(),
+                    Tab::Measurements => self.measurements_tab(),
                     Tab::ImpulseResponses {
                         pending_window: window_settings,
                     } => self.impulse_responses_tab(
@@ -1039,7 +1041,7 @@ impl Main {
                         self.frequency_responses_tab(cache, analyses)
                     }
                     Tab::SpectralDecays { cache } => {
-                        self.spectral_decay_tab(selected, &analyses, &cache)
+                        self.spectral_decay_tab(selected, analyses, cache)
                     }
                     Tab::Spectrograms => {
                         self.spectrogram_tab(selected, analyses, &self.spectrogram)
@@ -1301,7 +1303,7 @@ impl Main {
                 )
                 .y_labels(Labels::default().format(&|v| format!("{v:.0}")))
                 .extend_series(series_list)
-                .cache(&cache);
+                .cache(cache);
 
             container(chart)
         } else {
