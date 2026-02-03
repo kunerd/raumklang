@@ -7,7 +7,7 @@ use super::{SampleRate, Samples};
 use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Window<D> {
+pub struct Window<D = Samples> {
     sample_rate: SampleRate,
     left_type: raumklang_core::Window,
     left_width: D,

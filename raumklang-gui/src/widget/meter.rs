@@ -1,10 +1,10 @@
 use iced::{
+    Font, Pixels, Point, Renderer, Size,
     advanced::{graphics::text::Paragraph, text::Paragraph as _},
     widget::{
         canvas,
         text::{LineHeight, Shaping},
     },
-    Font, Pixels, Point, Renderer, Size,
 };
 
 pub struct RmsPeakMeter<'a> {

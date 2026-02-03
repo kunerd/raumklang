@@ -1,16 +1,16 @@
 use crate::log;
 
-use super::{loudness, process::Control, Process};
+use super::{Process, loudness, process::Control};
 
 use ringbuf::{
-    traits::{Consumer as _, Producer as _, Split as _},
     HeapCons, HeapProd, HeapRb,
+    traits::{Consumer as _, Producer as _, Split as _},
 };
 
 use std::{
     sync::{
-        atomic::{self, AtomicBool},
         Arc,
+        atomic::{self, AtomicBool},
     },
     time::Duration,
 };

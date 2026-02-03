@@ -1,3 +1,15 @@
+use super::{Message, Selected};
+
+use crate::{icon, widget::sidebar};
+
+use iced::{
+    Element,
+    Length::{Fill, Shrink},
+    widget::{button, column, right, row, rule, text, tooltip},
+};
+
+use chrono::{DateTime, Utc};
+
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -7,11 +19,11 @@ use std::{
 pub struct Loopback {
     pub name: String,
     pub path: Option<PathBuf>,
-    pub state: State,
+    state: State,
 }
 
 #[derive(Debug, Clone)]
-pub enum State {
+enum State {
     Loaded(raumklang_core::Loopback),
     NotLoaded(Arc<raumklang_core::WavLoadError>),
 }
@@ -47,6 +59,53 @@ impl Loopback {
             path: Some(path.to_path_buf()),
             state,
         }
+    }
+
+    pub fn view(&self, active: bool) -> Element<'_, super::Message> {
+        let info: Element<_> = match &self.state {
+            State::Loaded(loopback) => {
+                let dt: DateTime<Utc> = loopback.as_ref().modified.into();
+                column![
+                    text("Last modified:").size(10),
+                    text!("{}", dt.format("%x %X")).size(10)
+                ]
+                .into()
+            }
+            State::NotLoaded(err) => tooltip(
+                text("Offline").style(text::danger),
+                text!("{err}").style(text::danger),
+                tooltip::Position::default(),
+            )
+            .into(),
+        };
+
+        let measurement_btn = button(column![text(&self.name).size(16)].push(info).spacing(5))
+            .on_press_maybe(
+                self.loaded()
+                    .is_some()
+                    .then_some(Message::Select(Selected::Loopback)),
+            )
+            .style(move |theme, status| {
+                let background = theme.extended_palette().background;
+                let base = button::subtle(theme, status);
+
+                if active {
+                    base.with_background(background.weak.color)
+                } else {
+                    base
+                }
+            })
+            .width(Fill);
+
+        let delete_btn = sidebar::button(icon::delete()).style(button::danger);
+
+        let content = row![
+            measurement_btn,
+            rule::vertical(1.0),
+            right(delete_btn).width(Shrink).padding([0, 6])
+        ];
+
+        sidebar::item(content, active)
     }
 
     pub(crate) fn loaded(&self) -> Option<&raumklang_core::Loopback> {

@@ -1,10 +1,10 @@
 use crate::data::RecentProjects;
 
 use iced::{
-    font,
-    widget::{button, column, container, row, scrollable, space, text},
     Element, Font,
     Length::{self, Fill},
+    font,
+    widget::{button, column, container, row, scrollable, space, text},
 };
 
 #[derive(Debug, Clone)]

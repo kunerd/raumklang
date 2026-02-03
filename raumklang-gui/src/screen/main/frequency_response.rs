@@ -1,20 +1,6 @@
-use std::{
-    fmt::{self},
-    ops::RangeInclusive,
-};
+use std::fmt::{self};
 
-use crate::{
-    data,
-    ui::{self},
-};
-
-use iced::widget::canvas;
-
-#[derive(Debug, Default)]
-pub struct ChartData {
-    pub x_range: Option<RangeInclusive<f32>>,
-    pub cache: canvas::Cache,
-}
+use crate::data;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Smoothing {
@@ -75,16 +61,13 @@ impl fmt::Display for Smoothing {
 }
 
 pub async fn smooth_frequency_response(
-    id: ui::measurement::Id,
     frequency_response: data::FrequencyResponse,
     fraction: u8,
-) -> (ui::measurement::Id, Box<[f32]>) {
-    let data = tokio::task::spawn_blocking(move || {
+) -> Box<[f32]> {
+    tokio::task::spawn_blocking(move || {
         data::smooth_fractional_octave(&frequency_response.data.clone(), fraction)
     })
     .await
     .unwrap()
-    .into_boxed_slice();
-
-    (id, data)
+    .into_boxed_slice()
 }

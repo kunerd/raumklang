@@ -9,18 +9,18 @@ use crate::{
         measurement::config,
         recording::{self, volume},
     },
-    screen::main::recording::page::{measurement, Component},
-    widget::{meter, RmsPeakMeter},
+    screen::main::recording::page::{Component, measurement},
+    widget::{RmsPeakMeter, meter},
 };
 
 use iced::{
-    alignment::{Horizontal, Vertical},
-    time,
-    widget::{self, canvas, column, container, pick_list, row, rule, slider, text, text_input},
     Alignment::Center,
     Element,
     Length::{Fill, Shrink},
     Subscription, Task,
+    alignment::{Horizontal, Vertical},
+    time,
+    widget::{self, canvas, column, container, pick_list, row, rule, slider, text, text_input},
 };
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -571,15 +571,17 @@ where
         column![]
             .push(self.label.map(text))
             .push(
-                row![text_input("", self.value)
-                    .id(widget::Id::new("from"))
-                    .align_x(Horizontal::Right)
-                    .on_input_maybe(self.on_input)
-                    .style(if self.is_valid {
-                        text_input::default
-                    } else {
-                        number_input_danger
-                    })]
+                row![
+                    text_input("", self.value)
+                        .id(widget::Id::new("from"))
+                        .align_x(Horizontal::Right)
+                        .on_input_maybe(self.on_input)
+                        .style(if self.is_valid {
+                            text_input::default
+                        } else {
+                            number_input_danger
+                        })
+                ]
                 .push(self.unit.map(text))
                 .align_y(Vertical::Center)
                 .spacing(3),

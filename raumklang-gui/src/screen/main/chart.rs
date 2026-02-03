@@ -4,12 +4,15 @@ pub mod waveform;
 use waveform::Waveform;
 
 use crate::{
-    data::{self, chart, window::Handles, Samples, Window},
+    data::{self, Samples, Window, chart, window::Handles},
     screen::main::chart::spectrogram::Spectrogram,
     ui,
 };
 
 use iced::{
+    Element, Event, Font,
+    Length::Fill,
+    Pixels, Point, Rectangle, Renderer, Size, Theme, Vector,
     advanced::{
         graphics::text::Paragraph,
         text::{self, Paragraph as _},
@@ -21,9 +24,7 @@ use iced::{
         container,
         text::{Fragment, IntoFragment},
     },
-    window, Element, Event, Font,
-    Length::Fill,
-    Pixels, Point, Rectangle, Renderer, Size, Theme, Vector,
+    window,
 };
 
 use std::{
@@ -102,7 +103,7 @@ pub fn impulse_response<'a>(
         canvas::Canvas::new(BarChart {
             window,
             datapoints: impulse_response
-                .data
+                .normalized
                 .iter()
                 .copied()
                 .map(f32::abs)
@@ -318,8 +319,8 @@ where
                     x_axis,
                     y_axis,
                     plane,
-                    ref mut hovered_handle,
-                    ref mut dragging,
+                    hovered_handle,
+                    dragging,
                     ..
                 } = state
                 else {
@@ -411,7 +412,7 @@ where
                 let State::Initialized {
                     hovered_handle,
                     plane,
-                    ref mut dragging,
+                    dragging,
                     ..
                 } = state
                 else {
@@ -435,8 +436,8 @@ where
                 let State::Initialized {
                     x_axis,
                     plane,
-                    ref mut hovered_handle,
-                    ref mut dragging,
+                    hovered_handle,
+                    dragging,
                     ..
                 } = state
                 else {

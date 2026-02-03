@@ -21,8 +21,8 @@ pub use spectral_decay::SpectralDecay;
 pub use spectrogram::Spectrogram;
 pub use window::Window;
 
-use ndarray::{concatenate, Array, Array1, ArrayView, Axis};
-use ndarray_interp::interp1d::{cubic_spline::CubicSpline, Interp1DBuilder};
+use ndarray::{Array, Array1, ArrayView, Axis, concatenate};
+use ndarray_interp::interp1d::{Interp1DBuilder, cubic_spline::CubicSpline};
 use ndarray_stats::SummaryStatisticsExt;
 
 use std::{io, sync::Arc};

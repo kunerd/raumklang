@@ -1,8 +1,9 @@
 module = "icon" 
 
 [glyphs]
-delete = "fontawesome-trash"
+plus = "fontawesome-plus"
 record = "typicons-record"
+delete = "fontawesome-trash"
 download = "typicons-download"
 settings = "fontawesome-cog-alt"
 reset = "fontawesome-ccw"

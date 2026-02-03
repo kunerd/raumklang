@@ -2,52 +2,31 @@ pub mod loopback;
 
 pub use loopback::Loopback;
 
+use chrono::{DateTime, Utc};
+use iced::{
+    Element,
+    Length::{Fill, Shrink},
+    widget::{button, column, right, row, rule, text},
+};
+
 use std::{
     fmt::Display,
     path::{Path, PathBuf},
     sync::atomic::{self, AtomicUsize},
 };
 
-use crate::ui::{impulse_response, spectral_decay, spectrogram, FrequencyResponse};
+use crate::{icon, widget::sidebar};
 
-#[derive(Debug, Default, Clone)]
-pub struct List(Vec<Measurement>);
+#[derive(Debug, Clone)]
+pub enum Message {
+    Select(Selected),
+    Remove(Id),
+}
 
-impl List {
-    pub fn iter(&self) -> impl Iterator<Item = &Measurement> + Clone {
-        self.0.iter()
-    }
-
-    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = &mut Measurement> {
-        self.0.iter_mut()
-    }
-
-    pub fn loaded_mut(&mut self) -> impl Iterator<Item = &mut Measurement> {
-        self.0.iter_mut().filter(|m| m.is_loaded())
-    }
-
-    pub(crate) fn push(&mut self, measurement: Measurement) {
-        self.0.push(measurement);
-    }
-
-    pub(crate) fn remove(&mut self, id: Id) -> Option<Measurement> {
-        let index = self
-            .0
-            .iter()
-            .enumerate()
-            .find(|(_, m)| m.id == id)
-            .map(|(i, _)| i)?;
-
-        Some(self.0.remove(index))
-    }
-
-    pub(crate) fn get(&self, id: Id) -> Option<&Measurement> {
-        self.0.iter().find(|m| m.id == id)
-    }
-
-    pub(crate) fn get_mut(&mut self, id: Id) -> Option<&mut Measurement> {
-        self.0.iter_mut().find(|m| m.id == id)
-    }
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub enum Selected {
+    Loopback,
+    Measurement(Id),
 }
 
 #[derive(Debug, Clone)]
@@ -65,14 +44,11 @@ pub struct Id(usize);
 #[derive(Debug, Clone)]
 enum State {
     NotLoaded,
-    Loaded {
-        signal: raumklang_core::Measurement,
-        analysis: Analysis,
-    },
+    Loaded { signal: raumklang_core::Measurement },
 }
 
 impl Measurement {
-    pub(crate) fn new(
+    pub fn new(
         name: String,
         path: Option<PathBuf>,
         signal: Option<raumklang_core::Measurement>,
@@ -81,10 +57,7 @@ impl Measurement {
         let id = Id(ID.fetch_add(1, atomic::Ordering::Relaxed));
 
         let state = match signal {
-            Some(signal) => State::Loaded {
-                signal,
-                analysis: Analysis::default(),
-            },
+            Some(signal) => State::Loaded { signal },
             None => State::NotLoaded,
         };
 
@@ -110,6 +83,53 @@ impl Measurement {
         Self::new(name, path, signal)
     }
 
+    pub fn view(&self, active: bool) -> Element<'_, Message> {
+        let info: Element<_> = match &self.signal() {
+            Some(signal) => {
+                let dt: DateTime<Utc> = signal.modified.into();
+                column![
+                    text("Last modified:").size(10),
+                    text!("{}", dt.format("%x %X")).size(10)
+                ]
+                .into()
+            }
+            None => text("Offline").style(text::danger).into(),
+        };
+
+        let measurement_btn = button(
+            column![text(&self.name).wrapping(text::Wrapping::WordOrGlyph), info].spacing(5),
+        )
+        .on_press_maybe(
+            self.is_loaded()
+                .then_some(Selected::Measurement(self.id))
+                .map(Message::Select),
+        )
+        .style(move |theme, status| {
+            let background = theme.extended_palette().background;
+            let base = button::subtle(theme, status);
+
+            if active {
+                base.with_background(background.weak.color)
+            } else {
+                base
+            }
+        })
+        .width(Fill)
+        .clip(true);
+
+        let delete_btn = sidebar::button(icon::delete())
+            .style(button::danger)
+            .on_press_with(move || Message::Remove(self.id));
+
+        let content = row![
+            measurement_btn,
+            rule::vertical(1.0),
+            right(delete_btn).width(Shrink).padding([0, 6])
+        ];
+
+        sidebar::item(content, active)
+    }
+
     pub fn is_loaded(&self) -> bool {
         match &self.state {
             State::NotLoaded => false,
@@ -127,62 +147,46 @@ impl Measurement {
     pub(crate) fn id(&self) -> Id {
         self.id
     }
+}
 
-    pub fn analysis(&self) -> Option<&Analysis> {
-        match self.state {
-            State::NotLoaded => None,
-            State::Loaded { ref analysis, .. } => Some(analysis),
-        }
+#[derive(Debug, Default, Clone)]
+pub struct List(Vec<Measurement>);
+
+impl List {
+    pub fn iter(&self) -> impl Iterator<Item = &Measurement> + Clone {
+        self.0.iter()
     }
 
-    pub fn analysis_mut(&mut self) -> Option<&mut Analysis> {
-        match self.state {
-            State::NotLoaded => None,
-            State::Loaded {
-                ref mut analysis, ..
-            } => Some(analysis),
-        }
+    pub fn loaded(&self) -> impl Iterator<Item = &Measurement> {
+        self.0.iter().filter(|m| m.is_loaded())
+    }
+
+    pub fn push(&mut self, measurement: Measurement) {
+        self.0.push(measurement);
+    }
+
+    pub fn remove(&mut self, id: Id) -> Option<Measurement> {
+        let index = self
+            .0
+            .iter()
+            .enumerate()
+            .find(|(_, m)| m.id == id)
+            .map(|(i, _)| i)?;
+
+        Some(self.0.remove(index))
+    }
+
+    pub fn get(&self, id: Id) -> Option<&Measurement> {
+        self.0.iter().find(|m| m.id == id)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
 impl Display for Id {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct Analysis {
-    pub impulse_response: impulse_response::State,
-    pub frequency_response: FrequencyResponse,
-    pub spectral_decay: spectral_decay::State,
-    pub spectrogram: spectrogram::State,
-}
-
-impl Analysis {
-    pub(crate) fn spectral_decay_progress(&self) -> spectral_decay::Progress {
-        match self.impulse_response {
-            impulse_response::State::None => spectral_decay::Progress::None,
-            impulse_response::State::Computing => {
-                spectral_decay::Progress::ComputingImpulseResponse
-            }
-            impulse_response::State::Computed(_) => match self.spectral_decay {
-                spectral_decay::State::None => spectral_decay::Progress::None,
-                spectral_decay::State::Computing => spectral_decay::Progress::Computing,
-                spectral_decay::State::Computed(_) => spectral_decay::Progress::Finished,
-            },
-        }
-    }
-
-    pub(crate) fn spectrogram_progress(&self) -> spectrogram::Progress {
-        match self.impulse_response {
-            impulse_response::State::None => spectrogram::Progress::None,
-            impulse_response::State::Computing => spectrogram::Progress::ComputingImpulseResponse,
-            impulse_response::State::Computed(_) => match self.spectrogram {
-                spectrogram::State::None => spectrogram::Progress::None,
-                spectrogram::State::Computing => spectrogram::Progress::Computing,
-                spectrogram::State::Computed(_) => spectrogram::Progress::Finished,
-            },
-        }
     }
 }

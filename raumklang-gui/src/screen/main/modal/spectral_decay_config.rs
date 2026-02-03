@@ -5,13 +5,13 @@ use crate::{
 };
 
 use iced::{
-    widget::{button, column, container, row, rule, scrollable, space, text, tooltip},
     Alignment::Center,
     Element,
+    widget::{button, column, container, row, rule, scrollable, space, text, tooltip},
 };
 
 #[derive(Debug, Clone)]
-pub(crate) enum Message {
+pub enum Message {
     Discard,
     ResetToDefault,
     ResetToPrevious,
@@ -21,13 +21,14 @@ pub(crate) enum Message {
     Apply(spectral_decay::Config),
 }
 
-pub(crate) enum Action {
-    Apply(spectral_decay::Config),
+pub enum Action {
+    None,
     Discard,
+    Apply(spectral_decay::Config),
 }
 
 #[derive(Debug)]
-pub(crate) struct SpectralDecayConfig {
+pub struct SpectralDecayConfig {
     shift: String,
     left_window_width: String,
     right_window_width: String,
@@ -35,7 +36,7 @@ pub(crate) struct SpectralDecayConfig {
 }
 
 impl SpectralDecayConfig {
-    pub(crate) fn new(config: spectral_decay::Config) -> Self {
+    pub fn new(config: spectral_decay::Config) -> Self {
         Self {
             shift: config.shift.as_millis().to_string(),
             left_window_width: config.left_window_width.as_millis().to_string(),
@@ -44,44 +45,44 @@ impl SpectralDecayConfig {
         }
     }
 
-    pub(crate) fn reset_to_default(&mut self) {
+    pub fn reset_to_default(&mut self) {
         self.reset_to_config(spectral_decay::Config::default());
     }
 
-    pub(crate) fn reset_to_config(&mut self, config: spectral_decay::Config) {
+    pub fn reset_to_config(&mut self, config: spectral_decay::Config) {
         self.shift = config.shift.as_millis().to_string();
         self.left_window_width = config.left_window_width.as_millis().to_string();
         self.right_window_width = config.right_window_width.as_millis().to_string();
     }
 
-    pub(crate) fn update(&mut self, message: Message) -> Option<Action> {
+    pub fn update(&mut self, message: Message) -> Action {
         match message {
-            Message::Apply(config) => Some(Action::Apply(config)),
-            Message::Discard => Some(Action::Discard),
+            Message::Apply(config) => Action::Apply(config),
+            Message::Discard => Action::Discard,
             Message::ShiftChanged(shift) => {
                 self.shift = shift;
-                None
+                Action::None
             }
             Message::LeftWidthChanged(left_width) => {
                 self.left_window_width = left_width;
-                None
+                Action::None
             }
             Message::RightWidthChanged(right_width) => {
                 self.right_window_width = right_width;
-                None
+                Action::None
             }
             Message::ResetToDefault => {
                 self.reset_to_default();
-                None
+                Action::None
             }
             Message::ResetToPrevious => {
                 self.reset_to_config(self.prev_config);
-                None
+                Action::None
             }
         }
     }
 
-    pub(crate) fn view(&self) -> Element<'_, Message> {
+    pub fn view(&self) -> Element<'_, Message> {
         let shift = Shift::from_millis_string(&self.shift);
         let left_window_width = WindowWidth::from_millis_string(&self.left_window_width);
         let right_window_width = WindowWidth::from_millis_string(&self.right_window_width);

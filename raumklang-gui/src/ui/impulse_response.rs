@@ -1,53 +1,79 @@
-use crate::data::{self, SampleRate};
+use std::time::SystemTime;
 
-#[derive(Debug, Clone, Default)]
+use crate::{
+    data::{self, SampleRate, impulse_response},
+    icon,
+    widget::{processing_overlay, sidebar},
+};
+
+use chrono::{DateTime, Utc};
+use iced::{
+    Element,
+    Length::{Fill, Shrink},
+    task::Sipper,
+    widget::{button, column, right, row, rule, text},
+};
+
+#[derive(Debug, Clone)]
+pub enum Message {
+    Select,
+    Save,
+}
+
+#[derive(Debug, Clone)]
 pub enum State {
-    #[default]
-    None,
-    Computing,
+    Computing(data::ImpulseResponse),
     Computed(ImpulseResponse),
 }
 
 impl State {
-    pub fn progress(&self) -> Progress {
-        match self {
-            State::None => Progress::None,
-            State::Computing => Progress::Computing,
-            State::Computed(_) => Progress::Finished,
+    pub(crate) fn from_data(impulse_response: data::ImpulseResponse) -> State {
+        match ImpulseResponse::from_data(&impulse_response) {
+            Some(ir) => State::Computed(ir),
+            None => State::Computing(impulse_response),
         }
     }
 
-    pub(crate) fn computed(&mut self, impulse_response: ImpulseResponse) {
-        *self = State::Computed(impulse_response)
+    pub(crate) fn progress(&self) -> impulse_response::Progress {
+        match self {
+            State::Computing(ir) => ir.progress(),
+            State::Computed(_) => impulse_response::Progress::Computed,
+        }
     }
 
     pub(crate) fn result(&self) -> Option<&ImpulseResponse> {
-        let State::Computed(ir) = self else {
-            return None;
-        };
-
-        Some(ir)
+        match self {
+            State::Computing(_) => None,
+            State::Computed(impulse_response) => Some(impulse_response),
+        }
     }
-}
 
-#[derive(Debug, Clone)]
-pub enum Progress {
-    None,
-    Computing,
-    Finished,
+    pub(crate) fn compute(
+        &self,
+        loopback: &raumklang_core::Loopback,
+        measurement: &raumklang_core::Measurement,
+    ) -> Option<impl Sipper<data::ImpulseResponse, data::ImpulseResponse> + use<>> {
+        match self {
+            State::Computing(impulse_response) => {
+                impulse_response.clone().compute(loopback, measurement)
+            }
+            State::Computed(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct ImpulseResponse {
     pub sample_rate: SampleRate,
-    pub data: Vec<f32>,
-    pub origin: raumklang_core::ImpulseResponse,
+    pub normalized: Vec<f32>,
+    pub data: raumklang_core::ImpulseResponse,
 }
 
 impl ImpulseResponse {
-    pub fn from_data(impulse_response: data::ImpulseResponse) -> Self {
+    pub fn from_data(data: &data::ImpulseResponse) -> Option<Self> {
+        let impulse_response = data.result()?;
+
         let max = impulse_response
-            .origin
             .data
             .iter()
             .map(|s| s.re.abs())
@@ -55,17 +81,72 @@ impl ImpulseResponse {
             .unwrap();
 
         let normalized = impulse_response
-            .origin
             .data
             .iter()
             .map(|s| s.re)
             .map(|s| s / max.abs())
             .collect();
 
-        Self {
-            sample_rate: SampleRate::new(impulse_response.origin.sample_rate),
-            data: normalized,
-            origin: impulse_response.origin,
+        Some(Self {
+            sample_rate: SampleRate::new(impulse_response.sample_rate),
+            normalized,
+            data: impulse_response.clone(),
+        })
+    }
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self::Computing(data::ImpulseResponse::default())
+    }
+}
+
+pub fn view<'a>(
+    name: &'a str,
+    date_time: SystemTime,
+    progress: Option<impulse_response::Progress>,
+    active: bool,
+) -> Element<'a, Message> {
+    let entry = {
+        let dt: DateTime<Utc> = date_time.into();
+        let ir_btn = button(
+            column![
+                text(name).size(16).wrapping(text::Wrapping::WordOrGlyph),
+                text!("{}", dt.format("%x %X")).size(10)
+            ]
+            .clip(true)
+            .spacing(6),
+        )
+        .on_press(Message::Select)
+        .width(Fill)
+        .style(move |theme, status| {
+            let base = button::subtle(theme, status);
+            let background = theme.extended_palette().background;
+
+            if active {
+                base.with_background(background.weak.color)
+            } else {
+                base
+            }
+        });
+
+        let save_btn = button(icon::download().size(10))
+            .style(button::secondary)
+            .on_press_with(move || Message::Save);
+
+        let content = row![
+            ir_btn,
+            rule::vertical(1.0),
+            right(save_btn).width(Shrink).padding([0, 6])
+        ];
+
+        sidebar::item(content, active)
+    };
+
+    match progress {
+        Some(impulse_response::Progress::Computing) => {
+            processing_overlay("Impulse Response", entry)
         }
+        _ => entry,
     }
 }

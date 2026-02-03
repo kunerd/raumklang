@@ -1,19 +1,28 @@
-pub mod frequency_responses;
-pub mod impulse_responses;
-pub mod measurements;
+use iced::widget::canvas;
 
-pub use frequency_responses::FrequencyResponses;
-pub use impulse_responses::ImpulseReponses;
-pub use measurements::Measurements;
+use crate::data::Window;
 
+#[derive(Default)]
 pub enum Tab {
-    Measurements(Measurements),
-    ImpulseResponses,
-    FrequencyResponses,
+    #[default]
+    Measurements,
+    ImpulseResponses {
+        pending_window: Window,
+    },
+    FrequencyResponses {
+        cache: canvas::Cache,
+    },
+    SpectralDecays {
+        cache: canvas::Cache,
+    },
+    Spectrograms,
 }
 
-impl Default for Tab {
-    fn default() -> Self {
-        Self::Measurements(Measurements::new())
-    }
+#[derive(Debug, Clone, Copy)]
+pub enum Id {
+    Measurements,
+    ImpulseResponses,
+    FrequencyResponses,
+    SpectralDecays,
+    Spectrograms,
 }

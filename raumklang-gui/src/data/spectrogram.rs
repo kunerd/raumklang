@@ -2,13 +2,13 @@ use core::slice;
 use std::{fmt, sync::Arc, time::Duration};
 
 use rustfft::{
-    num_complex::{Complex, Complex32},
     FftPlanner,
+    num_complex::{Complex, Complex32},
 };
 
 use crate::data::{SampleRate, Samples};
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct Preferences {
     pub span_before_peak: Duration,
     pub span_after_peak: Duration,

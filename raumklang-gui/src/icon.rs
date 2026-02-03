@@ -1,6 +1,6 @@
 // Generated automatically by iced_fontello at build time.
 // Do not edit manually. Source: ../fonts/icons.toml
-// a31a04bdecfefc20c79309ff6399870e033e64c8b1bb66096a94c9e027c9d20c
+// 44042cbeec84dc8662b531772612b8dd3be566793229f21ef656918a300a1863
 use iced::Font;
 use iced::widget::{Text, text};
 
@@ -12,6 +12,10 @@ pub fn delete<'a>() -> Text<'a> {
 
 pub fn download<'a>() -> Text<'a> {
     icon("\u{1F4E5}")
+}
+
+pub fn plus<'a>() -> Text<'a> {
+    icon("\u{2B}")
 }
 
 pub fn record<'a>() -> Text<'a> {

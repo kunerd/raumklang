@@ -3,85 +3,11 @@ use std::{fmt, sync::Arc, time::Duration};
 
 use raumklang_core::{Window, WindowBuilder};
 use rustfft::{
-    num_complex::{Complex, Complex32},
     FftPlanner,
+    num_complex::{Complex, Complex32},
 };
 
-use crate::data::{smooth_fractional_octave, SampleRate, Samples};
-
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
-pub struct Config {
-    pub shift: Shift,
-    pub left_window_width: WindowWidth,
-    pub right_window_width: WindowWidth,
-    pub smoothing_fraction: u8,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
-pub struct Shift(Duration);
-
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
-pub struct WindowWidth(Duration);
-
-#[derive(Debug, thiserror::Error)]
-pub enum ValidationError {
-    #[error("Must be in range: 0..50")]
-    Range,
-    #[error("Not a number.")]
-    NotANumber,
-}
-
-impl Shift {
-    pub(crate) fn from_millis_string(str: &str) -> Result<Self, ValidationError> {
-        let millis = str.parse().map_err(|_| ValidationError::NotANumber)?;
-
-        if !(1..=50).contains(&millis) {
-            return Err(ValidationError::Range);
-        }
-
-        Ok(Self(Duration::from_millis(millis)))
-    }
-
-    pub(crate) fn as_millis(&self) -> u128 {
-        self.0.as_millis()
-    }
-
-    fn from_millis(millis: u64) -> Self {
-        Self(Duration::from_millis(millis))
-    }
-}
-
-impl From<&Shift> for Duration {
-    fn from(shift: &Shift) -> Self {
-        shift.0
-    }
-}
-
-impl WindowWidth {
-    pub(crate) fn from_millis_string(str: &str) -> Result<Self, ValidationError> {
-        let millis = str.parse().map_err(|_| ValidationError::NotANumber)?;
-
-        if !(0..=500).contains(&millis) {
-            return Err(ValidationError::Range);
-        }
-
-        Ok(Self(Duration::from_millis(millis)))
-    }
-
-    pub(crate) fn as_millis(&self) -> u128 {
-        self.0.as_millis()
-    }
-
-    fn from_millis(millis: u64) -> Self {
-        Self(Duration::from_millis(millis))
-    }
-}
-
-impl From<&WindowWidth> for Duration {
-    fn from(value: &WindowWidth) -> Self {
-        value.0
-    }
-}
+use crate::data::{SampleRate, Samples, smooth_fractional_octave};
 
 #[derive(Clone)]
 pub struct SpectralDecay(Vec<super::FrequencyResponse>);
@@ -93,6 +19,12 @@ impl SpectralDecay {
 
     pub fn iter(&self) -> slice::Iter<'_, super::FrequencyResponse> {
         self.0.iter()
+    }
+}
+
+impl fmt::Debug for SpectralDecay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Spectral Decay of size: {} slices", self.0.len())
     }
 }
 
@@ -170,10 +102,70 @@ pub(crate) async fn compute(
     .unwrap()
 }
 
-impl fmt::Debug for SpectralDecay {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Spectral Decay of size: {} slices", self.0.len())
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct Shift(Duration);
+
+impl Shift {
+    pub(crate) fn from_millis_string(str: &str) -> Result<Self, ValidationError> {
+        let millis = str.parse().map_err(|_| ValidationError::NotANumber)?;
+
+        if !(1..=50).contains(&millis) {
+            return Err(ValidationError::Range);
+        }
+
+        Ok(Self(Duration::from_millis(millis)))
     }
+
+    pub(crate) fn as_millis(&self) -> u128 {
+        self.0.as_millis()
+    }
+
+    fn from_millis(millis: u64) -> Self {
+        Self(Duration::from_millis(millis))
+    }
+}
+
+impl From<&Shift> for Duration {
+    fn from(shift: &Shift) -> Self {
+        shift.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct WindowWidth(Duration);
+
+impl WindowWidth {
+    pub(crate) fn from_millis_string(str: &str) -> Result<Self, ValidationError> {
+        let millis = str.parse().map_err(|_| ValidationError::NotANumber)?;
+
+        if !(0..=500).contains(&millis) {
+            return Err(ValidationError::Range);
+        }
+
+        Ok(Self(Duration::from_millis(millis)))
+    }
+
+    pub(crate) fn as_millis(&self) -> u128 {
+        self.0.as_millis()
+    }
+
+    fn from_millis(millis: u64) -> Self {
+        Self(Duration::from_millis(millis))
+    }
+}
+
+impl From<&WindowWidth> for Duration {
+    fn from(value: &WindowWidth) -> Self {
+        value.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub struct Config {
+    pub shift: Shift,
+    pub left_window_width: WindowWidth,
+    pub right_window_width: WindowWidth,
+    pub smoothing_fraction: u8,
 }
 
 impl Default for Config {
@@ -185,4 +177,12 @@ impl Default for Config {
             smoothing_fraction: 24,
         }
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ValidationError {
+    #[error("Must be in range: 0..50")]
+    Range,
+    #[error("Not a number.")]
+    NotANumber,
 }
