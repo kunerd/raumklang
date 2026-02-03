@@ -11,7 +11,8 @@ use tab::Tab;
 use crate::{
     PickAndLoadError,
     data::{
-        self, Project, RecentProjects, SampleRate, Samples, Window, project, spectrogram, window,
+        self, Project, RecentProjects, SampleRate, Samples, Window, project, spectral_decay,
+        spectrogram, window,
     },
     icon, load_project, log,
     screen::main::{
@@ -70,8 +71,8 @@ pub struct Main {
     ir_chart: impulse_response::Chart,
     spectrogram: Spectrogram,
 
-    spectral_decay_config: data::spectral_decay::Config,
-    spectrogram_config: spectrogram::Preferences,
+    spectral_decay_config: spectral_decay::Config,
+    spectrogram_config: spectrogram::Config,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -1667,7 +1668,7 @@ fn compute_spectral_decay(
 fn compute_spectrogram(
     id: measurement::Id,
     analyses: &mut BTreeMap<measurement::Id, Analysis>,
-    config: &spectrogram::Preferences,
+    config: &spectrogram::Config,
     loopback: Option<&ui::Loopback>,
     measurements: &measurement::List,
 ) -> Task<Message> {
@@ -1707,7 +1708,7 @@ impl Default for Main {
 
             ir_chart: impulse_response::Chart::default(),
             spectrogram: Spectrogram::default(),
-            spectrogram_config: spectrogram::Preferences::default(),
+            spectrogram_config: spectrogram::Config::default(),
         }
     }
 }
