@@ -5,8 +5,8 @@ pub use landing::landing;
 pub use main::Main;
 
 use iced::{
-    widget::{container, text},
     Element, Length,
+    widget::{container, text},
 };
 
 #[allow(clippy::large_enum_variant)]

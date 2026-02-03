@@ -3,11 +3,11 @@ use std::{fmt, sync::Arc, time::Duration};
 
 use raumklang_core::{Window, WindowBuilder};
 use rustfft::{
-    num_complex::{Complex, Complex32},
     FftPlanner,
+    num_complex::{Complex, Complex32},
 };
 
-use crate::data::{smooth_fractional_octave, SampleRate, Samples};
+use crate::data::{SampleRate, Samples, smooth_fractional_octave};
 
 #[derive(Clone)]
 pub struct SpectralDecay(Vec<super::FrequencyResponse>);

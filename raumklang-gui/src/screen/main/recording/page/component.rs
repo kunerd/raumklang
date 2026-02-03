@@ -1,13 +1,12 @@
 use crate::data;
 
 use iced::{
+    Element, Length,
     alignment::Vertical,
     widget::{
-        button, column, container, row, rule, space, text,
+        Button, button, column, container, row, rule, space, text,
         text::{Fragment, IntoFragment},
-        Button,
     },
-    Element, Length,
 };
 
 pub struct Page<'a, Message> {

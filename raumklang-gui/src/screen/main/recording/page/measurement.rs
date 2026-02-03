@@ -7,11 +7,11 @@ use crate::{
 };
 
 use iced::{
+    Element, Length, Task,
     alignment::{Horizontal, Vertical},
     widget::{canvas, column, container, row, rule, text},
-    Element, Length, Task,
 };
-use prism::{line_series, Chart};
+use prism::{Chart, line_series};
 use tokio_stream::wrappers::ReceiverStream;
 
 #[derive(Debug)]

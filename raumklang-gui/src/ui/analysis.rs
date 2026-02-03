@@ -1,6 +1,6 @@
 use crate::ui::{
-    impulse_response, spectral_decay::SpectralDecay, spectrogram::Spectrogram, FrequencyResponse,
-    ImpulseResponse,
+    FrequencyResponse, ImpulseResponse, impulse_response, spectral_decay::SpectralDecay,
+    spectrogram::Spectrogram,
 };
 
 #[derive(Debug, Clone, Default)]

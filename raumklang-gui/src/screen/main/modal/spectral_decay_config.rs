@@ -5,9 +5,9 @@ use crate::{
 };
 
 use iced::{
-    widget::{button, column, container, row, rule, scrollable, space, text, tooltip},
     Alignment::Center,
     Element,
+    widget::{button, column, container, row, rule, scrollable, space, text, tooltip},
 };
 
 #[derive(Debug, Clone)]

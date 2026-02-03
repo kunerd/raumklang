@@ -4,7 +4,7 @@ use tokio::sync::mpsc::error::TrySendError;
 
 use std::time::{Duration, Instant};
 
-use super::{process::Control, Process};
+use super::{Process, process::Control};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Loudness {

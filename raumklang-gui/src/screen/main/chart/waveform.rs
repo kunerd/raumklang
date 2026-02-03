@@ -1,9 +1,9 @@
 use super::{HorizontalAxis, Offset, VerticalAxis, Zoom};
 
 use iced::{
+    Event, Point, Rectangle, Renderer, Size, Vector,
     mouse::{self, ScrollDelta},
     widget::canvas::{self},
-    Event, Point, Rectangle, Renderer, Size, Vector,
 };
 
 use std::cmp::Ordering;

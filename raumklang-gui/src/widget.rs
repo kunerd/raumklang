@@ -4,10 +4,10 @@ pub mod sidebar;
 pub use meter::RmsPeakMeter;
 
 use iced::{
-    alignment::Horizontal::Right,
-    widget::{column, container, stack, text, text_input, tooltip},
     Color, Element, Font,
     Length::Fill,
+    alignment::Horizontal::Right,
+    widget::{column, container, stack, text, text_input, tooltip},
 };
 
 use std::fmt;

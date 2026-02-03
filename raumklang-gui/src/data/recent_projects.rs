@@ -1,7 +1,7 @@
 use super::Error;
 
 use std::{
-    collections::{vec_deque, VecDeque},
+    collections::{VecDeque, vec_deque},
     io,
     path::{Path, PathBuf},
 };
