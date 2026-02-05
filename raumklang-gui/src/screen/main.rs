@@ -8,14 +8,12 @@ mod tab;
 use modal::Modal;
 use tab::Tab;
 
+use crate::data::{
+    self, Project, RecentProjects, SampleRate, Samples, Window, project, spectral_decay,
+    spectrogram, window,
+};
 use crate::{
-    PickAndLoadError,
-    data::{
-        self, Project, RecentProjects, SampleRate, Samples, Window,
-        project::{self, SaveSettings},
-        spectral_decay, spectrogram, window,
-    },
-    icon, load_project, log,
+    PickAndLoadError, icon, load_project, log,
     screen::main::{
         chart::waveform,
         modal::{
@@ -124,7 +122,7 @@ pub enum Message {
     ProjectLoaded(Result<(Arc<data::Project>, PathBuf), PickAndLoadError>),
     SaveProject(PathBuf),
     OpenSaveProjectDialog,
-    ProjectSaved(Result<(PathBuf, SaveSettings), project::Error>),
+    ProjectSaved(Result<(PathBuf, data::Project), project::Error>),
     LoadRecentProject(usize),
 
     LoadLoopback,
@@ -168,7 +166,7 @@ pub enum Message {
 }
 
 impl Main {
-    pub fn from_project(path: PathBuf, project: data::Project) -> (Self, Task<Message>) {
+    pub fn from_project(path: impl AsRef<Path>, project: data::Project) -> (Self, Task<Message>) {
         let load_loopback = project
             .loopback
             .map(|loopback| {
@@ -188,7 +186,7 @@ impl Main {
 
         (
             Self {
-                project_path: Some(path),
+                project_path: Some(path.as_ref().to_path_buf()),
                 measurement_operation: project.measurement_operation,
                 ..Default::default()
             },
@@ -249,27 +247,21 @@ impl Main {
                         Task::none()
                     }
                     save_project::Action::Task(task) => task.map(Message::ProjectSaveDialog),
-                    save_project::Action::Save(path_buf, save_settings) => {
-                        self.save_project(path_buf, save_settings)
+                    save_project::Action::Save(path_buf, operation) => {
+                        self.save_project(path_buf, operation)
                     }
                 }
             }
-            Message::SaveProject(path) => {
-                let settings = SaveSettings {
-                    create_subdir: false,
-                    measurement_operation: self.measurement_operation,
-                };
-
-                self.save_project(path, settings)
-            }
-            Message::ProjectSaved(Ok((path, settings))) => {
-                self.modal = Modal::None;
-                self.project_path = Some(path.clone());
-                self.measurement_operation = settings.measurement_operation;
+            Message::SaveProject(path) => self.save_project(path, self.measurement_operation),
+            Message::ProjectSaved(Ok((path, project))) => {
+                let (this, tasks) = Main::from_project(&path, project);
+                *self = this;
 
                 recent_projects.insert(path);
 
-                Task::future(recent_projects.clone().save()).discard()
+                let update_recent_projects = Task::future(recent_projects.clone().save()).discard();
+
+                Task::batch([update_recent_projects, tasks])
             }
             Message::OpenTab(tab) => {
                 let State::Analysing { ref active_tab, .. } = self.state else {
@@ -1625,7 +1617,11 @@ impl Main {
         Subscription::batch([hotkeys, recording.map(Message::Recording)])
     }
 
-    fn save_project(&self, path: PathBuf, settings: project::SaveSettings) -> Task<Message> {
+    fn save_project(
+        &self,
+        path: PathBuf,
+        measurement_operation: project::Operation,
+    ) -> Task<Message> {
         let loopback = self
             .loopback
             .as_ref()
@@ -1644,14 +1640,14 @@ impl Main {
         let project = Project {
             loopback,
             measurements,
-            measurement_operation: settings.measurement_operation,
+            measurement_operation,
         };
 
         Task::perform(
             async move {
-                project.save(&path, &settings).await?;
+                let project = project.save(&path).await?;
 
-                Ok((path, settings))
+                Ok((path, project))
             },
             Message::ProjectSaved,
         )

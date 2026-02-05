@@ -34,7 +34,7 @@ pub enum Action {
     None,
     Cancel,
     Task(Task<Message>),
-    Save(PathBuf, project::SaveSettings),
+    Save(PathBuf, project::Operation),
 }
 
 impl View {
@@ -72,10 +72,7 @@ impl View {
             Message::Cancel => Action::Cancel,
             Message::Save => Action::Save(
                 PathBuf::from(&self.file_path_str),
-                project::SaveSettings {
-                    create_subdir: self.create_subdir,
-                    measurement_operation: self.measurment_operation,
-                },
+                self.measurment_operation,
             ),
         }
     }

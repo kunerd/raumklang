@@ -88,18 +88,14 @@ impl Project {
         Ok(project)
     }
 
-    pub async fn save(
-        mut self,
-        path: impl AsRef<Path>,
-        settings: &SaveSettings,
-    ) -> Result<(), Error> {
+    pub async fn save(mut self, path: impl AsRef<Path>) -> Result<Self, Error> {
         let path = path.as_ref();
 
         if let Some(parent) = path.parent() {
             fs::create_dir_all(&parent).await.unwrap();
         }
 
-        match settings.measurement_operation {
+        match self.measurement_operation {
             Operation::None => {}
             Operation::Copy => {
                 if let Some(loopback) = self.loopback.as_mut() {
@@ -128,14 +124,8 @@ impl Project {
             .await
             .map_err(|err| Error::Io(err.kind()))?;
 
-        Ok(())
+        Ok(self)
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct SaveSettings {
-    pub create_subdir: bool,
-    pub measurement_operation: Operation,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

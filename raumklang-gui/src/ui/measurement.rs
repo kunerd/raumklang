@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use iced::{
     Element,
     Length::{Fill, Shrink},
-    widget::{button, column, right, row, rule, text},
+    widget::{button, column, container, right, row, rule, text, tooltip},
 };
 
 use std::{
@@ -127,7 +127,20 @@ impl Measurement {
             right(delete_btn).width(Shrink).padding([0, 6])
         ];
 
-        sidebar::item(content, active)
+        let file_path = self
+            .path
+            .as_ref()
+            .and_then(|p| p.to_str())
+            .unwrap_or_default();
+
+        tooltip(
+            sidebar::item(content, active),
+            container(text(file_path))
+                .padding(5)
+                .style(container::bordered_box),
+            tooltip::Position::Bottom,
+        )
+        .into()
     }
 
     pub fn is_loaded(&self) -> bool {
