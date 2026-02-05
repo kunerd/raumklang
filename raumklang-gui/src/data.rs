@@ -1,4 +1,5 @@
 pub mod chart;
+pub mod directory;
 pub mod frequency_response;
 pub mod impulse_response;
 pub mod measurement;

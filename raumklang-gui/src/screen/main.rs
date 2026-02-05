@@ -11,13 +11,17 @@ use tab::Tab;
 use crate::{
     PickAndLoadError,
     data::{
-        self, Project, RecentProjects, SampleRate, Samples, Window, project, spectral_decay,
-        spectrogram, window,
+        self, Project, RecentProjects, SampleRate, Samples, Window,
+        project::{self, SaveSettings},
+        spectral_decay, spectrogram, window,
     },
     icon, load_project, log,
     screen::main::{
         chart::waveform,
-        modal::{SpectralDecayConfig, pending_window, spectral_decay_config, spectrogram_config},
+        modal::{
+            SpectralDecayConfig, pending_window, save_project, spectral_decay_config,
+            spectrogram_config,
+        },
     },
     ui::{self, Analysis, Loopback, Measurement, measurement},
     widget::{processing_overlay, sidebar},
@@ -54,16 +58,18 @@ pub struct Main {
     state: State,
     modal: Modal,
     recording: Option<Recording>,
-    selected: Option<measurement::Selected>,
 
+    selected: Option<measurement::Selected>,
     loopback: Option<Loopback>,
     measurements: measurement::List,
 
+    settings: project::Settings,
     project_path: Option<PathBuf>,
+    measurement_operation: project::Operation,
 
-    signal_cache: canvas::Cache,
     zoom: chart::Zoom,
     offset: chart::Offset,
+    signal_cache: canvas::Cache,
 
     smoothing: frequency_response::Smoothing,
     window: Option<Window<Samples>>,
@@ -116,8 +122,9 @@ pub enum Message {
     NewProject,
     LoadProject,
     ProjectLoaded(Result<(Arc<data::Project>, PathBuf), PickAndLoadError>),
-    SaveProject,
-    ProjectSaved(Result<PathBuf, project::Error>),
+    SaveProject(PathBuf),
+    OpenSaveProjectDialog,
+    ProjectSaved(Result<(PathBuf, SaveSettings), project::Error>),
     LoadRecentProject(usize),
 
     LoadLoopback,
@@ -157,6 +164,7 @@ pub enum Message {
     Spectrogram(chart::spectrogram::Interaction),
 
     PendingWindow(pending_window::Message),
+    ProjectSaveDialog(save_project::Message),
 }
 
 impl Main {
@@ -181,6 +189,7 @@ impl Main {
         (
             Self {
                 project_path: Some(path),
+                measurement_operation: project.measurement_operation,
                 ..Default::default()
             },
             Task::batch([load_loopback, Task::batch(load_measurements)]),
@@ -212,42 +221,52 @@ impl Main {
                 *self = view;
                 tasks
             }
-            Message::SaveProject => {
-                let loopback = self
-                    .loopback
+            Message::OpenSaveProjectDialog => {
+                let file_path_str = self
+                    .project_path
                     .as_ref()
-                    .cloned()
-                    .and_then(|l| l.path)
-                    .map(|path| project::Loopback(project::Measurement { path }));
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
 
-                let measurements = self
-                    .measurements
-                    .loaded()
-                    .flat_map(|m| m.path.as_ref())
-                    .cloned()
-                    .map(|path| project::Measurement { path })
-                    .collect();
+                self.modal = Modal::SaveProjectDialog(save_project::View {
+                    base_path: PathBuf::from(file_path_str.clone()),
+                    file_path_str,
+                    create_subdir: self.project_path.is_none(),
+                    measurment_operation: self.measurement_operation,
+                });
 
-                let project = Project {
-                    loopback,
-                    measurements,
+                Task::none()
+            }
+            Message::ProjectSaveDialog(msg) => {
+                let Modal::SaveProjectDialog(dialog) = &mut self.modal else {
+                    return Task::none();
                 };
 
-                if let Some(path) = self.project_path.as_ref() {
-                    let path = path.clone();
-                    Task::perform(project.save(path.clone()), |res| {
-                        Message::ProjectSaved(res.map(|_| path))
-                    })
-                } else {
-                    Task::future(pick_project_file_to_save()).and_then(move |path| {
-                        Task::perform(project.clone().save(path.clone()), |res| {
-                            Message::ProjectSaved(res.map(|_| path))
-                        })
-                    })
+                match dialog.update(msg) {
+                    save_project::Action::None => Task::none(),
+                    save_project::Action::Cancel => {
+                        self.modal = Modal::None;
+                        Task::none()
+                    }
+                    save_project::Action::Task(task) => task.map(Message::ProjectSaveDialog),
+                    save_project::Action::Save(path_buf, save_settings) => {
+                        self.save_project(path_buf, save_settings)
+                    }
                 }
             }
-            Message::ProjectSaved(Ok(path)) => {
+            Message::SaveProject(path) => {
+                let settings = SaveSettings {
+                    create_subdir: false,
+                    measurement_operation: self.measurement_operation,
+                };
+
+                self.save_project(path, settings)
+            }
+            Message::ProjectSaved(Ok((path, settings))) => {
+                self.modal = Modal::None;
                 self.project_path = Some(path.clone());
+                self.measurement_operation = settings.measurement_operation;
+
                 recent_projects.insert(path);
 
                 Task::future(recent_projects.clone().save()).discard()
@@ -919,7 +938,14 @@ impl Main {
                 self.ir_chart.shift_key_released();
                 Task::none()
             }
-            _ => Task::none(),
+            Message::ProjectLoaded(Err(err)) => {
+                log::error!("{err}");
+                Task::none()
+            }
+            Message::ProjectSaved(Err(err)) => {
+                log::error!("Could not save project to {:?} - {err}", self.project_path);
+                Task::none()
+            }
         }
     }
 
@@ -947,7 +973,15 @@ impl Main {
                         .style(button::subtle)
                         .width(Length::Fill),
                     button("Save")
-                        .on_press(Message::SaveProject)
+                        .on_press(if let Some(path) = self.project_path.as_ref() {
+                            Message::SaveProject(path.clone())
+                        } else {
+                            Message::OpenSaveProjectDialog
+                        })
+                        .style(button::subtle)
+                        .width(Length::Fill),
+                    button("Save as ..")
+                        .on_press(Message::OpenSaveProjectDialog)
                         .style(button::subtle)
                         .width(Length::Fill),
                     button("Open ...")
@@ -1057,16 +1091,19 @@ impl Main {
             container(column![header, container(content).padding(10)])
         };
 
-        match self.modal {
+        match &self.modal {
             Modal::None => content.into(),
             Modal::PendingWindow { .. } => {
                 modal(content, modal::pending_window().map(Message::PendingWindow))
             }
-            Modal::SpectralDecayConfig(ref config) => {
+            Modal::SpectralDecayConfig(config) => {
                 modal(content, config.view().map(Message::SpectralDecayConfig))
             }
-            Modal::SpectrogramConfig(ref config) => {
+            Modal::SpectrogramConfig(config) => {
                 modal(content, config.view().map(Message::SpectrogramConfig))
+            }
+            Modal::SaveProjectDialog(dialog) => {
+                modal(content, dialog.view().map(Message::ProjectSaveDialog))
             }
         }
     }
@@ -1587,6 +1624,38 @@ impl Main {
 
         Subscription::batch([hotkeys, recording.map(Message::Recording)])
     }
+
+    fn save_project(&self, path: PathBuf, settings: project::SaveSettings) -> Task<Message> {
+        let loopback = self
+            .loopback
+            .as_ref()
+            .cloned()
+            .and_then(|l| l.path)
+            .map(|path| project::Loopback(project::Measurement { path }));
+
+        let measurements = self
+            .measurements
+            .loaded()
+            .flat_map(|m| m.path.as_ref())
+            .cloned()
+            .map(|path| project::Measurement { path })
+            .collect();
+
+        let project = Project {
+            loopback,
+            measurements,
+            measurement_operation: settings.measurement_operation,
+        };
+
+        Task::perform(
+            async move {
+                project.save(&path, &settings).await?;
+
+                Ok((path, settings))
+            },
+            Message::ProjectSaved,
+        )
+    }
 }
 
 fn compute_impulse_response(
@@ -1695,7 +1764,9 @@ impl Default for Main {
             loopback: None,
             measurements: measurement::List::default(),
 
+            settings: project::Settings::default(),
             project_path: None,
+            measurement_operation: project::Operation::Copy,
 
             spectral_decay_config: data::spectral_decay::Config::default(),
 
@@ -1854,15 +1925,6 @@ async fn pick_project_file_to_load() -> Option<PathBuf> {
         .add_filter("json", &["json"])
         .add_filter("all", &["*"])
         .pick_file()
-        .await?;
-
-    Some(handle.path().to_path_buf())
-}
-
-async fn pick_project_file_to_save() -> Option<PathBuf> {
-    let handle = rfd::AsyncFileDialog::new()
-        .set_title("Save project file ...")
-        .save_file()
         .await?;
 
     Some(handle.path().to_path_buf())

@@ -1,4 +1,5 @@
 pub mod pending_window;
+pub mod save_project;
 pub mod spectral_decay_config;
 pub mod spectrogram_config;
 
@@ -17,4 +18,5 @@ pub enum Modal {
     },
     SpectralDecayConfig(SpectralDecayConfig),
     SpectrogramConfig(SpectrogramConfig),
+    SaveProjectDialog(save_project::View),
 }
