@@ -12,7 +12,10 @@ use iced::{
 use std::{
     fmt::Display,
     path::{Path, PathBuf},
-    sync::atomic::{self, AtomicUsize},
+    sync::{
+        Arc,
+        atomic::{self, AtomicUsize},
+    },
 };
 
 use crate::{icon, widget::sidebar};
@@ -44,7 +47,7 @@ pub struct Id(usize);
 #[derive(Debug, Clone)]
 enum State {
     NotLoaded,
-    Loaded { signal: raumklang_core::Measurement },
+    Loaded(Arc<raumklang_core::Measurement>),
 }
 
 impl Measurement {
@@ -57,7 +60,7 @@ impl Measurement {
         let id = Id(ID.fetch_add(1, atomic::Ordering::Relaxed));
 
         let state = match signal {
-            Some(signal) => State::Loaded { signal },
+            Some(signal) => State::Loaded(Arc::new(signal)),
             None => State::NotLoaded,
         };
 
@@ -81,6 +84,35 @@ impl Measurement {
 
         let path = Some(path.to_path_buf());
         Self::new(name, path, signal)
+    }
+
+    // FIXME error handling
+    pub fn save(&self, path: impl AsRef<Path>) -> impl Future<Output = Option<PathBuf>> {
+        let signal = self.signal().cloned();
+
+        let path = path.as_ref().to_path_buf();
+        async move {
+            tokio::task::spawn_blocking(move || {
+                let signal = signal?;
+
+                let spec = hound::WavSpec {
+                    channels: 1,
+                    sample_rate: signal.sample_rate(),
+                    bits_per_sample: 32,
+                    sample_format: hound::SampleFormat::Float,
+                };
+
+                let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+                for s in signal.iter() {
+                    writer.write_sample(*s).unwrap();
+                }
+                writer.finalize().unwrap();
+
+                Some(path)
+            })
+            .await
+            .unwrap()
+        }
     }
 
     pub fn view(&self, active: bool) -> Element<'_, Message> {
@@ -150,10 +182,10 @@ impl Measurement {
         }
     }
 
-    pub fn signal(&self) -> Option<&raumklang_core::Measurement> {
+    pub fn signal(&self) -> Option<&Arc<raumklang_core::Measurement>> {
         match &self.state {
             State::NotLoaded => None,
-            State::Loaded { signal, .. } => Some(signal),
+            State::Loaded(signal) => Some(signal),
         }
     }
 
@@ -191,6 +223,10 @@ impl List {
 
     pub fn get(&self, id: Id) -> Option<&Measurement> {
         self.0.iter().find(|m| m.id == id)
+    }
+
+    pub fn get_mut(&mut self, id: Id) -> Option<&mut Measurement> {
+        self.0.iter_mut().find(|m| m.id == id)
     }
 
     pub fn is_empty(&self) -> bool {

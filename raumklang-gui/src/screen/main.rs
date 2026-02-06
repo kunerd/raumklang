@@ -163,6 +163,7 @@ pub enum Message {
 
     PendingWindow(pending_window::Message),
     ProjectSaveDialog(save_project::Message),
+    MeasurementSaved(measurement::Id, Option<PathBuf>),
 }
 
 impl Main {
@@ -220,18 +221,9 @@ impl Main {
                 tasks
             }
             Message::OpenSaveProjectDialog => {
-                let file_path_str = self
-                    .project_path
-                    .as_ref()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default();
-
-                self.modal = Modal::SaveProjectDialog(save_project::View {
-                    base_path: PathBuf::from(file_path_str.clone()),
-                    file_path_str,
-                    create_subdir: self.project_path.is_none(),
-                    measurment_operation: self.measurement_operation,
-                });
+                self.modal = Modal::SaveProjectDialog(save_project::View::new(
+                    self.measurement_operation.clone(),
+                ));
 
                 Task::none()
             }
@@ -247,12 +239,13 @@ impl Main {
                         Task::none()
                     }
                     save_project::Action::Task(task) => task.map(Message::ProjectSaveDialog),
-                    save_project::Action::Save(path_buf, operation) => {
-                        self.save_project(path_buf, operation)
+                    save_project::Action::Save(path_buf, operation, export_from_memory) => {
+                        self.save_project(path_buf, operation, export_from_memory)
                     }
                 }
             }
-            Message::SaveProject(path) => self.save_project(path, self.measurement_operation),
+            // FIXME export_from_memory hard coded
+            Message::SaveProject(path) => self.save_project(path, self.measurement_operation, true),
             Message::ProjectSaved(Ok((path, project))) => {
                 let (this, tasks) = Main::from_project(&path, project);
                 *self = this;
@@ -446,6 +439,13 @@ impl Main {
                             analyses.remove(&id);
                         }
                     }
+                };
+
+                Task::none()
+            }
+            Message::MeasurementSaved(id, path) => {
+                if let Some(measurement) = self.measurements.get_mut(id) {
+                    measurement.path = path;
                 };
 
                 Task::none()
@@ -1164,9 +1164,11 @@ impl Main {
                         .as_ref()
                         .and_then(Loopback::loaded)
                         .map(AsRef::as_ref),
-                    measurement::Selected::Measurement(id) => {
-                        self.measurements.get(id).and_then(Measurement::signal)
-                    }
+                    measurement::Selected::Measurement(id) => self
+                        .measurements
+                        .get(id)
+                        .and_then(Measurement::signal)
+                        .map(AsRef::as_ref),
                 }) {
                 chart::waveform(measurement, &self.signal_cache, self.zoom, self.offset)
                     .map(Message::MeasurementChart)
@@ -1621,7 +1623,30 @@ impl Main {
         &self,
         path: PathBuf,
         measurement_operation: project::Operation,
+        export_from_memory: bool,
     ) -> Task<Message> {
+        if export_from_memory {
+            let save_tasks = self
+                .measurements
+                .iter()
+                .filter(|m| m.path.is_none())
+                .flat_map(|m| {
+                    let id = m.id();
+                    let path = path.with_file_name(format!("measurement_{id}.wav"));
+                    let task = Task::perform(
+                        save_measurement(m.signal()?.clone(), path),
+                        Message::MeasurementSaved.with(id),
+                    );
+
+                    Some(task)
+                });
+
+            let mut save_tasks = save_tasks.peekable();
+            if save_tasks.peek().is_some() {
+                return Task::batch(save_tasks).chain(Task::done(Message::SaveProject(path)));
+            }
+        }
+
         let loopback = self
             .loopback
             .as_ref()
@@ -1924,4 +1949,30 @@ async fn pick_project_file_to_load() -> Option<PathBuf> {
         .await?;
 
     Some(handle.path().to_path_buf())
+}
+
+async fn save_measurement(
+    signal: Arc<raumklang_core::Measurement>,
+    path: impl AsRef<Path>,
+) -> Option<PathBuf> {
+    let path = path.as_ref().to_path_buf();
+
+    tokio::task::spawn_blocking(move || {
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: signal.sample_rate(),
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+
+        let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+        for s in signal.iter() {
+            writer.write_sample(*s).unwrap();
+        }
+        writer.finalize().unwrap();
+
+        Some(path)
+    })
+    .await
+    .unwrap()
 }

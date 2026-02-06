@@ -14,30 +14,44 @@ use crate::data::project::{self, Operation};
 
 #[derive(Debug, Clone)]
 pub struct View {
-    pub base_path: PathBuf,
-    pub file_path_str: String,
-    pub create_subdir: bool,
-    pub measurment_operation: Operation,
+    base_path: PathBuf,
+    file_path_str: String,
+    create_subdir: bool,
+    measurement_operation: Operation,
+    export_from_memory: bool,
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
     OpenFileDialog,
-    ChangeOperation(Operation),
-    Cancel,
-    Save,
     ChangeProjectPath(String),
     ToggleCreateSubdir(bool),
+
+    ChangeOperation(Operation),
+    ToggleExportFromMemory(bool),
+
+    Cancel,
+    Save,
 }
 
 pub enum Action {
     None,
     Cancel,
     Task(Task<Message>),
-    Save(PathBuf, project::Operation),
+    Save(PathBuf, project::Operation, bool),
 }
 
 impl View {
+    pub fn new(measurement_operation: Operation) -> Self {
+        Self {
+            base_path: PathBuf::new(),
+            file_path_str: String::new(),
+            create_subdir: true,
+            measurement_operation,
+            export_from_memory: true,
+        }
+    }
+
     pub fn update(&mut self, msg: Message) -> Action {
         match msg {
             Message::OpenFileDialog => {
@@ -66,13 +80,18 @@ impl View {
                 Action::None
             }
             Message::ChangeOperation(operation) => {
-                self.measurment_operation = operation;
+                self.measurement_operation = operation;
+                Action::None
+            }
+            Message::ToggleExportFromMemory(state) => {
+                self.export_from_memory = state;
                 Action::None
             }
             Message::Cancel => Action::Cancel,
             Message::Save => Action::Save(
                 PathBuf::from(&self.file_path_str),
-                self.measurment_operation,
+                self.measurement_operation,
+                self.export_from_memory,
             ),
         }
     }
@@ -89,6 +108,10 @@ impl View {
 
         let content = {
             let file_path_picker = {
+                let subdir_checkbox = checkbox(self.create_subdir)
+                    .label("Create subdirectory for project")
+                    .on_toggle(Message::ToggleCreateSubdir);
+
                 column![
                     text("Project file path:"),
                     row![
@@ -107,34 +130,35 @@ impl View {
                             .style(button::secondary)
                             .on_press(Message::OpenFileDialog)
                     ]
+                    .height(Shrink)
                     .spacing(5)
-                    .align_y(Bottom)
+                    .align_y(Bottom),
+                    subdir_checkbox,
                 ]
-                .spacing(10)
+                .spacing(5)
             };
 
-            let subdir_checkbox = checkbox(self.create_subdir)
-                .label("Create subdirectory for project")
-                .on_toggle(Message::ToggleCreateSubdir);
+            let measurement_settings = {
+                let measurement_file_operation = {
+                    column![
+                        text("Choose how imported measurements should be handled"),
+                        pick_list(
+                            Operation::ALL,
+                            Some(&self.measurement_operation),
+                            Message::ChangeOperation
+                        )
+                    ]
+                    .spacing(10)
+                };
 
-            let measurement_file_operation = {
-                column![
-                    text("Choose how imported measurements should be handled"),
-                    pick_list(
-                        Operation::ALL,
-                        Some(&self.measurment_operation),
-                        Message::ChangeOperation
-                    )
-                ]
-                .spacing(10)
+                let export_in_memory_measurements = checkbox(self.export_from_memory)
+                    .label("Export in-memory measurements.")
+                    .on_toggle(Message::ToggleExportFromMemory);
+
+                column![measurement_file_operation, export_in_memory_measurements].spacing(5)
             };
 
-            column![
-                file_path_picker,
-                subdir_checkbox,
-                measurement_file_operation
-            ]
-            .spacing(20)
+            column![file_path_picker, measurement_settings].spacing(20)
         };
 
         let controls = {
