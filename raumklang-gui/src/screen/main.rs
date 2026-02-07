@@ -7,6 +7,7 @@ mod tab;
 
 use modal::Modal;
 use tab::Tab;
+use tokio::fs;
 
 use crate::data::{
     self, Project, RecentProjects, SampleRate, Samples, Window, project, spectral_decay,
@@ -128,8 +129,10 @@ pub enum Message {
     LoadLoopback,
     LoopbackLoaded(Loopback),
     LoadMeasurement,
+    LoopbackSaved(Option<PathBuf>),
     MeasurementLoaded(Measurement),
     Measurement(measurement::Message),
+    MeasurementSaved(measurement::Id, Option<PathBuf>),
 
     OpenTab(tab::Id),
     ImpulseResponseComputed(measurement::Id, data::ImpulseResponse),
@@ -163,7 +166,6 @@ pub enum Message {
 
     PendingWindow(pending_window::Message),
     ProjectSaveDialog(save_project::Message),
-    MeasurementSaved(measurement::Id, Option<PathBuf>),
 }
 
 impl Main {
@@ -404,6 +406,13 @@ impl Main {
 
                 if !self.measurements.is_empty() {
                     self.state = State::analysis();
+                }
+
+                Task::none()
+            }
+            Message::LoopbackSaved(path) => {
+                if let Some(loopback) = self.loopback.as_mut() {
+                    loopback.path = path;
                 }
 
                 Task::none()
@@ -1625,26 +1634,63 @@ impl Main {
         measurement_operation: project::Operation,
         export_from_memory: bool,
     ) -> Task<Message> {
-        if export_from_memory {
-            let save_tasks = self
+        // create path if it doesn't exist
+        let create_dir = if self.project_path.is_none() {
+            let path = path.clone();
+            Task::future(async move {
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(&parent).await.unwrap();
+                }
+            })
+        } else {
+            Task::none()
+        };
+
+        if export_from_memory && self.measurements.iter().any(|m| m.path.is_none()) {
+            let loopback = self.loopback.as_ref().and_then(|l| {
+                if l.path.as_ref().is_none() {
+                    let path = path.with_file_name("loopback.wav");
+                    let signal = Arc::new(l.loaded()?.as_ref().clone());
+                    Some((signal, path))
+                } else {
+                    None
+                }
+            });
+
+            let save_tasks: Vec<_> = self
                 .measurements
                 .iter()
                 .filter(|m| m.path.is_none())
-                .flat_map(|m| {
-                    let id = m.id();
-                    let path = path.with_file_name(format!("measurement_{id}.wav"));
-                    let task = Task::perform(
-                        save_measurement(m.signal()?.clone(), path),
-                        Message::MeasurementSaved.with(id),
-                    );
+                .cloned()
+                .collect();
 
-                    Some(task)
-                });
+            let inner_path = path.clone();
+            return create_dir
+                .then(move |_| {
+                    let save_loopback_task = loopback
+                        .as_ref()
+                        .map(|l| {
+                            Task::perform(
+                                save_measurement(l.0.clone(), l.1.clone()),
+                                Message::LoopbackSaved,
+                            )
+                        })
+                        .unwrap_or_default();
 
-            let mut save_tasks = save_tasks.peekable();
-            if save_tasks.peek().is_some() {
-                return Task::batch(save_tasks).chain(Task::done(Message::SaveProject(path)));
-            }
+                    let save_tasks = save_tasks.iter().flat_map(|m| {
+                        let id = m.id();
+                        let path = inner_path.with_file_name(format!("measurement_{id}.wav"));
+                        let task = Task::perform(
+                            save_measurement(m.signal()?.clone(), path),
+                            Message::MeasurementSaved.with(id),
+                        );
+
+                        Some(task)
+                    });
+
+                    Task::batch([save_loopback_task, Task::batch(save_tasks)])
+                })
+                .chain(Task::done(Message::SaveProject(path)));
         }
 
         let loopback = self
@@ -1668,14 +1714,18 @@ impl Main {
             measurement_operation,
         };
 
-        Task::perform(
-            async move {
-                let project = project.save(&path).await?;
+        create_dir.then(move |_| {
+            let path = path.clone();
+            let project = project.clone();
+            Task::perform(
+                async move {
+                    let project = project.save(&path).await?;
 
-                Ok((path, project))
-            },
-            Message::ProjectSaved,
-        )
+                    Ok((path, project))
+                },
+                Message::ProjectSaved,
+            )
+        })
     }
 }
 
