@@ -9,7 +9,7 @@ use rustfft::{
 use crate::data::{SampleRate, Samples};
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
-pub struct Preferences {
+pub struct Config {
     pub span_before_peak: Duration,
     pub span_after_peak: Duration,
     pub window_width: Duration,
@@ -34,7 +34,7 @@ impl Spectrogram {
 
 pub(crate) async fn compute(
     ir: raumklang_core::ImpulseResponse,
-    preferences: Preferences,
+    preferences: Config,
 ) -> Spectrogram {
     let sample_rate = SampleRate::from(ir.sample_rate);
 
@@ -114,7 +114,7 @@ impl fmt::Debug for Spectrogram {
     }
 }
 
-impl Default for Preferences {
+impl Default for Config {
     fn default() -> Self {
         Self {
             span_before_peak: Duration::from_millis(200),

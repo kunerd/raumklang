@@ -16,13 +16,13 @@ pub enum Message {
     WindowWidthChanged(String),
     SpanBeforePeakChanged(String),
     SpanAfterPeakChanged(String),
-    Apply(spectrogram::Preferences),
+    Apply(spectrogram::Config),
 }
 
 pub enum Action {
     None,
     Close,
-    ConfigChanged(spectrogram::Preferences),
+    ConfigChanged(spectrogram::Config),
 }
 
 #[derive(Debug, Clone)]
@@ -30,11 +30,11 @@ pub struct SpectrogramConfig {
     window_width: String,
     span_before_peak: String,
     span_after_peak: String,
-    prev_config: spectrogram::Preferences,
+    prev_config: spectrogram::Config,
 }
 
 impl SpectrogramConfig {
-    pub fn new(config: spectrogram::Preferences) -> Self {
+    pub fn new(config: spectrogram::Config) -> Self {
         Self {
             window_width: config.window_width.as_millis().to_string(),
             span_before_peak: config.span_before_peak.as_millis().to_string(),
@@ -81,7 +81,7 @@ impl SpectrogramConfig {
             span_before_peak.as_ref(),
             span_after_peak.as_ref(),
         ) {
-            let new_config = spectrogram::Preferences {
+            let new_config = spectrogram::Config {
                 window_width: *window_width,
                 span_before_peak: *span_before_peak,
                 span_after_peak: *span_after_peak,
@@ -174,10 +174,10 @@ impl SpectrogramConfig {
     }
 
     fn reset_to_default(&mut self) {
-        self.reset_to_config(spectrogram::Preferences::default());
+        self.reset_to_config(spectrogram::Config::default());
     }
 
-    fn reset_to_config(&mut self, config: spectrogram::Preferences) {
+    fn reset_to_config(&mut self, config: spectrogram::Config) {
         self.window_width = config.window_width.as_millis().to_string();
         self.span_before_peak = config.span_before_peak.as_millis().to_string();
         self.span_after_peak = config.span_after_peak.as_millis().to_string();

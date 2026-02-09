@@ -6,13 +6,16 @@ use chrono::{DateTime, Utc};
 use iced::{
     Element,
     Length::{Fill, Shrink},
-    widget::{button, column, right, row, rule, text},
+    widget::{button, column, container, right, row, rule, text, tooltip},
 };
 
 use std::{
     fmt::Display,
     path::{Path, PathBuf},
-    sync::atomic::{self, AtomicUsize},
+    sync::{
+        Arc,
+        atomic::{self, AtomicUsize},
+    },
 };
 
 use crate::{icon, widget::sidebar};
@@ -44,7 +47,7 @@ pub struct Id(usize);
 #[derive(Debug, Clone)]
 enum State {
     NotLoaded,
-    Loaded { signal: raumklang_core::Measurement },
+    Loaded(Arc<raumklang_core::Measurement>),
 }
 
 impl Measurement {
@@ -57,7 +60,7 @@ impl Measurement {
         let id = Id(ID.fetch_add(1, atomic::Ordering::Relaxed));
 
         let state = match signal {
-            Some(signal) => State::Loaded { signal },
+            Some(signal) => State::Loaded(Arc::new(signal)),
             None => State::NotLoaded,
         };
 
@@ -81,6 +84,33 @@ impl Measurement {
 
         let path = Some(path.to_path_buf());
         Self::new(name, path, signal)
+    }
+
+    // TODO error handling
+    pub fn save(self, path: impl AsRef<Path>) -> impl Future<Output = Option<PathBuf>> {
+        let path = path.as_ref().to_path_buf();
+        async move {
+            tokio::task::spawn_blocking(move || {
+                let signal = self.signal()?;
+
+                let spec = hound::WavSpec {
+                    channels: 1,
+                    sample_rate: signal.sample_rate(),
+                    bits_per_sample: 32,
+                    sample_format: hound::SampleFormat::Float,
+                };
+
+                let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+                for s in signal.iter() {
+                    writer.write_sample(*s).unwrap();
+                }
+                writer.finalize().unwrap();
+
+                Some(path)
+            })
+            .await
+            .unwrap()
+        }
     }
 
     pub fn view(&self, active: bool) -> Element<'_, Message> {
@@ -127,7 +157,20 @@ impl Measurement {
             right(delete_btn).width(Shrink).padding([0, 6])
         ];
 
-        sidebar::item(content, active)
+        let file_path = self
+            .path
+            .as_ref()
+            .and_then(|p| p.to_str())
+            .unwrap_or_default();
+
+        tooltip(
+            sidebar::item(content, active),
+            container(text(file_path))
+                .padding(5)
+                .style(container::bordered_box),
+            tooltip::Position::Bottom,
+        )
+        .into()
     }
 
     pub fn is_loaded(&self) -> bool {
@@ -137,10 +180,10 @@ impl Measurement {
         }
     }
 
-    pub fn signal(&self) -> Option<&raumklang_core::Measurement> {
+    pub fn signal(&self) -> Option<&Arc<raumklang_core::Measurement>> {
         match &self.state {
             State::NotLoaded => None,
-            State::Loaded { signal, .. } => Some(signal),
+            State::Loaded(signal) => Some(signal),
         }
     }
 

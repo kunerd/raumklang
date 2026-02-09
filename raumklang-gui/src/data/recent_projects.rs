@@ -1,3 +1,5 @@
+use crate::data::directory;
+
 use super::Error;
 
 use std::{
@@ -97,12 +99,11 @@ impl<'a> IntoIterator for &'a RecentProjects {
 }
 
 async fn data_dir() -> Result<PathBuf, io::Error> {
-    let app_dir = directories::ProjectDirs::from("de", "HenKu", "raumklang").unwrap();
-    let data_dir = app_dir.data_local_dir().to_path_buf();
+    let path = directory::data();
 
-    tokio::fs::create_dir_all(&data_dir).await?;
+    tokio::fs::create_dir_all(&path).await?;
 
-    Ok(data_dir)
+    Ok(path.to_path_buf())
 }
 
 #[cfg(test)]
