@@ -223,7 +223,7 @@ impl Main {
             }
             Message::OpenSaveProjectDialog => {
                 self.modal = Modal::SaveProjectDialog(save_project::View::new(
-                    self.measurement_operation.clone(),
+                    self.measurement_operation,
                     self.export_from_memory,
                 ));
 

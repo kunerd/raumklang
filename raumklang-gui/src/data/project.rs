@@ -43,9 +43,7 @@ impl Measurement {
     }
 
     pub async fn copy(&mut self, dest: impl AsRef<Path>) {
-        let dest = dest
-            .as_ref()
-            .with_file_name(&self.path.file_name().unwrap());
+        let dest = dest.as_ref().with_file_name(self.path.file_name().unwrap());
 
         if self.path == dest {
             return;
@@ -59,9 +57,7 @@ impl Measurement {
 
     // WARNING: will only work when both files are on the same mount point
     pub async fn rename(&mut self, dest: impl AsRef<Path>) {
-        let dest = dest
-            .as_ref()
-            .with_file_name(&self.path.file_name().unwrap());
+        let dest = dest.as_ref().with_file_name(self.path.file_name().unwrap());
 
         if self.path == dest {
             return;

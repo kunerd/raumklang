@@ -206,7 +206,7 @@ impl View {
     }
 
     fn compute_final_path(&mut self, subdir: bool) -> PathBuf {
-        let new_path = if subdir {
+        if subdir {
             let mut subdir_path = self
                 .base_path
                 .parent()
@@ -219,8 +219,7 @@ impl View {
             subdir_path
         } else {
             self.base_path.to_path_buf()
-        };
-        new_path
+        }
     }
 }
 
