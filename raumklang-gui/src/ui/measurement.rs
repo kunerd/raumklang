@@ -86,14 +86,12 @@ impl Measurement {
         Self::new(name, path, signal)
     }
 
-    // FIXME error handling
-    pub fn save(&self, path: impl AsRef<Path>) -> impl Future<Output = Option<PathBuf>> {
-        let signal = self.signal().cloned();
-
+    // TODO error handling
+    pub fn save(self, path: impl AsRef<Path>) -> impl Future<Output = Option<PathBuf>> {
         let path = path.as_ref().to_path_buf();
         async move {
             tokio::task::spawn_blocking(move || {
-                let signal = signal?;
+                let signal = self.signal()?;
 
                 let spec = hound::WavSpec {
                     channels: 1,
@@ -223,10 +221,6 @@ impl List {
 
     pub fn get(&self, id: Id) -> Option<&Measurement> {
         self.0.iter().find(|m| m.id == id)
-    }
-
-    pub fn get_mut(&mut self, id: Id) -> Option<&mut Measurement> {
-        self.0.iter_mut().find(|m| m.id == id)
     }
 
     pub fn is_empty(&self) -> bool {

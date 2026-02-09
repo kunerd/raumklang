@@ -1,5 +1,4 @@
 use iced::{
-    Alignment::Center,
     Element, Font,
     Length::{Fill, Shrink},
     Task,
@@ -7,8 +6,13 @@ use iced::{
     alignment::Vertical::Bottom,
     widget::{button, checkbox, column, container, pick_list, right, row, rule, text},
 };
+use tokio::fs;
 
-use std::path::{Path, PathBuf};
+use std::{
+    io,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use crate::data::project::{self, Operation};
 
@@ -19,6 +23,7 @@ pub struct View {
     create_subdir: bool,
     measurement_operation: Operation,
     export_from_memory: bool,
+    path_error: Result<(), Error>,
 }
 
 #[derive(Debug, Clone)]
@@ -29,6 +34,8 @@ pub enum Message {
 
     ChangeOperation(Operation),
     ToggleExportFromMemory(bool),
+
+    StoreDirectoryCheck(Result<(), Error>),
 
     Cancel,
     Save,
@@ -42,13 +49,14 @@ pub enum Action {
 }
 
 impl View {
-    pub fn new(measurement_operation: Operation) -> Self {
+    pub fn new(measurement_operation: Operation, export_from_memory: bool) -> Self {
         Self {
             base_path: PathBuf::new(),
             file_path_str: String::new(),
             create_subdir: true,
             measurement_operation,
-            export_from_memory: true,
+            export_from_memory,
+            path_error: Ok(()),
         }
     }
 
@@ -69,7 +77,10 @@ impl View {
                 let new_path = self.compute_final_path(self.create_subdir);
                 self.file_path_str = new_path.to_string_lossy().to_string();
 
-                Action::None
+                Action::Task(Task::perform(
+                    check_directory(new_path),
+                    Message::StoreDirectoryCheck,
+                ))
             }
             Message::ToggleCreateSubdir(state) => {
                 self.create_subdir = state;
@@ -77,6 +88,13 @@ impl View {
                 let new_path = self.compute_final_path(state);
                 self.file_path_str = new_path.to_string_lossy().to_string();
 
+                Action::Task(Task::perform(
+                    check_directory(new_path),
+                    Message::StoreDirectoryCheck,
+                ))
+            }
+            Message::StoreDirectoryCheck(result) => {
+                self.path_error = result;
                 Action::None
             }
             Message::ChangeOperation(operation) => {
@@ -115,23 +133,29 @@ impl View {
                 column![
                     text("Project file path:"),
                     row![
-                        container(text(&self.file_path_str).align_y(Bottom))
-                            .padding(8)
-                            .align_y(Center)
-                            .height(Shrink)
-                            .width(Fill)
-                            .style(|theme| {
-                                let base = container::bordered_box(theme);
-                                let palette = theme.extended_palette();
+                        container(
+                            text(&self.file_path_str)
+                                .wrapping(text::Wrapping::WordOrGlyph)
+                                .align_y(Bottom)
+                        )
+                        .padding(6)
+                        .align_y(Bottom)
+                        .width(Fill)
+                        .style(|theme| {
+                            let base = container::bordered_box(theme);
+                            let palette = theme.extended_palette();
 
-                                base.background(palette.background.base.color)
-                            }),
-                        button("...")
-                            .style(button::secondary)
-                            .on_press(Message::OpenFileDialog)
+                            base.background(palette.background.base.color)
+                        }),
+                        container(
+                            button("...")
+                                .style(button::secondary)
+                                .on_press(Message::OpenFileDialog)
+                        )
+                        .padding(2)
                     ]
                     .height(Shrink)
-                    .spacing(5)
+                    .spacing(10)
                     .align_y(Bottom),
                     subdir_checkbox,
                 ]
@@ -166,10 +190,10 @@ impl View {
                 .style(button::secondary)
                 .on_press(Message::Cancel);
 
-            let is_not_empty = !self.file_path_str.is_empty();
+            let is_valid = !self.file_path_str.is_empty() && self.path_error.is_ok();
             let save = button("Save")
                 .style(button::success)
-                .on_press_maybe(is_not_empty.then_some(Message::Save));
+                .on_press_maybe(is_valid.then_some(Message::Save));
 
             right(row![save, cancel].spacing(8))
         };
@@ -200,6 +224,14 @@ impl View {
     }
 }
 
+async fn check_directory(path: PathBuf) -> Result<(), Error> {
+    if fs::try_exists(&path).await? && fs::read_dir(&path).await?.next_entry().await?.is_some() {
+        return Err(Error::DirectoryNotEmpty(path.into()));
+    }
+
+    Ok(())
+}
+
 async fn pick_file() -> Option<PathBuf> {
     let handle = rfd::AsyncFileDialog::new()
         .set_title("Save project file ...")
@@ -207,4 +239,18 @@ async fn pick_file() -> Option<PathBuf> {
         .await?;
 
     Some(handle.path().to_path_buf())
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum Error {
+    #[error("dir is not empty: {0}")]
+    DirectoryNotEmpty(Arc<Path>),
+    #[error("io operation failed: {0}")]
+    Io(Arc<io::Error>),
+}
+
+impl From<io::Error> for Error {
+    fn from(err: io::Error) -> Self {
+        Error::Io(Arc::new(err))
+    }
 }

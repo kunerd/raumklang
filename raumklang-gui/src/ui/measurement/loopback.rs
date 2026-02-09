@@ -108,10 +108,38 @@ impl Loopback {
         sidebar::item(content, active)
     }
 
-    pub(crate) fn loaded(&self) -> Option<&raumklang_core::Loopback> {
+    pub fn loaded(&self) -> Option<&raumklang_core::Loopback> {
         match &self.state {
             State::Loaded(loopback) => Some(loopback),
             State::NotLoaded(_) => None,
+        }
+    }
+
+    // TODO error handling
+    // FIXME duplicate code with measurement
+    pub fn save(self, path: impl AsRef<Path>) -> impl Future<Output = Option<PathBuf>> {
+        let path = path.as_ref().to_path_buf();
+        async move {
+            tokio::task::spawn_blocking(move || {
+                let signal = self.loaded()?;
+
+                let spec = hound::WavSpec {
+                    channels: 1,
+                    sample_rate: signal.sample_rate(),
+                    bits_per_sample: 32,
+                    sample_format: hound::SampleFormat::Float,
+                };
+
+                let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+                for s in signal.iter() {
+                    writer.write_sample(*s).unwrap();
+                }
+                writer.finalize().unwrap();
+
+                Some(path)
+            })
+            .await
+            .unwrap()
         }
     }
 }

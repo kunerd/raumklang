@@ -1,7 +1,4 @@
-pub mod settings;
-
 use serde::{Deserialize, Serialize};
-pub use settings::Settings;
 use tokio::fs;
 
 use std::{
@@ -15,12 +12,17 @@ pub struct Project {
     pub measurements: Vec<Measurement>,
     #[serde(default)]
     pub measurement_operation: Operation,
+    pub export_from_memory: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Loopback(pub Measurement);
 
 impl Loopback {
+    pub fn new(path: PathBuf) -> Self {
+        Self(Measurement { path })
+    }
+
     pub async fn copy(&mut self, dest: impl AsRef<Path>) {
         self.0.copy(dest).await
     }
@@ -36,6 +38,10 @@ pub struct Measurement {
 }
 
 impl Measurement {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+
     pub async fn copy(&mut self, dest: impl AsRef<Path>) {
         let dest = dest
             .as_ref()

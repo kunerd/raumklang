@@ -46,6 +46,7 @@ use iced::{
 use prism::{Axis, Chart, Labels, axis, line_series};
 use rfd::FileHandle;
 
+use std::io;
 use std::{
     collections::BTreeMap,
     mem,
@@ -62,9 +63,9 @@ pub struct Main {
     loopback: Option<Loopback>,
     measurements: measurement::List,
 
-    settings: project::Settings,
     project_path: Option<PathBuf>,
     measurement_operation: project::Operation,
+    export_from_memory: bool,
 
     zoom: chart::Zoom,
     offset: chart::Offset,
@@ -120,19 +121,17 @@ struct Spectrogram {
 pub enum Message {
     NewProject,
     LoadProject,
-    ProjectLoaded(Result<(Arc<data::Project>, PathBuf), PickAndLoadError>),
+    ProjectLoaded(Result<(Arc<Project>, PathBuf), PickAndLoadError>),
     SaveProject(PathBuf),
     OpenSaveProjectDialog,
-    ProjectSaved(Result<(PathBuf, data::Project), project::Error>),
+    ProjectSaved(Result<(PathBuf, Project), ProjectError>),
     LoadRecentProject(usize),
 
     LoadLoopback,
     LoopbackLoaded(Loopback),
     LoadMeasurement,
-    LoopbackSaved(Option<PathBuf>),
     MeasurementLoaded(Measurement),
     Measurement(measurement::Message),
-    MeasurementSaved(measurement::Id, Option<PathBuf>),
 
     OpenTab(tab::Id),
     ImpulseResponseComputed(measurement::Id, data::ImpulseResponse),
@@ -169,7 +168,7 @@ pub enum Message {
 }
 
 impl Main {
-    pub fn from_project(path: impl AsRef<Path>, project: data::Project) -> (Self, Task<Message>) {
+    pub fn from_project(path: impl AsRef<Path>, project: Project) -> (Self, Task<Message>) {
         let load_loopback = project
             .loopback
             .map(|loopback| {
@@ -225,6 +224,7 @@ impl Main {
             Message::OpenSaveProjectDialog => {
                 self.modal = Modal::SaveProjectDialog(save_project::View::new(
                     self.measurement_operation.clone(),
+                    self.export_from_memory,
                 ));
 
                 Task::none()
@@ -246,9 +246,11 @@ impl Main {
                     }
                 }
             }
-            // FIXME export_from_memory hard coded
-            Message::SaveProject(path) => self.save_project(path, self.measurement_operation, true),
+            Message::SaveProject(path) => {
+                self.save_project(path, self.measurement_operation, self.export_from_memory)
+            }
             Message::ProjectSaved(Ok((path, project))) => {
+                // TODO: replace with soft-reload
                 let (this, tasks) = Main::from_project(&path, project);
                 *self = this;
 
@@ -410,13 +412,6 @@ impl Main {
 
                 Task::none()
             }
-            Message::LoopbackSaved(path) => {
-                if let Some(loopback) = self.loopback.as_mut() {
-                    loopback.path = path;
-                }
-
-                Task::none()
-            }
             Message::MeasurementLoaded(measurement) => {
                 let is_loopback_loaded = self.loopback.as_ref().is_some_and(Loopback::is_loaded);
 
@@ -448,13 +443,6 @@ impl Main {
                             analyses.remove(&id);
                         }
                     }
-                };
-
-                Task::none()
-            }
-            Message::MeasurementSaved(id, path) => {
-                if let Some(measurement) = self.measurements.get_mut(id) {
-                    measurement.path = path;
                 };
 
                 Task::none()
@@ -1634,99 +1622,87 @@ impl Main {
         measurement_operation: project::Operation,
         export_from_memory: bool,
     ) -> Task<Message> {
-        // create path if it doesn't exist
-        let create_dir = if self.project_path.is_none() {
-            let path = path.clone();
-            Task::future(async move {
-                if let Some(parent) = path.parent() {
-                    fs::create_dir_all(&parent).await.unwrap();
-                }
-            })
-        } else {
-            Task::none()
-        };
+        let loopback = self.loopback.clone();
+        let measurements: Vec<_> = self.measurements.iter().cloned().collect();
 
-        if export_from_memory && self.measurements.iter().any(|m| m.path.is_none()) {
-            let loopback = self.loopback.as_ref().and_then(|l| {
-                if l.path.as_ref().is_none() {
-                    let path = path.with_file_name("loopback.wav");
-                    let signal = Arc::new(l.loaded()?.as_ref().clone());
-                    Some((signal, path))
-                } else {
-                    None
-                }
-            });
-
-            let save_tasks: Vec<_> = self
-                .measurements
-                .iter()
-                .filter(|m| m.path.is_none())
-                .cloned()
-                .collect();
-
-            let inner_path = path.clone();
-            return create_dir
-                .then(move |_| {
-                    let save_loopback_task = loopback
-                        .as_ref()
-                        .map(|l| {
-                            Task::perform(
-                                save_measurement(l.0.clone(), l.1.clone()),
-                                Message::LoopbackSaved,
-                            )
-                        })
-                        .unwrap_or_default();
-
-                    let save_tasks = save_tasks.iter().flat_map(|m| {
-                        let id = m.id();
-                        let path = inner_path.with_file_name(format!("measurement_{id}.wav"));
-                        let task = Task::perform(
-                            save_measurement(m.signal()?.clone(), path),
-                            Message::MeasurementSaved.with(id),
-                        );
-
-                        Some(task)
-                    });
-
-                    Task::batch([save_loopback_task, Task::batch(save_tasks)])
-                })
-                .chain(Task::done(Message::SaveProject(path)));
-        }
-
-        let loopback = self
-            .loopback
-            .as_ref()
-            .cloned()
-            .and_then(|l| l.path)
-            .map(|path| project::Loopback(project::Measurement { path }));
-
-        let measurements = self
-            .measurements
-            .loaded()
-            .flat_map(|m| m.path.as_ref())
-            .cloned()
-            .map(|path| project::Measurement { path })
-            .collect();
-
-        let project = Project {
-            loopback,
-            measurements,
-            measurement_operation,
-        };
-
-        create_dir.then(move |_| {
-            let path = path.clone();
-            let project = project.clone();
-            Task::perform(
-                async move {
-                    let project = project.save(&path).await?;
-
-                    Ok((path, project))
-                },
-                Message::ProjectSaved,
-            )
-        })
+        Task::perform(
+            save_project(
+                path,
+                loopback,
+                measurements,
+                export_from_memory,
+                measurement_operation,
+            ),
+            Message::ProjectSaved,
+        )
     }
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ProjectError {
+    #[error("not a sub-directory")]
+    NoSubDirectory,
+    #[error("dir is not empty: {0}")]
+    Io(Arc<io::Error>),
+}
+
+impl From<io::Error> for ProjectError {
+    fn from(err: io::Error) -> Self {
+        ProjectError::Io(Arc::new(err))
+    }
+}
+
+async fn save_project(
+    path: impl AsRef<Path>,
+    loopback: Option<Loopback>,
+    measurements: impl IntoIterator<Item = Measurement>,
+    export_from_memory: bool,
+    measurement_operation: project::Operation,
+) -> Result<(PathBuf, Project), ProjectError> {
+    let path = path.as_ref();
+    let project_dir = path.parent().ok_or(ProjectError::NoSubDirectory)?;
+
+    fs::create_dir_all(&project_dir).await?;
+
+    let loopback_path = if let Some(loopback) = loopback.as_ref() {
+        if let Some(path) = loopback.path.as_ref() {
+            Some(path.clone())
+        } else if export_from_memory {
+            let path = path.with_file_name("loopback.wav");
+            loopback.clone().save(path).await
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut measurement_paths = vec![];
+    for measurement in measurements {
+        let path = if let Some(path) = measurement.path.as_ref() {
+            Some(path.clone())
+        } else if export_from_memory {
+            let path = path.with_file_name(format!("measurement_{}.wav", measurement.id()));
+            measurement.save(path).await
+        } else {
+            None
+        };
+
+        measurement_paths.extend(path);
+    }
+
+    let project = Project {
+        loopback: loopback_path.map(project::Loopback::new),
+        measurements: measurement_paths
+            .into_iter()
+            .map(project::Measurement::new)
+            .collect(),
+        measurement_operation,
+        export_from_memory,
+    };
+
+    let project = project.save(path).await.unwrap();
+    Ok((path.to_path_buf(), project))
 }
 
 fn compute_impulse_response(
@@ -1835,9 +1811,9 @@ impl Default for Main {
             loopback: None,
             measurements: measurement::List::default(),
 
-            settings: project::Settings::default(),
             project_path: None,
             measurement_operation: project::Operation::Copy,
+            export_from_memory: true,
 
             spectral_decay_config: data::spectral_decay::Config::default(),
 
@@ -1858,8 +1834,6 @@ impl Default for Main {
 async fn choose_impulse_response_file_path() -> Option<Arc<Path>> {
     rfd::AsyncFileDialog::new()
         .set_title("Save Impulse Response ...")
-        // FIXME: remove
-        .set_file_name("test.wave")
         .add_filter("wav", &["wav", "wave"])
         .add_filter("all", &["*"])
         .save_file()
@@ -1999,30 +1973,4 @@ async fn pick_project_file_to_load() -> Option<PathBuf> {
         .await?;
 
     Some(handle.path().to_path_buf())
-}
-
-async fn save_measurement(
-    signal: Arc<raumklang_core::Measurement>,
-    path: impl AsRef<Path>,
-) -> Option<PathBuf> {
-    let path = path.as_ref().to_path_buf();
-
-    tokio::task::spawn_blocking(move || {
-        let spec = hound::WavSpec {
-            channels: 1,
-            sample_rate: signal.sample_rate(),
-            bits_per_sample: 32,
-            sample_format: hound::SampleFormat::Float,
-        };
-
-        let mut writer = hound::WavWriter::create(&path, spec).unwrap();
-        for s in signal.iter() {
-            writer.write_sample(*s).unwrap();
-        }
-        writer.finalize().unwrap();
-
-        Some(path)
-    })
-    .await
-    .unwrap()
 }
