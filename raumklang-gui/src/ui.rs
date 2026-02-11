@@ -9,4 +9,3 @@ pub use analysis::Analysis;
 pub use frequency_response::FrequencyResponse;
 pub use impulse_response::ImpulseResponse;
 pub use measurement::{Loopback, Measurement};
-pub use spectral_decay::SpectralDecay;

@@ -29,7 +29,6 @@ use crate::{
     ui::{self, Analysis, Loopback, Measurement, measurement},
     widget::{processing_overlay, sidebar},
 };
-use raumklang_core::dbfs;
 
 use impulse_response::ChartOperation;
 use recording::Recording;
@@ -47,7 +46,6 @@ use iced::{
         scrollable, stack, text,
     },
 };
-use prism::{Axis, Chart, Labels, axis, line_series};
 use rfd::FileHandle;
 
 use std::io;
@@ -1306,54 +1304,6 @@ impl Main {
             .any(|fr| fr.result().is_some() && fr.is_shown);
 
         let content = if chart_needed {
-            // let series_list = frequency_responses
-            //     .filter(|fr| fr.is_shown)
-            //     .flat_map(|item| {
-            //         let Some(frequency_response) = item.result() else {
-            //             return [None, None];
-            //         };
-
-            //         let sample_rate = frequency_response.sample_rate;
-            //         let len = frequency_response.data.len() * 2 + 1;
-            //         let resolution = sample_rate as f32 / len as f32;
-
-            //         let closure = move |(i, s)| (i as f32 * resolution, dbfs(s));
-
-            //         [
-            //             Some(
-            //                 line_series(
-            //                     frequency_response
-            //                         .data
-            //                         .iter()
-            //                         .copied()
-            //                         .enumerate()
-            //                         .map(closure),
-            //                 )
-            //                 .color(item.color.scale_alpha(0.1)),
-            //             ),
-            //             item.smoothed.as_ref().map(|smoothed| {
-            //                 line_series(smoothed.iter().copied().enumerate().map(closure))
-            //                     .color(item.color)
-            //             }),
-            //         ]
-            //     })
-            //     .flatten();
-
-            // let chart: Chart<Message, ()> = Chart::new()
-            //     .x_axis(
-            //         Axis::new(axis::Alignment::Horizontal)
-            //             .scale(axis::Scale::Log)
-            //             .x_tick_marks(
-            //                 [20, 50, 100, 1000, 10_000, 20_000]
-            //                     .into_iter()
-            //                     .map(|v| v as f32)
-            //                     .collect(),
-            //             ),
-            //     )
-            //     .y_labels(Labels::default().format(&|v| format!("{v:.0}")))
-            //     .extend_series(series_list)
-            //     .cache(cache);
-
             let chart = iced_aksel::Chart::new(&self.fr_state)
                 .style(Box::new(|theme| {
                     let mut base = iced_aksel::style::default(theme);
@@ -1398,7 +1348,7 @@ impl Main {
         &'a self,
         selected: Option<ui::measurement::Id>,
         analyses: &'a BTreeMap<measurement::Id, Analysis>,
-        cache: &'a canvas::Cache,
+        _cache: &'a canvas::Cache,
     ) -> Element<'a, Message> {
         let sidebar = {
             let header = {
@@ -1446,10 +1396,7 @@ impl Main {
                     sidebar::item(btn, is_active)
                 };
 
-                // FIXME
-                let analysis = analyses.get(&id);
-
-                let entry = if let Some(analysis) = analysis {
+                let entry = if let Some(analysis) = analyses.get(&id) {
                     match analysis.spectral_decay.progress() {
                         ui::spectral_decay::Progress::None => entry,
                         ui::spectral_decay::Progress::WaitingForImpulseResponse => {
@@ -1479,37 +1426,26 @@ impl Main {
             .and_then(|id| analyses.get(&id))
             .map(|a| &a.spectral_decay);
 
-        let content = if let Some(decay) = spectral_decay.and_then(ui::SpectralDecay::result) {
-            let gradient = colorous::MAGMA;
+        let content = if let Some(decay) = spectral_decay {
+            let chart = iced_aksel::Chart::new(&self.fr_state)
+                .style(Box::new(|theme| {
+                    let mut base = iced_aksel::style::default(theme);
+                    let palette = theme.extended_palette();
 
-            let series_list = decay.iter().enumerate().map(|(fr_index, fr)| {
-                // FIXME refactor bin -> Hz computation
-                let sample_rate = fr.sample_rate;
-                let len = fr.data.len() * 2 + 1;
-                let resolution = sample_rate as f32 / len as f32;
+                    base.axis.label.color = palette.secondary.base.color;
+                    base.axis.tick.color = palette.secondary.base.color;
+                    base.axis.spine.color = palette.secondary.base.color;
+                    base.axis.grid.color = palette.background.weaker.color;
 
-                let closure = move |(i, s)| (i as f32 * resolution, dbfs(s));
-
-                let color = gradient.eval_rational(fr_index, decay.len());
-                line_series(fr.data.iter().copied().enumerate().map(closure))
-                    .color(iced::Color::from_rgb8(color.r, color.g, color.b))
-            });
-
-            let chart: Chart<Message, ()> = Chart::new()
-                .x_axis(
-                    Axis::new(axis::Alignment::Horizontal)
-                        .scale(axis::Scale::Log)
-                        .x_tick_marks(
-                            [10, 20, 50, 100, 1000]
-                                .into_iter()
-                                .map(|v| v as f32)
-                                .collect(),
-                        ),
-                )
-                // .x_range(20.0..=2000.0)
-                .y_labels(Labels::default().format(&|v| format!("{v:.0}")))
-                .extend_series(series_list)
-                .cache(cache);
+                    base
+                }))
+                .marker(&FREQ_AXIS_ID, MarkerPosition::Cursor, |ctx| {
+                    Some(ctx.marker(format_frequency_label(ctx.value)))
+                })
+                .marker(&DB_AXIS_ID, MarkerPosition::Cursor, |ctx| {
+                    Some(ctx.marker(format_db_label(ctx.value)))
+                })
+                .plot_data(decay, FREQ_AXIS_ID, DB_AXIS_ID);
 
             container(chart)
         } else {

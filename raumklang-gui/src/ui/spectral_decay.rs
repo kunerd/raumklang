@@ -1,4 +1,9 @@
-use crate::{data, ui::impulse_response};
+use iced_aksel::{Measure, Plot, PlotData, Stroke, shape};
+
+use crate::{
+    data::{self, SampleRate},
+    ui::{frequency_response::SpectrumLayer, impulse_response},
+};
 
 use std::future::Future;
 
@@ -11,11 +16,11 @@ enum State {
     None,
     WaitingForImpulseResponse,
     Computing,
-    Computed(data::SpectralDecay),
+    Computed(Vec<SpectrumLayer>),
 }
 
 impl SpectralDecay {
-    pub fn result(&self) -> Option<&data::SpectralDecay> {
+    pub fn result(&self) -> Option<&Vec<SpectrumLayer>> {
         let State::Computed(result) = &self.0 else {
             return None;
         };
@@ -53,6 +58,11 @@ impl SpectralDecay {
     }
 
     pub fn set_result(&mut self, spectral_decay: data::SpectralDecay) {
+        let spectral_decay = spectral_decay
+            .into_iter()
+            .map(|fr| SpectrumLayer::new(fr.data.iter().copied(), SampleRate::from(fr.sample_rate)))
+            .collect();
+
         self.0 = State::Computed(spectral_decay);
     }
 
@@ -67,4 +77,25 @@ pub enum Progress {
     WaitingForImpulseResponse,
     Computing,
     Finished,
+}
+
+impl PlotData<f32> for SpectralDecay {
+    fn draw(&self, plot: &mut Plot<f32>, _theme: &iced::Theme) {
+        let State::Computed(ref sd) = self.0 else {
+            return;
+        };
+
+        if sd.len() < 2 {
+            return;
+        }
+
+        let gradient = colorous::MAGMA;
+        for (i, fr) in sd.iter().enumerate() {
+            let color = gradient.eval_rational(i, sd.len());
+            let color = iced::Color::from_rgb8(color.r, color.g, color.b);
+
+            let line_stroke = Stroke::new(color.scale_alpha(0.8), Measure::Screen(1.0));
+            plot.add_shape(shape::Polyline::new(fr.0.clone()).stroke(line_stroke));
+        }
+    }
 }
