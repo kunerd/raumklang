@@ -1,4 +1,3 @@
-use core::slice;
 use std::{fmt, sync::Arc, time::Duration};
 
 use raumklang_core::{Window, WindowBuilder};
@@ -12,13 +11,13 @@ use crate::data::{SampleRate, Samples, smooth_fractional_octave};
 #[derive(Clone)]
 pub struct SpectralDecay(Vec<super::FrequencyResponse>);
 
-impl SpectralDecay {
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
+impl IntoIterator for SpectralDecay {
+    type Item = super::FrequencyResponse;
 
-    pub fn iter(&self) -> slice::Iter<'_, super::FrequencyResponse> {
-        self.0.iter()
+    type IntoIter = std::vec::IntoIter<super::FrequencyResponse>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
     }
 }
 

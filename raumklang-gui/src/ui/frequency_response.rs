@@ -38,7 +38,7 @@ pub struct Data {
 }
 
 #[derive(Debug, Clone)]
-pub struct SpectrumLayer(Vec<PlotPoint<f32>>);
+pub struct SpectrumLayer(pub Vec<PlotPoint<f32>>);
 
 impl FrequencyResponse {
     pub fn new() -> Self {
@@ -227,7 +227,6 @@ impl PlotData<f32> for FrequencyResponse {
         plot.add_shape(shape::Area::new(fill_points).fill(self.color.scale_alpha(0.1)));
 
         let line_stroke = Stroke::new(self.color.scale_alpha(0.8), Measure::Screen(1.0));
-
         if let Some(smoothed) = fr.smoothed.as_ref() {
             plot.add_shape(shape::Polyline::new(smoothed.0.clone()).stroke(line_stroke));
         } else {
