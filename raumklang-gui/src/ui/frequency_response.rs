@@ -1,9 +1,8 @@
-use crate::data::smooth_fractional_octave;
+use crate::data::{SampleRate, smooth_fractional_octave};
 use crate::widget::sidebar;
 use crate::{data, icon};
 
 use iced::Alignment;
-use iced::theme::{Base, Mode};
 use iced::widget::stack;
 use iced::widget::text::IntoFragment;
 use iced::{
@@ -20,8 +19,6 @@ pub struct FrequencyResponse {
     pub color: iced::Color,
     pub is_shown: bool,
 
-    pub smoothed: Option<Box<[f32]>>,
-
     pub state: State,
 }
 
@@ -30,8 +27,14 @@ pub enum State {
     None,
     WaitingForImpulseResponse,
     Computing,
-    // Computed(FrequencyResponse),
-    Computed(SpectrumLayer),
+    Computed(Data),
+}
+
+#[derive(Debug, Clone)]
+pub struct Data {
+    pub origin: data::FrequencyResponse,
+    base_smoothed: SpectrumLayer,
+    pub smoothed: Option<SpectrumLayer>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,7 +47,6 @@ impl FrequencyResponse {
         Self {
             color,
             is_shown: true,
-            smoothed: None,
 
             state: State::None,
         }
@@ -98,47 +100,48 @@ impl FrequencyResponse {
         sidebar::item(content, false)
     }
 
-    pub fn result(&self) -> Option<&SpectrumLayer> {
-        let State::Computed(ref result) = self.state else {
+    pub fn result(&self) -> Option<&Data> {
+        let State::Computed(ref data) = self.state else {
             return None;
         };
 
-        Some(result)
+        Some(data)
+    }
+
+    pub fn result_mut(&mut self) -> Option<&mut Data> {
+        let State::Computed(data) = &mut self.state else {
+            return None;
+        };
+
+        Some(data)
     }
 
     pub fn set_result(&mut self, fr: data::FrequencyResponse) {
-        // let magnitudes = &self.magnitudes;
-        // let sample_rate = self.sample_rate as f64;
-        // let tilt = self.tilt;
-
-        // let log_min = MIN_FREQ.log10();
-        // let log_max = MAX_FREQ.log10();
-        // // let octaves = (log_max - log_min) / (2.0_f32).log10();
-        // let len = fr.data.len() * 2 + 1;
-        // let octaves = fr.sample_rate as f32 / len as f32;
-        // let num_points = (octaves * POINTS_PER_OCTAVE as f32).round().max(32.0) as usize;
-        // let step = (log_max - log_min) / num_points as f32;
-
-        // let mut curve = Vec::with_capacity(num_points);
-        // for i in 0..num_points {
-        //     let freq = 10_f32.powf(log_min + step * i as f32);
-        //     // let width = math::fractional_width(freq);
-        //     // let db = math::sample_fractional_octave(magnitudes, freq, sample_rate, width, tilt);
-        //     curve.push(PlotPoint::new(freq, dbfs(fr.data[i])));
-        // }
-
         let data = smooth_fractional_octave(&fr.data, 48);
 
         let sample_rate = fr.sample_rate;
         let len = fr.data.len() * 2 + 1;
         let resolution = sample_rate as f32 / len as f32;
 
+        // FIXME add start and end
         let mut curve = Vec::with_capacity(len);
         for (i, s) in data.iter().enumerate() {
             curve.push(PlotPoint::new(i as f32 * resolution, dbfs(*s)));
         }
 
-        self.state = State::Computed(SpectrumLayer(curve))
+        self.state = State::Computed(Data {
+            origin: fr,
+            base_smoothed: SpectrumLayer(curve),
+            smoothed: None,
+        })
+    }
+
+    pub fn reset_smoothing(&mut self) {
+        let State::Computed(data) = &mut self.state else {
+            return;
+        };
+
+        data.smoothed = None;
     }
 }
 
@@ -182,39 +185,53 @@ where
     .into()
 }
 
+impl SpectrumLayer {
+    pub fn new<I>(data: I, sample_rate: SampleRate) -> Self
+    where
+        I: IntoIterator<Item = f32>,
+        I::IntoIter: Clone,
+    {
+        let data = data.into_iter();
+
+        let len = data.clone().count() * 2 + 1;
+        let resolution = f32::from(sample_rate) / len as f32;
+
+        let curve = data
+            .enumerate()
+            .map(|(i, s)| PlotPoint::new(i as f32 * resolution, dbfs(s)))
+            .collect();
+
+        Self(curve)
+    }
+}
+
 const MIN_FREQ: f32 = 15.0;
 const MAX_FREQ: f32 = 22_000.0;
 const MIN_DB: f32 = -90.0;
-const MAX_DB: f32 = 12.0;
-const POINTS_PER_OCTAVE: usize = 72;
 
 impl PlotData<f32> for FrequencyResponse {
-    fn draw(&self, plot: &mut Plot<f32>, theme: &iced::Theme) {
+    fn draw(&self, plot: &mut Plot<f32>, _theme: &iced::Theme) {
         let State::Computed(ref fr) = self.state else {
             return;
         };
 
-        if fr.0.len() < 2 {
+        if fr.base_smoothed.0.len() < 2 {
             return;
         }
 
-        let mut fill_points = Vec::with_capacity(fr.0.len() + 2);
+        let mut fill_points = Vec::with_capacity(fr.base_smoothed.0.len() + 2);
         fill_points.push(PlotPoint::new(MIN_FREQ, MIN_DB));
-        fill_points.extend(fr.0.iter().copied());
+        fill_points.extend(fr.base_smoothed.0.iter().copied());
         fill_points.push(PlotPoint::new(MAX_FREQ, MIN_DB));
 
         plot.add_shape(shape::Area::new(fill_points).fill(self.color.scale_alpha(0.1)));
 
-        // let glow_color = if theme.mode() == Mode::Light {
-        //     palette.primary.strong.color
-        // } else {
-        //     palette.primary.weak.color
-        // };
-
-        // let glow_stroke = Stroke::new(glow_color, Measure::Screen(6.0));
-        // plot.add_shape(shape::Polyline::new(fr.0.clone()).stroke(glow_stroke));
-
         let line_stroke = Stroke::new(self.color.scale_alpha(0.8), Measure::Screen(1.0));
-        plot.add_shape(shape::Polyline::new(fr.0.clone()).stroke(line_stroke));
+
+        if let Some(smoothed) = fr.smoothed.as_ref() {
+            plot.add_shape(shape::Polyline::new(smoothed.0.clone()).stroke(line_stroke));
+        } else {
+            plot.add_shape(shape::Polyline::new(fr.base_smoothed.0.clone()).stroke(line_stroke));
+        }
     }
 }

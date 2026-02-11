@@ -6,7 +6,6 @@ mod recording;
 mod tab;
 
 use iced::Pixels;
-use iced::application::IntoBoot;
 use iced_aksel::axis::{MarkerPosition, Position, TickContext, TickLine, TickResult};
 use iced_aksel::scale;
 use modal::Modal;
@@ -17,6 +16,7 @@ use crate::data::{
     self, Project, RecentProjects, SampleRate, Samples, Window, project, spectral_decay,
     spectrogram, window,
 };
+use crate::ui::frequency_response::SpectrumLayer;
 use crate::{
     PickAndLoadError, icon, load_project, log,
     screen::main::{
@@ -682,11 +682,13 @@ impl Main {
                     let tasks = analyses.iter().flat_map(|(id, analysis)| {
                         let fr = analysis.frequency_response.result()?;
 
-                        // Some(Task::perform(
-                        //     frequency_response::smooth_frequency_response(fr.clone(), fraction),
-                        //     Message::FrequencyResponseSmoothed.with(*id),
-                        // ))
-                        Some(Task::none())
+                        Some(Task::perform(
+                            frequency_response::smooth_frequency_response(
+                                fr.origin.clone(),
+                                fraction,
+                            ),
+                            Message::FrequencyResponseSmoothed.with(*id),
+                        ))
                     });
 
                     Task::batch(tasks)
@@ -694,7 +696,7 @@ impl Main {
                     analyses
                         .values_mut()
                         .map(Analysis::frequency_response_mut)
-                        .for_each(|fr| fr.smoothed = None);
+                        .for_each(|fr| fr.reset_smoothing());
 
                     cache.clear();
 
@@ -711,8 +713,15 @@ impl Main {
                     return Task::none();
                 };
 
-                if let Some(fr) = analyses.get_mut(&id).map(|a| &mut a.frequency_response) {
-                    fr.smoothed = Some(smoothed);
+                if let Some(data) = analyses
+                    .get_mut(&id)
+                    .map(|a| &mut a.frequency_response)
+                    .and_then(ui::FrequencyResponse::result_mut)
+                {
+                    data.smoothed = Some(SpectrumLayer::new(
+                        smoothed,
+                        SampleRate::from(data.origin.sample_rate),
+                    ));
                     cache.clear();
                 }
 
@@ -1258,7 +1267,7 @@ impl Main {
 
     fn frequency_responses_tab<'a>(
         &'a self,
-        cache: &'a canvas::Cache,
+        _cache: &'a canvas::Cache,
         analyses: &'a BTreeMap<measurement::Id, Analysis>,
     ) -> Element<'a, Message> {
         let sidebar = {
