@@ -12,6 +12,7 @@ pub struct Project {
     pub measurements: Vec<Measurement>,
     #[serde(default)]
     pub measurement_operation: Operation,
+    #[serde(default)]
     pub export_from_memory: bool,
 }
 
