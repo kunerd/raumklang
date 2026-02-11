@@ -6,6 +6,7 @@ mod recording;
 mod tab;
 
 use iced::Pixels;
+use iced::mouse::ScrollDelta;
 use iced_aksel::axis::{MarkerPosition, Position, TickContext, TickLine, TickResult};
 use iced_aksel::scale;
 use modal::Modal;
@@ -145,14 +146,15 @@ pub enum Message {
     ImpulseResponseComputed(measurement::Id, data::ImpulseResponse),
     SaveImpulseResponseToFile(measurement::Id, Option<Arc<Path>>),
 
-    FrequencyResponseComputed(measurement::Id, data::FrequencyResponse),
     ImpulseResponseSaved(measurement::Id, Arc<Path>),
     ImpulseResponseChart(impulse_response::ChartOperation),
     ImpulseResponse(ui::measurement::Id, ui::impulse_response::Message),
 
+    FrequencyResponseComputed(measurement::Id, data::FrequencyResponse),
     FrequencyResponseToggled(measurement::Id, bool),
     ChangeSmoothing(frequency_response::Smoothing),
     FrequencyResponseSmoothed(measurement::Id, Box<[f32]>),
+    FrequencyResponseChart(frequency_response::Message),
 
     ShiftKeyPressed,
     ShiftKeyReleased,
@@ -725,7 +727,41 @@ impl Main {
 
                 Task::none()
             }
+            Message::FrequencyResponseChart(msg) => {
+                match msg {
+                    frequency_response::Message::OnPlotScroll(cursor_pos, delta) => match delta {
+                        ScrollDelta::Lines { x: _, y } => {
+                            let factor = 1.1f32.powf(y);
 
+                            self.fr_state
+                                .axis_mut(&FREQ_AXIS_ID)
+                                .zoom(factor, Some(cursor_pos.x));
+                            self.fr_state
+                                .axis_mut(&DB_AXIS_ID)
+                                .zoom(factor, Some(cursor_pos.y));
+                        }
+                        ScrollDelta::Pixels { x: _, y } => {
+                            // For pixel-based scrolling (touchpad)
+                            // Divide by larger number for less sensitive zooming
+                            let factor = 1.0 + y / 500.0;
+
+                            self.fr_state
+                                .axis_mut(&FREQ_AXIS_ID)
+                                .zoom(factor, Some(cursor_pos.x));
+                            self.fr_state
+                                .axis_mut(&DB_AXIS_ID)
+                                .zoom(factor, Some(cursor_pos.y));
+                        }
+                    },
+                    frequency_response::Message::OnPlotDrag(delta) => {
+                        // --- Pan X-Axis ---
+                        self.fr_state.axis_mut(&FREQ_AXIS_ID).pan(delta.x);
+                        // self.clamp_x_axis();
+                        self.fr_state.axis_mut(&DB_AXIS_ID).pan(delta.y);
+                    }
+                }
+                Task::none()
+            }
             Message::SpectralDecayComputed(id, sd) => {
                 let State::Analysing {
                     ref mut analyses,
@@ -1321,7 +1357,9 @@ impl Main {
                 })
                 .marker(&DB_AXIS_ID, MarkerPosition::Cursor, |ctx| {
                     Some(ctx.marker(format_db_label(ctx.value)))
-                });
+                })
+                .on_scroll(frequency_response::Message::OnPlotScroll)
+                .on_drag(frequency_response::Message::OnPlotDrag);
 
             let chart = frequency_responses
                 .filter(|fr| fr.is_shown)
@@ -1333,6 +1371,8 @@ impl Main {
         } else {
             container(text("Please select a frequency respone.")).center(Length::Fill)
         };
+
+        let content = Element::from(content).map(Message::FrequencyResponseChart);
 
         row![
             container(sidebar)
