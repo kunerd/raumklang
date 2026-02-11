@@ -5,6 +5,10 @@ mod modal;
 mod recording;
 mod tab;
 
+use iced::Pixels;
+use iced::application::IntoBoot;
+use iced_aksel::axis::{MarkerPosition, Position, TickContext, TickLine, TickResult};
+use iced_aksel::scale;
 use modal::Modal;
 use tab::Tab;
 use tokio::fs;
@@ -79,7 +83,13 @@ pub struct Main {
 
     spectral_decay_config: spectral_decay::Config,
     spectrogram_config: spectrogram::Config,
+    fr_state: iced_aksel::State<AxisId, f32>,
 }
+
+type AxisId = &'static str;
+
+const FREQ_AXIS_ID: AxisId = "freq";
+const DB_AXIS_ID: AxisId = "db";
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Default)]
@@ -672,10 +682,11 @@ impl Main {
                     let tasks = analyses.iter().flat_map(|(id, analysis)| {
                         let fr = analysis.frequency_response.result()?;
 
-                        Some(Task::perform(
-                            frequency_response::smooth_frequency_response(fr.clone(), fraction),
-                            Message::FrequencyResponseSmoothed.with(*id),
-                        ))
+                        // Some(Task::perform(
+                        //     frequency_response::smooth_frequency_response(fr.clone(), fraction),
+                        //     Message::FrequencyResponseSmoothed.with(*id),
+                        // ))
+                        Some(Task::none())
                     });
 
                     Task::batch(tasks)
@@ -1286,53 +1297,78 @@ impl Main {
             .any(|fr| fr.result().is_some() && fr.is_shown);
 
         let content = if chart_needed {
-            let series_list = frequency_responses
-                .filter(|fr| fr.is_shown)
-                .flat_map(|item| {
-                    let Some(frequency_response) = item.result() else {
-                        return [None, None];
-                    };
+            // let series_list = frequency_responses
+            //     .filter(|fr| fr.is_shown)
+            //     .flat_map(|item| {
+            //         let Some(frequency_response) = item.result() else {
+            //             return [None, None];
+            //         };
 
-                    let sample_rate = frequency_response.sample_rate;
-                    let len = frequency_response.data.len() * 2 + 1;
-                    let resolution = sample_rate as f32 / len as f32;
+            //         let sample_rate = frequency_response.sample_rate;
+            //         let len = frequency_response.data.len() * 2 + 1;
+            //         let resolution = sample_rate as f32 / len as f32;
 
-                    let closure = move |(i, s)| (i as f32 * resolution, dbfs(s));
+            //         let closure = move |(i, s)| (i as f32 * resolution, dbfs(s));
 
-                    [
-                        Some(
-                            line_series(
-                                frequency_response
-                                    .data
-                                    .iter()
-                                    .copied()
-                                    .enumerate()
-                                    .map(closure),
-                            )
-                            .color(item.color.scale_alpha(0.1)),
-                        ),
-                        item.smoothed.as_ref().map(|smoothed| {
-                            line_series(smoothed.iter().copied().enumerate().map(closure))
-                                .color(item.color)
-                        }),
-                    ]
+            //         [
+            //             Some(
+            //                 line_series(
+            //                     frequency_response
+            //                         .data
+            //                         .iter()
+            //                         .copied()
+            //                         .enumerate()
+            //                         .map(closure),
+            //                 )
+            //                 .color(item.color.scale_alpha(0.1)),
+            //             ),
+            //             item.smoothed.as_ref().map(|smoothed| {
+            //                 line_series(smoothed.iter().copied().enumerate().map(closure))
+            //                     .color(item.color)
+            //             }),
+            //         ]
+            //     })
+            //     .flatten();
+
+            // let chart: Chart<Message, ()> = Chart::new()
+            //     .x_axis(
+            //         Axis::new(axis::Alignment::Horizontal)
+            //             .scale(axis::Scale::Log)
+            //             .x_tick_marks(
+            //                 [20, 50, 100, 1000, 10_000, 20_000]
+            //                     .into_iter()
+            //                     .map(|v| v as f32)
+            //                     .collect(),
+            //             ),
+            //     )
+            //     .y_labels(Labels::default().format(&|v| format!("{v:.0}")))
+            //     .extend_series(series_list)
+            //     .cache(cache);
+
+            let chart = iced_aksel::Chart::new(&self.fr_state)
+                .style(Box::new(|theme| {
+                    let mut base = iced_aksel::style::default(theme);
+                    let palette = theme.extended_palette();
+
+                    base.axis.label.color = palette.secondary.base.color;
+                    base.axis.tick.color = palette.secondary.base.color;
+                    base.axis.spine.color = palette.secondary.base.color;
+                    base.axis.grid.color = palette.background.weaker.color;
+
+                    base
+                }))
+                .marker(&FREQ_AXIS_ID, MarkerPosition::Cursor, |ctx| {
+                    Some(ctx.marker(format_frequency_label(ctx.value)))
                 })
-                .flatten();
+                .marker(&DB_AXIS_ID, MarkerPosition::Cursor, |ctx| {
+                    Some(ctx.marker(format_db_label(ctx.value)))
+                });
 
-            let chart: Chart<Message, ()> = Chart::new()
-                .x_axis(
-                    Axis::new(axis::Alignment::Horizontal)
-                        .scale(axis::Scale::Log)
-                        .x_tick_marks(
-                            [20, 50, 100, 1000, 10_000, 20_000]
-                                .into_iter()
-                                .map(|v| v as f32)
-                                .collect(),
-                        ),
-                )
-                .y_labels(Labels::default().format(&|v| format!("{v:.0}")))
-                .extend_series(series_list)
-                .cache(cache);
+            let chart = frequency_responses
+                .filter(|fr| fr.is_shown)
+                .fold(chart, |chart, fr| {
+                    chart.plot_data(fr, FREQ_AXIS_ID, DB_AXIS_ID)
+                });
 
             container(chart)
         } else {
@@ -1802,6 +1838,11 @@ fn compute_spectrogram(
 
 impl Default for Main {
     fn default() -> Self {
+        let mut fr_state = iced_aksel::State::new();
+
+        fr_state.set_axis(FREQ_AXIS_ID, create_frequency_axis());
+        fr_state.set_axis(DB_AXIS_ID, create_db_axis());
+
         Self {
             state: State::default(),
             modal: Modal::None,
@@ -1827,8 +1868,63 @@ impl Default for Main {
             ir_chart: impulse_response::Chart::default(),
             spectrogram: Spectrogram::default(),
             spectrogram_config: spectrogram::Config::default(),
+
+            fr_state,
         }
     }
+}
+
+const MIN_FREQ: f32 = 15.0;
+const MAX_FREQ: f32 = 22_000.0;
+const MIN_DB: f32 = -90.0;
+const MAX_DB: f32 = 12.0;
+
+fn create_frequency_axis() -> iced_aksel::Axis<f32> {
+    iced_aksel::Axis::new(
+        scale::Logarithmic::new(10.0, MIN_FREQ, MAX_FREQ),
+        Position::Bottom,
+    )
+    .with_tick_renderer(frequency_tick_renderer)
+    .skip_overlapping_labels(8.0)
+}
+
+fn create_db_axis() -> iced_aksel::Axis<f32> {
+    iced_aksel::Axis::new(scale::Linear::new(MIN_DB, MAX_DB), Position::Left)
+        .with_tick_renderer(db_tick_renderer)
+        .with_thickness(80.0)
+        .skip_overlapping_labels(8.0)
+}
+
+fn frequency_tick_renderer(ctx: TickContext<f32, Theme>) -> TickResult {
+    let line = TickLine {
+        length: Pixels(if ctx.tick.level == 0 { 12.0 } else { 6.0 }),
+        ..ctx.tickline()
+    };
+    let label = format_frequency_label(ctx.tick.value);
+    TickResult::with_label(ctx.label(label))
+        .tick_line(line)
+        .grid_line(ctx.gridline())
+}
+
+fn db_tick_renderer(ctx: TickContext<f32, Theme>) -> TickResult {
+    let label = format_db_label(ctx.tick.value);
+    TickResult::with_label(ctx.label(label))
+        .tick_line(ctx.tickline())
+        .grid_line(ctx.gridline())
+}
+
+fn format_frequency_label(value: f32) -> String {
+    if value >= 10_000.0 {
+        format!("{:.0} kHz", value / 1000.0)
+    } else if value >= 1000.0 {
+        format!("{:.1} kHz", value / 1000.0)
+    } else {
+        format!("{:.0} Hz", value)
+    }
+}
+
+fn format_db_label(value: f32) -> String {
+    format!("{:+.0} dB", value)
 }
 
 async fn choose_impulse_response_file_path() -> Option<Arc<Path>> {
