@@ -1,6 +1,15 @@
 use std::fmt::{self};
 
+use iced::mouse::ScrollDelta;
+use iced_aksel::plot::DragDelta;
+
 use crate::data;
+
+#[derive(Debug, Clone)]
+pub enum Message {
+    OnPlotDrag(DragDelta),
+    OnPlotScroll(iced::Point, ScrollDelta),
+}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Smoothing {
