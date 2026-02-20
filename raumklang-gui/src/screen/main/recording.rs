@@ -1,7 +1,5 @@
 mod page;
 
-use page::Page;
-
 use crate::{
     audio,
     data::{
@@ -9,7 +7,7 @@ use crate::{
         measurement::config,
         recording::{self, volume},
     },
-    screen::main::recording::page::{Component, measurement},
+    screen::main::recording::page::Component,
     widget::{RmsPeakMeter, meter},
 };
 
@@ -19,23 +17,45 @@ use iced::{
     Length::{Fill, Shrink},
     Subscription, Task,
     alignment::{Horizontal, Vertical},
-    time,
+    task, time,
     widget::{self, canvas, column, container, pick_list, row, rule, slider, text, text_input},
 };
+use prism::line_series;
 use tokio_stream::wrappers::ReceiverStream;
 
 use std::{fmt, sync::Arc, time::Duration};
 
+#[derive(Debug)]
 pub struct Recording {
     kind: Kind,
-    page: Page,
     state: State,
     volume: f32,
+    backend: Backend,
     selected_in_port: Option<String>,
     selected_out_port: Option<String>,
     start_frequency: String,
     end_frequency: String,
     duration: String,
+    cache: canvas::Cache,
+}
+
+#[derive(Debug, Default)]
+pub enum State {
+    #[default]
+    Setup,
+    LoudnessTest {
+        signal_config: data::measurement::Config,
+        loudness: audio::Loudness,
+        _stream_handle: task::Handle,
+    },
+    Measurement(Measurement),
+}
+
+#[derive(Debug)]
+pub struct Measurement {
+    finished_len: usize,
+    loudness: audio::Loudness,
+    data: Vec<f32>,
     cache: canvas::Cache,
 }
 
@@ -45,7 +65,8 @@ pub enum Kind {
     Measurement,
 }
 
-enum State {
+#[derive(Debug)]
+enum Backend {
     NotConnected,
     Connected {
         backend: audio::Backend,
@@ -60,21 +81,26 @@ enum State {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Cancel,
     OutPortSelected(String),
     InPortSelected(String),
     StartFrequencyChanged(String),
     EndFrequencyChanged(String),
     DurationChanged(String),
-    RunTest(data::measurement::Config),
-    AudioBackend(audio::Event),
-    RetryTick(time::Instant),
+
     VolumeChanged(f32),
     TestOk(recording::Volume),
     RmsChanged(audio::Loudness),
+    RunTest(data::measurement::Config),
+
+    AudioBackend(audio::Event),
+    RetryTick(time::Instant),
     JackNotification(audio::Notification),
-    Measurement(measurement::Message),
+
+    RecordingChunk(Box<[f32]>),
+    RecordingFinished,
+
     Back,
+    Cancel,
     RetryNow,
 }
 
@@ -95,14 +121,17 @@ impl Recording {
         let config = data::measurement::Config::default();
         Self {
             kind,
-            state: State::NotConnected,
-            page: page::Page::default(),
-            volume: 0.5,
+            state: State::Setup,
+            backend: Backend::NotConnected,
+
             selected_out_port: None,
             selected_in_port: None,
             start_frequency: format!("{}", config.start_frequency()),
             end_frequency: format!("{}", config.end_frequency()),
             duration: format!("{}", config.duration().into_inner().as_secs()),
+
+            volume: 0.5,
+
             cache: canvas::Cache::new(),
         }
     }
@@ -111,7 +140,7 @@ impl Recording {
         match message {
             Message::AudioBackend(event) => match event {
                 audio::Event::Ready(backend, receiver) => {
-                    self.state = State::Connected { backend };
+                    self.backend = Backend::Connected { backend };
 
                     if let Some(receiver) = Arc::into_inner(receiver) {
                         Action::Task(
@@ -127,7 +156,7 @@ impl Recording {
                     retry_tx,
                     retry_in,
                 } => {
-                    self.state = State::Retrying {
+                    self.backend = Backend::Retrying {
                         err,
                         end: time::Instant::now() + retry_in,
                         remaining: retry_in,
@@ -151,21 +180,21 @@ impl Recording {
                 Action::None
             }
             Message::OutPortSelected(port) => {
-                let State::Connected { backend, .. } = &self.state else {
+                let Backend::Connected { backend, .. } = &self.backend else {
                     return Action::None;
                 };
 
                 Action::Task(Task::future(backend.clone().connect_out_port(port)).discard())
             }
             Message::InPortSelected(port) => {
-                let State::Connected { backend, .. } = &self.state else {
+                let Backend::Connected { backend, .. } = &self.backend else {
                     return Action::None;
                 };
 
                 Action::Task(Task::future(backend.clone().connect_in_port(port)).discard())
             }
             Message::RetryTick(instant) => {
-                let State::Retrying { end, remaining, .. } = &mut self.state else {
+                let Backend::Retrying { end, remaining, .. } = &mut self.backend else {
                     return Action::None;
                 };
 
@@ -174,7 +203,7 @@ impl Recording {
                 Action::None
             }
             Message::VolumeChanged(volume) => {
-                let State::Connected { backend, .. } = &self.state else {
+                let Backend::Connected { backend, .. } = &self.backend else {
                     return Action::None;
                 };
 
@@ -183,7 +212,7 @@ impl Recording {
                 Action::Task(Task::future(backend.clone().set_volume(volume)).discard())
             }
             Message::RmsChanged(new_loudness) => {
-                let Page::LoudnessTest { loudness, .. } = &mut self.page else {
+                let State::LoudnessTest { loudness, .. } = &mut self.state else {
                     return Action::None;
                 };
 
@@ -193,7 +222,7 @@ impl Recording {
                 Action::None
             }
             Message::RunTest(signal_config) => {
-                let State::Connected { backend } = &mut self.state else {
+                let Backend::Connected { backend } = &mut self.backend else {
                     return Action::None;
                 };
 
@@ -207,7 +236,7 @@ impl Recording {
 
                 let handle = handle.abort_on_drop();
 
-                self.page = Page::LoudnessTest {
+                self.state = State::LoudnessTest {
                     signal_config,
                     loudness: audio::Loudness::default(),
                     _stream_handle: handle,
@@ -219,55 +248,108 @@ impl Recording {
                 ]))
             }
             Message::TestOk(_volume) => {
-                let State::Connected { backend } = &self.state else {
+                let Backend::Connected { backend } = &self.backend else {
                     return Action::None;
                 };
 
-                let Page::LoudnessTest {
+                let State::LoudnessTest {
                     signal_config,
                     _stream_handle,
                     // loudness,
                     //port_config,
                     ..
-                } = std::mem::take(&mut self.page)
+                } = std::mem::take(&mut self.state)
                 else {
                     return Action::None;
                 };
 
-                let (page, task) = page::Measurement::new(signal_config, backend);
-                self.page = Page::Measurement(page);
+                let sample_rate = backend.sample_rate;
+                let finished_len = data::Samples::from_duration(
+                    signal_config.duration().into_inner(),
+                    sample_rate,
+                )
+                .into();
 
-                Action::Task(task.map(Message::Measurement))
+                let (loudness_receiver, mut data_receiver) = backend.run_measurement(signal_config);
+
+                let measurement_sipper = iced::task::sipper(async move |mut progress| {
+                    while let Some(data) = data_receiver.recv().await {
+                        progress.send(data).await;
+                    }
+                });
+
+                let measurement = Measurement {
+                    finished_len,
+                    loudness: audio::Loudness::default(),
+                    data: vec![],
+                    cache: canvas::Cache::new(),
+                };
+
+                let task = Task::batch(vec![
+                    Task::stream(ReceiverStream::new(loudness_receiver)).map(Message::RmsChanged),
+                    Task::sip(measurement_sipper, Message::RecordingChunk, |_| {
+                        Message::RecordingFinished
+                    }),
+                ]);
+
+                self.state = State::Measurement(measurement);
+
+                Action::Task(task)
             }
-            Message::Measurement(message) => {
-                let Page::Measurement(page) = &mut self.page else {
+            // Message::Measurement(message) => {
+            //     let State::Measurement(page) = &mut self.state else {
+            //         return Action::None;
+            //     };
+
+            //     match page.update(message) {
+            //         Some(measurement) => Action::Finished(match self.kind {
+            //             Kind::Loopback => {
+            //                 Result::Loopback(raumklang_core::Loopback::new(measurement))
+            //             }
+            //             Kind::Measurement => Result::Measurement(measurement),
+            //         }),
+            //         None => Action::None,
+            //     }
+            // }
+            Message::RecordingChunk(chunk) => {
+                if let State::Measurement(measurement) = &mut self.state {
+                    measurement.data.extend_from_slice(&chunk);
+                };
+
+                Action::None
+            }
+            Message::RecordingFinished => {
+                let Backend::Connected { backend } = &self.backend else {
                     return Action::None;
                 };
 
-                match page.update(message) {
-                    Some(measurement) => Action::Finished(match self.kind {
-                        Kind::Loopback => {
-                            Result::Loopback(raumklang_core::Loopback::new(measurement))
-                        }
-                        Kind::Measurement => Result::Measurement(measurement),
-                    }),
-                    None => Action::None,
-                }
+                let State::Measurement(measurement) = &mut self.state else {
+                    return Action::None;
+                };
+
+                let data = std::mem::take(&mut measurement.data);
+                let measurement =
+                    raumklang_core::Measurement::new(backend.sample_rate.into(), data);
+
+                Action::Finished(match self.kind {
+                    Kind::Loopback => Result::Loopback(raumklang_core::Loopback::new(measurement)),
+                    Kind::Measurement => Result::Measurement(measurement),
+                })
             }
             Message::Cancel => Action::Cancel,
             Message::Back => {
-                let page = std::mem::take(&mut self.page);
+                let state = std::mem::take(&mut self.state);
 
-                self.page = match page {
-                    Page::Setup => page,
-                    Page::LoudnessTest { .. } => Page::Setup,
-                    Page::Measurement(_measurement) => Page::Setup,
+                self.state = match state {
+                    State::Setup => state,
+                    State::LoudnessTest { .. } => State::Setup,
+                    State::Measurement(_measurement) => State::Setup,
                 };
 
                 Action::None
             }
             Message::RetryNow => {
-                let State::Retrying { retry_tx, .. } = &self.state else {
+                let Backend::Retrying { retry_tx, .. } = &self.backend else {
                     return Action::None;
                 };
 
@@ -291,23 +373,21 @@ impl Recording {
     }
 
     pub fn view<'a>(&'a self) -> Element<'a, Message> {
-        let page = match &self.state {
-            State::NotConnected => {
+        let page = match &self.backend {
+            Backend::NotConnected => {
                 page::Component::new("Jack").content(text("Jack is not connected."))
             }
-            State::Connected { backend } => match &self.page {
-                Page::Setup => self.setup(backend),
-                Page::LoudnessTest { loudness, .. } => self
-                    .loudness_test(loudness)
-                    .back_button("Back", Message::Back),
-                Page::Measurement(page) => page.view().map(Message::Measurement),
+            Backend::Connected { backend } => match &self.state {
+                State::Setup => self.setup(backend),
+                State::LoudnessTest { loudness, .. } => self.loudness_test(&loudness),
+                State::Measurement(measurement) => self.measurement(measurement),
             },
-            State::Retrying { err, remaining, .. } => self.retry(err, remaining),
+            Backend::Retrying { err, remaining, .. } => self.retry(err, remaining),
         };
 
         let page = page.cancel_button("Cancel", Message::Cancel);
 
-        container(page).width(Fill).into()
+        container(page).width(600.0).into()
     }
 
     fn setup<'a>(&'a self, backend: &'a audio::Backend) -> page::Component<'a, Message> {
@@ -461,11 +541,59 @@ impl Recording {
 
         let mut subscriptions = vec![audio_backend];
 
-        if let State::Retrying { .. } = &self.state {
+        if let Backend::Retrying { .. } = &self.backend {
             subscriptions.push(time::every(Duration::from_millis(500)).map(Message::RetryTick));
         }
 
         Subscription::batch(subscriptions)
+    }
+
+    fn measurement<'a>(&self, measurement: &'a Measurement) -> Component<'a, Message> {
+        Component::new("Measurement Running ...").content(
+            row![
+                container(
+                    canvas(RmsPeakMeter::new(
+                        measurement.loudness.rms,
+                        measurement.loudness.peak,
+                        &measurement.cache
+                    ))
+                    .width(60)
+                    .height(200)
+                )
+                .padding(10),
+                column![
+                    container(
+                        row![
+                            loudness_text("RMS", measurement.loudness.rms),
+                            rule::vertical(3),
+                            loudness_text("Peak", measurement.loudness.peak),
+                        ]
+                        .align_y(Vertical::Bottom)
+                        .height(Shrink)
+                        .spacing(10)
+                    )
+                    .center_x(Fill),
+                    // TODO replace with waveform
+                    prism::Chart::<_, (), _>::new()
+                        .x_range(0.0..=measurement.finished_len as f32)
+                        .y_range(-0.5..=0.5)
+                        .push_series(
+                            line_series(
+                                measurement
+                                    .data
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, s)| (i as f32, *s))
+                            )
+                            .color(iced::Color::from_rgb8(50, 175, 50).scale_alpha(0.6))
+                        )
+                ]
+                .spacing(12)
+                .padding(10)
+            ]
+            .spacing(12)
+            .align_y(Vertical::Center),
+        )
     }
 
     fn retry(&self, err: &audio::Error, remaining: &Duration) -> page::Component<'_, Message> {
@@ -613,4 +741,16 @@ where
     fn from(number_input: NumberInput<'a, Message>) -> Self {
         number_input.view()
     }
+}
+
+fn loudness_text<'a>(label: &'a str, value: f32) -> Element<'a, Message> {
+    column![
+        text(label).size(12).align_y(Vertical::Bottom),
+        rule::horizontal(1),
+        text!("{:.1}", value).size(24),
+    ]
+    .spacing(3)
+    .width(Shrink)
+    .align_x(Center)
+    .into()
 }

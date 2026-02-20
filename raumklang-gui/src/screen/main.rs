@@ -60,7 +60,6 @@ use std::{
 pub struct Main {
     state: State,
     modal: Modal,
-    recording: Option<Recording>,
 
     selected: Option<measurement::Selected>,
     loopback: Option<Loopback>,
@@ -161,8 +160,8 @@ pub enum Message {
 
     MeasurementChart(waveform::Interaction),
 
-    Recording(recording::Message),
     StartRecording(recording::Kind),
+    Recording(recording::Message),
 
     OpenSpectralDecayConfig,
     SpectralDecayConfig(spectral_decay_config::Message),
@@ -947,18 +946,18 @@ impl Main {
                 Task::none()
             }
             Message::StartRecording(kind) => {
-                self.recording = Some(Recording::new(kind));
+                self.modal = Modal::Recording(Recording::new(kind));
                 Task::none()
             }
             Message::Recording(msg) => {
-                let Some(recording) = &mut self.recording else {
+                let Modal::Recording(recording) = &mut self.modal else {
                     return Task::none();
                 };
 
                 match recording.update(msg) {
                     recording::Action::None => Task::none(),
                     recording::Action::Cancel => {
-                        self.recording = None;
+                        self.modal = Modal::None;
                         Task::none()
                     }
                     recording::Action::Task(task) => task.map(Message::Recording),
@@ -977,7 +976,7 @@ impl Main {
                             }
                         }
 
-                        self.recording = None;
+                        self.modal = Modal::None;
                         Task::none()
                     }
                 }
@@ -1137,11 +1136,7 @@ impl Main {
             }
         };
 
-        let content = if let Some(recording) = &self.recording {
-            container(recording.view().map(Message::Recording)).padding(10)
-        } else {
-            container(column![header, container(content).padding(10)])
-        };
+        let content = container(column![header, container(content).padding(10)]);
 
         match &self.modal {
             Modal::None => content.into(),
@@ -1157,10 +1152,35 @@ impl Main {
             Modal::SaveProjectDialog(dialog) => {
                 modal(content, dialog.view().map(Message::ProjectSaveDialog))
             }
+            Modal::Recording(recording) => modal(content, recording.view().map(Message::Recording)),
         }
     }
 
     fn measurements_tab<'a>(&'a self) -> Element<'a, Message> {
+        if self.loopback.is_none() {
+            return center(
+                column![
+                    text("Welcome").size(24),
+                    text(
+                        "Before you can start to take measurements of your room, you need to create a \
+                        so called 'Loopback' reference measurement."
+                    )
+                    .size(18)
+                    .align_x(Center)
+                    ,
+                    // TODO: add image or low res animation of a basic loopback wiring setup
+                    button(text("Create one now ...")
+                        .size(18))
+                        .style(button::success)
+                        .on_press(Message::StartRecording(recording::Kind::Loopback))
+                ]
+                .spacing(30)
+                .width(Length::Fixed(600.0))
+                .align_x(Center),
+            )
+            .into();
+        }
+
         let sidebar = {
             let loopback = Category::new("Loopback")
                 .push_button(sidebar::button(icon::plus()).on_press(Message::LoadLoopback))
@@ -1637,11 +1657,11 @@ impl Main {
             _ => None,
         });
 
-        let recording = self
-            .recording
-            .as_ref()
-            .map(Recording::subscription)
-            .unwrap_or(Subscription::none());
+        let recording = if let Modal::Recording(recording) = &self.modal {
+            recording.subscription()
+        } else {
+            Subscription::none()
+        };
 
         Subscription::batch([hotkeys, recording.map(Message::Recording)])
     }
@@ -1840,7 +1860,6 @@ impl Default for Main {
         Self {
             state: State::default(),
             modal: Modal::None,
-            recording: None,
             selected: None,
 
             loopback: None,

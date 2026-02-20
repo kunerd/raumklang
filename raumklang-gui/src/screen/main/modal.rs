@@ -7,7 +7,7 @@ pub use pending_window::pending_window;
 pub use spectral_decay_config::SpectralDecayConfig;
 pub use spectrogram_config::SpectrogramConfig;
 
-use crate::screen::main::tab;
+use crate::screen::main::{recording::Recording, tab};
 
 #[derive(Default, Debug)]
 pub enum Modal {
@@ -18,5 +18,7 @@ pub enum Modal {
     },
     SpectralDecayConfig(SpectralDecayConfig),
     SpectrogramConfig(SpectrogramConfig),
+    // TODO move recording into mod modal
+    Recording(Recording),
     SaveProjectDialog(save_project::View),
 }

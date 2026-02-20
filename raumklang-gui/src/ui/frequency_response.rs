@@ -219,6 +219,7 @@ impl PlotData<f32> for FrequencyResponse {
             return;
         }
 
+        // FIXME: area is drawn wrong when moving / zooming in
         let mut fill_points = Vec::with_capacity(fr.base_smoothed.0.len() + 2);
         fill_points.push(PlotPoint::new(MIN_FREQ, MIN_DB));
         fill_points.extend(fr.base_smoothed.0.iter().copied());
