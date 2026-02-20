@@ -760,6 +760,15 @@ impl Main {
                         self.fr_state.axis_mut(&DB_AXIS_ID).pan(delta.y);
                     }
                 }
+                // clamp
+                let x_axis = self.fr_state.axis_mut(&FREQ_AXIS_ID);
+                let (&min, &max) = x_axis.domain();
+                x_axis.set_domain(min.max(MIN_FREQ), max.min(MAX_FREQ));
+
+                let y_axis = self.fr_state.axis_mut(&DB_AXIS_ID);
+                let (&min, &max) = y_axis.domain();
+                y_axis.set_domain(min.max(MIN_DB), max.min(MAX_DB));
+
                 Task::none()
             }
             Message::SpectralDecayComputed(id, sd) => {
