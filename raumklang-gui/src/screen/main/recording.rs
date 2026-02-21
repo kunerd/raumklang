@@ -1,5 +1,7 @@
 mod page;
 
+use page::Page;
+
 use crate::{
     audio,
     data::{
@@ -7,7 +9,6 @@ use crate::{
         measurement::config,
         recording::{self, volume},
     },
-    screen::main::recording::page::Component,
     widget::{RmsPeakMeter, meter},
 };
 
@@ -296,21 +297,6 @@ impl Recording {
 
                 Action::Task(task)
             }
-            // Message::Measurement(message) => {
-            //     let State::Measurement(page) = &mut self.state else {
-            //         return Action::None;
-            //     };
-
-            //     match page.update(message) {
-            //         Some(measurement) => Action::Finished(match self.kind {
-            //             Kind::Loopback => {
-            //                 Result::Loopback(raumklang_core::Loopback::new(measurement))
-            //             }
-            //             Kind::Measurement => Result::Measurement(measurement),
-            //         }),
-            //         None => Action::None,
-            //     }
-            // }
             Message::RecordingChunk(chunk) => {
                 if let State::Measurement(measurement) = &mut self.state {
                     measurement.data.extend_from_slice(&chunk);
@@ -331,6 +317,8 @@ impl Recording {
                 let measurement =
                     raumklang_core::Measurement::new(backend.sample_rate.into(), data);
 
+                // TODO: do not auto-submit the newly recorded measurement,
+                // let the user decied to keep or discard it, instead
                 Action::Finished(match self.kind {
                     Kind::Loopback => Result::Loopback(raumklang_core::Loopback::new(measurement)),
                     Kind::Measurement => Result::Measurement(measurement),
@@ -374,9 +362,7 @@ impl Recording {
 
     pub fn view<'a>(&'a self) -> Element<'a, Message> {
         let page = match &self.backend {
-            Backend::NotConnected => {
-                page::Component::new("Jack").content(text("Jack is not connected."))
-            }
+            Backend::NotConnected => Page::new("Jack").content(text("Jack is not connected.")),
             Backend::Connected { backend } => match &self.state {
                 State::Setup => self.setup(backend),
                 State::LoudnessTest { loudness, .. } => self.loudness_test(&loudness),
@@ -390,7 +376,19 @@ impl Recording {
         container(page).width(600.0).into()
     }
 
-    fn setup<'a>(&'a self, backend: &'a audio::Backend) -> page::Component<'a, Message> {
+    pub fn subscription(&self) -> Subscription<Message> {
+        let audio_backend = Subscription::run(audio::run).map(Message::AudioBackend);
+
+        let mut subscriptions = vec![audio_backend];
+
+        if let Backend::Retrying { .. } = &self.backend {
+            subscriptions.push(time::every(Duration::from_millis(500)).map(Message::RetryTick));
+        }
+
+        Subscription::batch(subscriptions)
+    }
+
+    fn setup<'a>(&'a self, backend: &'a audio::Backend) -> Page<'a, Message> {
         let range =
             config::FrequencyRange::from_strings(&self.start_frequency, &self.end_frequency);
 
@@ -476,7 +474,7 @@ impl Recording {
             None
         };
 
-        Component::new("Setup")
+        Page::new("Setup")
             .content(row![ports, signal].spacing(8))
             .next_button(
                 "Start test",
@@ -484,7 +482,7 @@ impl Recording {
             )
     }
 
-    fn loudness_test(&self, loudness: &audio::Loudness) -> page::Component<'_, Message> {
+    fn loudness_test(&self, loudness: &audio::Loudness) -> Page<'_, Message> {
         fn loudness_text<'a>(label: &'a str, value: f32) -> Element<'a, Message> {
             column![
                 text(label).size(12).align_y(Vertical::Bottom),
@@ -498,7 +496,7 @@ impl Recording {
         }
 
         let volume = recording::Volume::new(self.volume, loudness);
-        Component::new("Loudness Test ...")
+        Page::new("Loudness Test ...")
             .content(
                 row![
                     container(
@@ -536,20 +534,8 @@ impl Recording {
             .next_button("Next", volume.ok().map(Message::TestOk))
     }
 
-    pub fn subscription(&self) -> Subscription<Message> {
-        let audio_backend = Subscription::run(audio::run).map(Message::AudioBackend);
-
-        let mut subscriptions = vec![audio_backend];
-
-        if let Backend::Retrying { .. } = &self.backend {
-            subscriptions.push(time::every(Duration::from_millis(500)).map(Message::RetryTick));
-        }
-
-        Subscription::batch(subscriptions)
-    }
-
-    fn measurement<'a>(&self, measurement: &'a Measurement) -> Component<'a, Message> {
-        Component::new("Measurement Running ...").content(
+    fn measurement<'a>(&self, measurement: &'a Measurement) -> Page<'a, Message> {
+        Page::new("Measurement Running ...").content(
             row![
                 container(
                     canvas(RmsPeakMeter::new(
@@ -573,7 +559,8 @@ impl Recording {
                         .spacing(10)
                     )
                     .center_x(Fill),
-                    // TODO replace with waveform
+                    // TODO replace with special waveform chart highlighting
+                    // signal parts that are to loud or quiet
                     prism::Chart::<_, (), _>::new()
                         .x_range(0.0..=measurement.finished_len as f32)
                         .y_range(-0.5..=0.5)
@@ -596,8 +583,8 @@ impl Recording {
         )
     }
 
-    fn retry(&self, err: &audio::Error, remaining: &Duration) -> page::Component<'_, Message> {
-        page::Component::new("Jack error")
+    fn retry(&self, err: &audio::Error, remaining: &Duration) -> Page<'_, Message> {
+        Page::new("Jack error")
             .content(
                 container(
                     column![
