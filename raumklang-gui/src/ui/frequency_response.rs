@@ -123,15 +123,23 @@ impl FrequencyResponse {
         let len = fr.data.len() * 2 + 1;
         let resolution = sample_rate as f32 / len as f32;
 
-        // FIXME add start and end
-        let mut curve = Vec::with_capacity(len);
-        for (i, s) in data.iter().enumerate() {
-            curve.push(PlotPoint::new(i as f32 * resolution, dbfs(*s)));
-        }
+        // TODO: move computation into `SpectrumLayer` contructor?
+        let base_smoothed = data
+            .iter()
+            .enumerate()
+            .map(|(i, s)| PlotPoint::new(i as f32 * resolution, dbfs(*s)))
+            // NOTE: the `.filter()` and `.map()` below are a workarounds for an
+            // BUG in `iced_aksel` that messes up the area drawing
+            .filter(|p| p.x > 0.0)
+            .map(|mut p| {
+                p.y = p.y.clamp(MIN_DB, 12.0);
+                p
+            })
+            .collect();
 
         self.state = State::Computed(Data {
             origin: fr,
-            base_smoothed: SpectrumLayer(curve),
+            base_smoothed: SpectrumLayer(base_smoothed),
             smoothed: None,
         })
     }
@@ -219,7 +227,7 @@ impl PlotData<f32> for FrequencyResponse {
             return;
         }
 
-        // FIXME: area is drawn wrong when moving / zooming in
+        // TODO: consider pre-computing the area, too
         let mut fill_points = Vec::with_capacity(fr.base_smoothed.0.len() + 2);
         fill_points.push(PlotPoint::new(MIN_FREQ, MIN_DB));
         fill_points.extend(fr.base_smoothed.0.iter().copied());
