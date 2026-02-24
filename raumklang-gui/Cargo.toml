@@ -9,7 +9,6 @@ path = "src/main.rs"
 
 [dependencies]
 raumklang-core = { workspace = true }
-# prism = "0.2"
 tokio = { version = "1.35", features = [ "fs", "macros", "sync" ] }
 tokio-stream = "0.1"
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"]}
@@ -29,7 +28,6 @@ ndarray = "0.16.1"
 ndarray-interp = "0.5.0"
 ndarray-stats = "0.6.0"
 chrono = "0.4.42"
-# generic_overlay = { package = "widgets", git = "https://github.com/A-Disruption/widgets.git", version = "0.1.0", default-features=false, features = ["generic_overlay"]}
 colorous = "1.0.16"
 iced_aksel = "0.3.0-dev"
 

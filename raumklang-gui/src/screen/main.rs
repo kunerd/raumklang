@@ -49,13 +49,13 @@ use iced::{
 };
 use rfd::FileHandle;
 
-use std::io;
 use std::{
     collections::BTreeMap,
     mem,
     path::{Path, PathBuf},
     sync::Arc,
 };
+use std::{fmt, io};
 
 pub struct Main {
     state: State,
@@ -130,7 +130,7 @@ pub enum Message {
     NewProject,
     LoadProject,
     ProjectLoaded(Result<(Arc<Project>, PathBuf), PickAndLoadError>),
-    SaveProject(PathBuf),
+    SaveProject,
     OpenSaveProjectDialog,
     ProjectSaved(Result<(PathBuf, Project), ProjectError>),
     LoadRecentProject(usize),
@@ -174,6 +174,17 @@ pub enum Message {
 
     PendingWindow(pending_window::Message),
     ProjectSaveDialog(save_project::Message),
+    OpenRecentDialog,
+    EscapeKeyReleased,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProjectMenu {
+    New,
+    Save,
+    Load,
+    LoadRecent,
+    SaveAs,
 }
 
 impl Main {
@@ -230,14 +241,7 @@ impl Main {
                 *self = view;
                 tasks
             }
-            Message::OpenSaveProjectDialog => {
-                self.modal = Modal::SaveProjectDialog(save_project::View::new(
-                    self.measurement_operation,
-                    self.export_from_memory,
-                ));
-
-                Task::none()
-            }
+            Message::OpenSaveProjectDialog => self.open_project_dialog(),
             Message::ProjectSaveDialog(msg) => {
                 let Modal::SaveProjectDialog(dialog) = &mut self.modal else {
                     return Task::none();
@@ -255,8 +259,16 @@ impl Main {
                     }
                 }
             }
-            Message::SaveProject(path) => {
-                self.save_project(path, self.measurement_operation, self.export_from_memory)
+            Message::SaveProject => {
+                if let Some(path) = self.project_path.as_ref() {
+                    self.save_project(
+                        path.clone(),
+                        self.measurement_operation,
+                        self.export_from_memory,
+                    )
+                } else {
+                    self.open_project_dialog()
+                }
             }
             Message::ProjectSaved(Ok((path, project))) => {
                 // TODO: replace with soft-reload
@@ -989,6 +1001,13 @@ impl Main {
                 self.ir_chart.shift_key_released();
                 Task::none()
             }
+            Message::EscapeKeyReleased => {
+                if let Modal::OpenRecentProject = self.modal {
+                    self.modal = Modal::None;
+                }
+
+                Task::none()
+            }
             Message::ProjectLoaded(Err(err)) => {
                 log::error!("{err}");
                 Task::none()
@@ -997,54 +1016,37 @@ impl Main {
                 log::error!("Could not save project to {:?} - {err}", self.project_path);
                 Task::none()
             }
+            Message::OpenRecentDialog => {
+                self.modal = Modal::OpenRecentProject;
+                Task::none()
+            }
         }
+    }
+
+    fn open_project_dialog(&mut self) -> Task<Message> {
+        self.modal = Modal::SaveProjectDialog(save_project::View::new(
+            self.measurement_operation,
+            self.export_from_memory,
+        ));
+
+        Task::none()
     }
 
     pub fn view<'a>(&'a self, recent_projects: &'a RecentProjects) -> Element<'a, Message> {
         let header = {
-            // let project_menu = {
-            //     let recent_project_entries = column(
-            //         recent_projects
-            //             .iter()
-            //             .enumerate()
-            //             .filter_map(|(i, p)| p.file_name().map(|f| (i, f)))
-            //             .filter_map(|(i, p)| p.to_str().map(|f| (i, f)))
-            //             .map(|(i, s)| {
-            //                 button(s)
-            //                     .on_press(Message::LoadRecentProject(i))
-            //                     .style(button::subtle)
-            //                     .width(Length::Fill)
-            //                     .into()
-            //             }),
-            //     )
-            //     .width(Length::Fill);
-            //     column![
-            //         button("New")
-            //             .on_press(Message::NewProject)
-            //             .style(button::subtle)
-            //             .width(Length::Fill),
-            //         button("Save")
-            //             .on_press(if let Some(path) = self.project_path.as_ref() {
-            //                 Message::SaveProject(path.clone())
-            //             } else {
-            //                 Message::OpenSaveProjectDialog
-            //             })
-            //             .style(button::subtle)
-            //             .width(Length::Fill),
-            //         button("Save as ..")
-            //             .on_press(Message::OpenSaveProjectDialog)
-            //             .style(button::subtle)
-            //             .width(Length::Fill),
-            //         button("Open ...")
-            //             .on_press(Message::LoadProject)
-            //             .style(button::subtle)
-            //             .width(Length::Fill),
-            //         dropdown_menu("Open recent ...", recent_project_entries)
-            //             .style(button::subtle)
-            //             .width(Length::Fill),
-            //     ]
-            //     .width(Length::Fill)
-            // };
+            let project_menu = {
+                container(
+                    pick_list(
+                        None::<ProjectMenu>,
+                        ProjectMenu::ALL,
+                        ProjectMenu::to_string,
+                    )
+                    .text_size(20)
+                    .placeholder("Project")
+                    .on_select(Message::from),
+                )
+                .padding(5)
+            };
 
             let tab = |s, is_active, id: Option<_>| {
                 button(text(s).size(20))
@@ -1098,12 +1100,9 @@ impl Main {
             .spacing(5)
             .align_y(Center);
 
-            container(column![
-                // dropdown_root("Project", project_menu).style(button::secondary),
-                tabs,
-            ])
-            .width(Length::Fill)
-            .style(container::dark)
+            container(row![project_menu, tabs,].align_y(Center))
+                .width(Length::Fill)
+                .style(container::dark)
         };
 
         let content = {
@@ -1153,6 +1152,11 @@ impl Main {
                 modal(content, dialog.view().map(Message::ProjectSaveDialog))
             }
             Modal::Recording(recording) => modal(content, recording.view().map(Message::Recording)),
+            // TODO: make modal closable by clicking into the free space
+            Modal::OpenRecentProject => modal(
+                content,
+                modal::load_recent_project(&recent_projects, Message::LoadRecentProject),
+            ),
         }
     }
 
@@ -1655,6 +1659,7 @@ impl Main {
                 ..
             } => match key {
                 key::Named::Shift => Some(Message::ShiftKeyReleased),
+                key::Named::Escape => Some(Message::EscapeKeyReleased),
                 _ => None?,
             },
             _ => None,
@@ -1688,6 +1693,42 @@ impl Main {
             ),
             Message::ProjectSaved,
         )
+    }
+}
+
+impl ProjectMenu {
+    const ALL: [ProjectMenu; 5] = [
+        ProjectMenu::New,
+        ProjectMenu::Save,
+        ProjectMenu::Load,
+        ProjectMenu::LoadRecent,
+        ProjectMenu::SaveAs,
+    ];
+}
+
+impl fmt::Display for ProjectMenu {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let title = match self {
+            ProjectMenu::New => "New",
+            ProjectMenu::Load => "Load ...",
+            ProjectMenu::Save => "Save",
+            ProjectMenu::SaveAs => "Save as ...",
+            ProjectMenu::LoadRecent => "Load recent ...",
+        };
+
+        write!(f, "{}", title)
+    }
+}
+
+impl From<ProjectMenu> for Message {
+    fn from(menu: ProjectMenu) -> Self {
+        match menu {
+            ProjectMenu::New => Message::NewProject,
+            ProjectMenu::Load => Message::LoadProject,
+            ProjectMenu::Save => Message::SaveProject,
+            ProjectMenu::SaveAs => Message::OpenSaveProjectDialog,
+            ProjectMenu::LoadRecent => Message::OpenRecentDialog,
+        }
     }
 }
 

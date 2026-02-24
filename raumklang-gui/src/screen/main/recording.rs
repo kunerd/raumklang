@@ -5,12 +5,11 @@ use page::Page;
 use crate::{
     audio,
     data::{
-        self, SampleRate, Samples, Window,
+        self, SampleRate,
         measurement::config,
         recording::{self, volume},
     },
-    screen::main::chart::{self, Zoom},
-    ui::measurement,
+    screen::main::chart::{self},
     widget::{RmsPeakMeter, meter},
 };
 
