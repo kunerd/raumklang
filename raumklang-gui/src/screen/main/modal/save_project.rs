@@ -167,10 +167,11 @@ impl View {
                     column![
                         text("Choose how imported measurements should be handled"),
                         pick_list(
-                            Operation::ALL,
                             Some(&self.measurement_operation),
-                            Message::ChangeOperation
+                            Operation::ALL,
+                            Operation::to_string
                         )
+                        .on_select(Message::ChangeOperation)
                     ]
                     .spacing(10)
                 };

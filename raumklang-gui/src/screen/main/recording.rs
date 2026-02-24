@@ -9,6 +9,8 @@ use crate::{
         measurement::config,
         recording::{self, volume},
     },
+    screen::main::chart,
+    ui::measurement,
     widget::{RmsPeakMeter, meter},
 };
 
@@ -19,9 +21,10 @@ use iced::{
     Subscription, Task,
     alignment::{Horizontal, Vertical},
     task, time,
-    widget::{self, canvas, column, container, pick_list, row, rule, slider, text, text_input},
+    widget::{
+        self, canvas, center, column, container, pick_list, row, rule, slider, text, text_input,
+    },
 };
-use prism::line_series;
 use tokio_stream::wrappers::ReceiverStream;
 
 use std::{fmt, sync::Arc, time::Duration};
@@ -56,8 +59,9 @@ pub enum State {
 pub struct Measurement {
     finished_len: usize,
     loudness: audio::Loudness,
-    data: Vec<f32>,
+    pub data: Vec<f32>,
     cache: canvas::Cache,
+    _stream_handle: task::Handle,
 }
 
 #[derive(Debug, Clone)]
@@ -99,6 +103,8 @@ pub enum Message {
 
     RecordingChunk(Box<[f32]>),
     RecordingFinished,
+
+    Chart(chart::waveform::Interaction),
 
     Back,
     Cancel,
@@ -213,12 +219,14 @@ impl Recording {
                 Action::Task(Task::future(backend.clone().set_volume(volume)).discard())
             }
             Message::RmsChanged(new_loudness) => {
-                let State::LoudnessTest { loudness, .. } = &mut self.state else {
-                    return Action::None;
-                };
+                if let State::LoudnessTest { loudness, .. } = &mut self.state {
+                    *loudness = new_loudness;
+                    self.cache.clear();
+                }
 
-                *loudness = new_loudness;
-                self.cache.clear();
+                if let State::Measurement(measurement) = &mut self.state {
+                    measurement.loudness = new_loudness;
+                }
 
                 Action::None
             }
@@ -264,6 +272,9 @@ impl Recording {
                     return Action::None;
                 };
 
+                _stream_handle.abort();
+                drop(_stream_handle);
+
                 let sample_rate = backend.sample_rate;
                 let finished_len = data::Samples::from_duration(
                     signal_config.duration().into_inner(),
@@ -279,18 +290,23 @@ impl Recording {
                     }
                 });
 
+                let (sipper, handle) =
+                    Task::sip(measurement_sipper, Message::RecordingChunk, |_| {
+                        Message::RecordingFinished
+                    })
+                    .abortable();
+
                 let measurement = Measurement {
                     finished_len,
                     loudness: audio::Loudness::default(),
                     data: vec![],
                     cache: canvas::Cache::new(),
+                    _stream_handle: handle,
                 };
 
                 let task = Task::batch(vec![
                     Task::stream(ReceiverStream::new(loudness_receiver)).map(Message::RmsChanged),
-                    Task::sip(measurement_sipper, Message::RecordingChunk, |_| {
-                        Message::RecordingFinished
-                    }),
+                    sipper,
                 ]);
 
                 self.state = State::Measurement(measurement);
@@ -300,6 +316,7 @@ impl Recording {
             Message::RecordingChunk(chunk) => {
                 if let State::Measurement(measurement) = &mut self.state {
                     measurement.data.extend_from_slice(&chunk);
+                    measurement.cache.clear();
                 };
 
                 Action::None
@@ -313,16 +330,17 @@ impl Recording {
                     return Action::None;
                 };
 
-                let data = std::mem::take(&mut measurement.data);
-                let measurement =
-                    raumklang_core::Measurement::new(backend.sample_rate.into(), data);
+                // let data = std::mem::take(&mut measurement.data);
+                // let measurement =
+                //     raumklang_core::Measurement::new(backend.sample_rate.into(), data);
 
                 // TODO: do not auto-submit the newly recorded measurement,
                 // let the user decied to keep or discard it, instead
-                Action::Finished(match self.kind {
-                    Kind::Loopback => Result::Loopback(raumklang_core::Loopback::new(measurement)),
-                    Kind::Measurement => Result::Measurement(measurement),
-                })
+                // Action::Finished(match self.kind {
+                //     Kind::Loopback => Result::Loopback(raumklang_core::Loopback::new(measurement)),
+                //     Kind::Measurement => Result::Measurement(measurement),
+                // })
+                Action::None
             }
             Message::Cancel => Action::Cancel,
             Message::Back => {
@@ -355,6 +373,10 @@ impl Recording {
             }
             Message::DurationChanged(duration) => {
                 self.duration = duration;
+                Action::None
+            }
+            Message::Chart(_interaction) => {
+                // no interaction needed at this point
                 Action::None
             }
         }
@@ -401,10 +423,11 @@ impl Recording {
                     column![
                         text("Out"),
                         pick_list(
-                            backend.out_ports.as_slice(),
                             self.selected_out_port.as_ref(),
-                            Message::OutPortSelected
+                            backend.out_ports.as_slice(),
+                            String::to_string
                         )
+                        .on_select(Message::OutPortSelected)
                         .style(|t, s| {
                             let mut base = pick_list::default(t, s);
                             base.background =
@@ -416,10 +439,11 @@ impl Recording {
                     column![
                         text("In"),
                         pick_list(
-                            backend.in_ports.as_slice(),
                             self.selected_in_port.as_ref(),
-                            Message::InPortSelected
+                            backend.in_ports.as_slice(),
+                            String::to_string
                         )
+                        .on_select(Message::InPortSelected)
                         .style(|t, s| {
                             let mut base = pick_list::default(t, s);
                             base.background =
@@ -534,14 +558,14 @@ impl Recording {
             .next_button("Next", volume.ok().map(Message::TestOk))
     }
 
-    fn measurement<'a>(&self, measurement: &'a Measurement) -> Page<'a, Message> {
+    fn measurement<'a>(&'a self, measurement: &'a Measurement) -> Page<'a, Message> {
         Page::new("Measurement Running ...").content(
             row![
                 container(
                     canvas(RmsPeakMeter::new(
                         measurement.loudness.rms,
                         measurement.loudness.peak,
-                        &measurement.cache
+                        &self.cache
                     ))
                     .width(60)
                     .height(200)
@@ -559,22 +583,16 @@ impl Recording {
                         .spacing(10)
                     )
                     .center_x(Fill),
-                    // TODO replace with special waveform chart highlighting
-                    // signal parts that are to loud or quiet
-                    prism::Chart::<_, (), _>::new()
-                        .x_range(0.0..=measurement.finished_len as f32)
-                        .y_range(-0.5..=0.5)
-                        .push_series(
-                            line_series(
-                                measurement
-                                    .data
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(i, s)| (i as f32, *s))
-                            )
-                            .color(iced::Color::from_rgb8(50, 175, 50).scale_alpha(0.6))
+                    if !measurement.data.is_empty() {
+                        center(
+                            chart::record_waveform(&measurement, &measurement.cache)
+                                .map(Message::Chart),
                         )
+                    } else {
+                        center(text!("No data, yet."))
+                    }
                 ]
+                .height(500)
                 .spacing(12)
                 .padding(10)
             ]

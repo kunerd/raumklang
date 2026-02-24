@@ -5,7 +5,7 @@ use waveform::Waveform;
 
 use crate::{
     data::{self, Samples, Window, chart, window::Handles},
-    screen::main::chart::spectrogram::Spectrogram,
+    screen::main::{chart::spectrogram::Spectrogram, recording},
     ui,
 };
 
@@ -31,6 +31,32 @@ use std::{
     cmp::Ordering,
     ops::{Add, RangeInclusive, Sub},
 };
+
+pub fn record_waveform<'a>(
+    measurement: &'a recording::Measurement,
+    cache: &'a canvas::Cache,
+) -> Element<'a, waveform::Interaction, iced::Theme> {
+    canvas::Canvas::new(Waveform {
+        datapoints: measurement.data.iter().copied(),
+        cache,
+        cmp: |a, b| a.total_cmp(b),
+        y_to_float: |s| s,
+        to_x_scale: |i| i,
+        // to_x_scale: move |i| match time_unit {
+        //     chart::TimeSeriesUnit::Time => time_scale(i, impulse_response.sample_rate.into()),
+        //     chart::TimeSeriesUnit::Samples => i as f32,
+        // },
+        // to_y_scale: move |s| match amplitude_unit {
+        //     chart::AmplitudeUnit::PercentFullScale => percent_full_scale(s),
+        //     chart::AmplitudeUnit::DezibelFullScale => db_full_scale(s),
+        // },
+        zoom: Zoom::default(),
+        offset: Offset::default(),
+    })
+    .width(Fill)
+    .height(Fill)
+    .into()
+}
 
 pub fn waveform<'a>(
     measurement: &'a raumklang_core::Measurement,
@@ -946,6 +972,8 @@ fn min_bounds(content: &str, font_size: Pixels) -> iced::Size {
         align_y: alignment::Vertical::Center,
         shaping: text::Shaping::Advanced,
         wrapping: text::Wrapping::default(),
+        ellipsis: text::Ellipsis::default(),
+        hint_factor: None,
     };
 
     let paragraph = Paragraph::with_text(text);

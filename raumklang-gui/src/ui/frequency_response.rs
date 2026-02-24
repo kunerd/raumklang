@@ -2,9 +2,9 @@ use crate::data::{SampleRate, smooth_fractional_octave};
 use crate::widget::sidebar;
 use crate::{data, icon};
 
-use iced::Alignment;
 use iced::widget::stack;
 use iced::widget::text::IntoFragment;
+use iced::{Alignment, Theme};
 use iced::{
     Element, Length,
     widget::{column, container, row, text, toggler},

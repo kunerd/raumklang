@@ -35,7 +35,7 @@ use impulse_response::ChartOperation;
 use recording::Recording;
 
 use chrono::{DateTime, Utc};
-use generic_overlay::generic_overlay::{dropdown_menu, dropdown_root};
+// use generic_overlay::generic_overlay::{dropdown_menu, dropdown_root};
 
 use iced::{
     Alignment::{self, Center},
@@ -1002,49 +1002,49 @@ impl Main {
 
     pub fn view<'a>(&'a self, recent_projects: &'a RecentProjects) -> Element<'a, Message> {
         let header = {
-            let project_menu = {
-                let recent_project_entries = column(
-                    recent_projects
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, p)| p.file_name().map(|f| (i, f)))
-                        .filter_map(|(i, p)| p.to_str().map(|f| (i, f)))
-                        .map(|(i, s)| {
-                            button(s)
-                                .on_press(Message::LoadRecentProject(i))
-                                .style(button::subtle)
-                                .width(Length::Fill)
-                                .into()
-                        }),
-                )
-                .width(Length::Fill);
-                column![
-                    button("New")
-                        .on_press(Message::NewProject)
-                        .style(button::subtle)
-                        .width(Length::Fill),
-                    button("Save")
-                        .on_press(if let Some(path) = self.project_path.as_ref() {
-                            Message::SaveProject(path.clone())
-                        } else {
-                            Message::OpenSaveProjectDialog
-                        })
-                        .style(button::subtle)
-                        .width(Length::Fill),
-                    button("Save as ..")
-                        .on_press(Message::OpenSaveProjectDialog)
-                        .style(button::subtle)
-                        .width(Length::Fill),
-                    button("Open ...")
-                        .on_press(Message::LoadProject)
-                        .style(button::subtle)
-                        .width(Length::Fill),
-                    dropdown_menu("Open recent ...", recent_project_entries)
-                        .style(button::subtle)
-                        .width(Length::Fill),
-                ]
-                .width(Length::Fill)
-            };
+            // let project_menu = {
+            //     let recent_project_entries = column(
+            //         recent_projects
+            //             .iter()
+            //             .enumerate()
+            //             .filter_map(|(i, p)| p.file_name().map(|f| (i, f)))
+            //             .filter_map(|(i, p)| p.to_str().map(|f| (i, f)))
+            //             .map(|(i, s)| {
+            //                 button(s)
+            //                     .on_press(Message::LoadRecentProject(i))
+            //                     .style(button::subtle)
+            //                     .width(Length::Fill)
+            //                     .into()
+            //             }),
+            //     )
+            //     .width(Length::Fill);
+            //     column![
+            //         button("New")
+            //             .on_press(Message::NewProject)
+            //             .style(button::subtle)
+            //             .width(Length::Fill),
+            //         button("Save")
+            //             .on_press(if let Some(path) = self.project_path.as_ref() {
+            //                 Message::SaveProject(path.clone())
+            //             } else {
+            //                 Message::OpenSaveProjectDialog
+            //             })
+            //             .style(button::subtle)
+            //             .width(Length::Fill),
+            //         button("Save as ..")
+            //             .on_press(Message::OpenSaveProjectDialog)
+            //             .style(button::subtle)
+            //             .width(Length::Fill),
+            //         button("Open ...")
+            //             .on_press(Message::LoadProject)
+            //             .style(button::subtle)
+            //             .width(Length::Fill),
+            //         dropdown_menu("Open recent ...", recent_project_entries)
+            //             .style(button::subtle)
+            //             .width(Length::Fill),
+            //     ]
+            //     .width(Length::Fill)
+            // };
 
             let tab = |s, is_active, id: Option<_>| {
                 button(text(s).size(20))
@@ -1099,7 +1099,7 @@ impl Main {
             .align_y(Center);
 
             container(column![
-                dropdown_root("Project", project_menu).style(button::secondary),
+                // dropdown_root("Project", project_menu).style(button::secondary),
                 tabs,
             ])
             .width(Length::Fill)
@@ -1356,11 +1356,14 @@ impl Main {
         };
 
         let header = {
-            row![pick_list(
-                frequency_response::Smoothing::ALL,
-                Some(&self.smoothing),
-                Message::ChangeSmoothing,
-            )]
+            row![
+                pick_list(
+                    Some(&self.smoothing),
+                    frequency_response::Smoothing::ALL,
+                    frequency_response::Smoothing::to_string,
+                )
+                .on_select(Message::ChangeSmoothing)
+            ]
         };
 
         let frequency_responses = analyses.values().map(|a| &a.frequency_response);

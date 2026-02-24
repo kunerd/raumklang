@@ -3,7 +3,7 @@ use iced::{
     advanced::{graphics::text::Paragraph, text::Paragraph as _},
     widget::{
         canvas,
-        text::{LineHeight, Shaping},
+        text::{Ellipsis, LineHeight, Shaping, Wrapping},
     },
 };
 
@@ -69,6 +69,8 @@ impl<'a, Message> canvas::Program<Message> for RmsPeakMeter<'a> {
             line_height: LineHeight::default(),
             shaping: iced::widget::text::Shaping::Basic,
             wrapping: iced::widget::text::Wrapping::None,
+            ellipsis: Ellipsis::default(),
+            hint_factor: None,
         })
         .min_bounds();
 
@@ -139,6 +141,8 @@ impl<'a, Message> canvas::Program<Message> for RmsPeakMeter<'a> {
                     max_width: f32::INFINITY,
                     line_height: LineHeight::default(),
                     shaping: Shaping::Basic,
+                    ellipsis: Ellipsis::default(),
+                    wrapping: Wrapping::default(),
                 });
             }
         });

@@ -3,7 +3,7 @@ use super::{HorizontalAxis, Offset, VerticalAxis, Zoom};
 use iced::{
     Event, Point, Rectangle, Renderer, Size, Vector,
     mouse::{self, ScrollDelta},
-    widget::canvas::{self},
+    widget::canvas::{self, Frame},
 };
 
 use std::cmp::Ordering;
@@ -107,6 +107,8 @@ where
     ) -> Vec<canvas::Geometry<Renderer>> {
         let palette = theme.extended_palette();
 
+        // let mut frame = Frame::with_bounds(renderer, bounds);
+        // let mut frame = Frame::new(renderer, bounds.size());
         let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
             let x_min = f32::from(self.offset) * f32::from(self.zoom);
             let x_max = (self.datapoints.clone().count() as f32 + f32::from(self.offset))
@@ -120,15 +122,22 @@ where
                     .count()
                     .saturating_add_signed(self.offset.0);
 
+            if max_index < 2 {
+                // return vec![];
+                return;
+            }
+
             let x_range = x_min..=x_max;
             let x_axis = HorizontalAxis::new(x_range, &self.to_x_scale, 10);
 
             let datapoints = self.datapoints.clone().skip(min_index).take(max_index);
 
             let Some(y_min) = datapoints.clone().min_by(self.cmp) else {
+                // return vec![];
                 return;
             };
             let Some(y_max) = datapoints.clone().max_by(self.cmp) else {
+                // return vec![];
                 return;
             };
 
@@ -174,5 +183,7 @@ where
         });
 
         vec![geometry]
+
+        // vec![frame.into_geometry()]
     }
 }

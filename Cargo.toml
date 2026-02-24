@@ -13,4 +13,8 @@ default-members = ["raumklang-gui"]
 raumklang-core = { path = "./raumklang-core" }
 
 [patch.crates-io]
-prism = { git = "https://github.com/kunerd/prism.git", branch ="refactor_axis_drawing" }
+iced = { git = "https://github.com/iced-rs/iced.git", branch = "master" }
+iced_core = { git = "https://github.com/iced-rs/iced.git", branch = "master"}
+iced_graphics = { git = "https://github.com/iced-rs/iced.git", branch = "master"}
+iced_renderer = { git = "https://github.com/iced-rs/iced.git", branch = "master"}
+iced_aksel = { path = "../extern/iced_aksel/iced_aksel" }

@@ -185,7 +185,7 @@ where
     }
 
     pub fn sample_rate(&self) -> usize {
-        self.client.as_client().sample_rate()
+        self.client.as_client().sample_rate() as usize
     }
 
     pub fn play_signal(&self, signal: J) -> Result<Receiver<bool>, AudioBackendError> {

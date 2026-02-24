@@ -1,7 +1,10 @@
 use super::chart;
 
 use crate::{
-    data::{self, Window},
+    data::{
+        self, Window,
+        chart::{AmplitudeUnit, TimeSeriesUnit},
+    },
     ui::ImpulseResponse,
 };
 
@@ -52,10 +55,11 @@ impl Chart {
     ) -> Element<'a, ChartOperation> {
         let header = {
             pick_list(
-                &data::chart::AmplitudeUnit::ALL[..],
                 Some(&self.amplitude_unit),
-                ChartOperation::AmplitudeUnitChanged,
+                &AmplitudeUnit::ALL[..],
+                AmplitudeUnit::to_string,
             )
+            .on_select(ChartOperation::AmplitudeUnitChanged)
         };
 
         let chart = {
@@ -77,11 +81,14 @@ impl Chart {
 
         let footer = {
             row![
-                container(pick_list(
-                    &data::chart::TimeSeriesUnit::ALL[..],
-                    Some(&self.time_unit),
-                    ChartOperation::TimeUnitChanged
-                ))
+                container(
+                    pick_list(
+                        Some(&self.time_unit),
+                        &TimeSeriesUnit::ALL[..],
+                        TimeSeriesUnit::to_string
+                    )
+                    .on_select(ChartOperation::TimeUnitChanged)
+                )
                 .align_right(Length::Fill)
             ]
             .align_y(Alignment::Center)

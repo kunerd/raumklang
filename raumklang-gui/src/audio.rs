@@ -234,7 +234,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                             let sample_rate = client.as_client().sample_rate();
                             let signal = raumklang_core::signals::PinkNoise::with_amplitude(0.8)
                                 .take_duration(
-                                    sample_rate,
+                                    sample_rate as usize,
                                     data::Samples::from_duration(
                                         duration,
                                         data::SampleRate::new(sample_rate as u32),
@@ -274,7 +274,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                                 end_frequency.into(),
                                 0.8,
                                 (duration.as_secs() * sample_rate as u64) as usize,
-                                sample_rate,
+                                sample_rate as usize,
                             );
 
                             let left = (sample_rate as f32 * 0.01) as usize;
