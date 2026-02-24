@@ -6,7 +6,7 @@ use iced::{
     widget::canvas::{self, Frame},
 };
 
-use std::cmp::Ordering;
+use std::{cmp::Ordering, ops::RangeInclusive};
 
 #[derive(Debug, Clone)]
 pub enum Interaction {
@@ -25,6 +25,7 @@ where
     pub to_x_scale: ScaleX,
     pub zoom: Zoom,
     pub offset: Offset,
+    pub y_range: Option<RangeInclusive<Y>>,
 }
 
 #[derive(Default)]
@@ -107,8 +108,6 @@ where
     ) -> Vec<canvas::Geometry<Renderer>> {
         let palette = theme.extended_palette();
 
-        // let mut frame = Frame::with_bounds(renderer, bounds);
-        // let mut frame = Frame::new(renderer, bounds.size());
         let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
             let x_min = f32::from(self.offset) * f32::from(self.zoom);
             let x_max = (self.datapoints.clone().count() as f32 + f32::from(self.offset))
@@ -123,7 +122,6 @@ where
                     .saturating_add_signed(self.offset.0);
 
             if max_index < 2 {
-                // return vec![];
                 return;
             }
 
@@ -133,18 +131,23 @@ where
             let datapoints = self.datapoints.clone().skip(min_index).take(max_index);
 
             let Some(y_min) = datapoints.clone().min_by(self.cmp) else {
-                // return vec![];
                 return;
             };
             let Some(y_max) = datapoints.clone().max_by(self.cmp) else {
-                // return vec![];
                 return;
             };
 
-            let y_min = (self.y_to_float)(y_min);
-            let y_max = (self.y_to_float)(y_max);
+            let y_range = if let Some(range) = self.y_range.as_ref() {
+                let y_min = (self.y_to_float)(*range.start());
+                let y_max = (self.y_to_float)(*range.end());
 
-            let y_range = y_min..=y_max;
+                y_min..=y_max
+            } else {
+                let y_min = (self.y_to_float)(y_min);
+                let y_max = (self.y_to_float)(y_max);
+
+                y_min..=y_max
+            };
             let y_axis = VerticalAxis::new(y_range, 10);
 
             let plane = Rectangle::new(
@@ -183,7 +186,5 @@ where
         });
 
         vec![geometry]
-
-        // vec![frame.into_geometry()]
     }
 }

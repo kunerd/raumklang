@@ -2,7 +2,6 @@ use rand::{distributions, distributions::Distribution, rngs, SeedableRng};
 
 #[derive(Debug, Clone)]
 pub struct WhiteNoise {
-    amplitude: f32,
     rng: rngs::SmallRng,
     distribution: distributions::Uniform<f32>,
 }
@@ -10,9 +9,8 @@ pub struct WhiteNoise {
 impl WhiteNoise {
     pub fn with_amplitude(amplitude: f32) -> Self {
         WhiteNoise {
-            amplitude,
             rng: rngs::SmallRng::from_entropy(),
-            distribution: distributions::Uniform::new_inclusive(-1.0, 1.0),
+            distribution: distributions::Uniform::new_inclusive(-amplitude, amplitude),
         }
     }
 
@@ -31,7 +29,7 @@ impl Iterator for WhiteNoise {
     type Item = f32;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let sample = self.amplitude * self.distribution.sample(&mut self.rng);
+        let sample = self.distribution.sample(&mut self.rng);
         Some(sample)
     }
 }

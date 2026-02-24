@@ -262,13 +262,6 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                             data_sender,
                         }) => {
                             let sample_rate = client.as_client().sample_rate();
-                            // let sweep = raumklang_core::signals::LinearSineSweep::new(
-                            //     start_frequency,
-                            //     end_frequency,
-                            //     duration,
-                            //     0.8,
-                            //     sample_rate,
-                            // );
                             let sweep = raumklang_core::signals::ExponentialSweep::new(
                                 start_frequency.into(),
                                 end_frequency.into(),
@@ -277,6 +270,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                                 sample_rate as usize,
                             );
 
+                            // TODO make window configureable
                             let left = (sample_rate as f32 * 0.01) as usize;
                             let right = (sample_rate as f32 * 0.01) as usize;
                             let offset = sweep.clone().count() - left - right;
@@ -296,15 +290,20 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                                 .map(move |(i, s)| s * window[i]);
 
                             // TODO: make configurable
+                            // NOTE: this adds some silence in front of the sweep
                             let sweep = (0..22_000)
                                 .map(|_| 0.0)
                                 .chain(sweep)
                                 .chain((0..20_000).map(|_| 0.0));
 
                             let buf_size = client.as_client().buffer_size() as usize;
-                            let (producer, consumer) = measurement::create(buf_size);
 
+                            let (producer, consumer) = measurement::create(buf_size);
                             let process_msg = ProcessHandlerMessage::Measurement(producer);
+
+                            // FIXME: this is experimental
+                            // wait until jack's buf is empty
+                            thread::sleep(Duration::from_secs(1));
 
                             // TODO: refactor
                             let _ = process_tx.try_push(process_msg);

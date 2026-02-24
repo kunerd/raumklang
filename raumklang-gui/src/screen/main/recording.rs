@@ -5,11 +5,11 @@ use page::Page;
 use crate::{
     audio,
     data::{
-        self,
+        self, SampleRate, Samples, Window,
         measurement::config,
         recording::{self, volume},
     },
-    screen::main::chart,
+    screen::main::chart::{self, Zoom},
     ui::measurement,
     widget::{RmsPeakMeter, meter},
 };
@@ -57,9 +57,11 @@ pub enum State {
 
 #[derive(Debug)]
 pub struct Measurement {
-    finished_len: usize,
     loudness: audio::Loudness,
-    pub data: Vec<f32>,
+
+    data: Vec<f32>,
+
+    finished: bool,
     cache: canvas::Cache,
     _stream_handle: task::Handle,
 }
@@ -104,11 +106,13 @@ pub enum Message {
     RecordingChunk(Box<[f32]>),
     RecordingFinished,
 
-    Chart(chart::waveform::Interaction),
+    Chart(()),
 
     Back,
     Cancel,
     RetryNow,
+    Decline,
+    Accept,
 }
 
 pub enum Action {
@@ -264,23 +268,11 @@ impl Recording {
                 let State::LoudnessTest {
                     signal_config,
                     _stream_handle,
-                    // loudness,
-                    //port_config,
                     ..
                 } = std::mem::take(&mut self.state)
                 else {
                     return Action::None;
                 };
-
-                _stream_handle.abort();
-                drop(_stream_handle);
-
-                let sample_rate = backend.sample_rate;
-                let finished_len = data::Samples::from_duration(
-                    signal_config.duration().into_inner(),
-                    sample_rate,
-                )
-                .into();
 
                 let (loudness_receiver, mut data_receiver) = backend.run_measurement(signal_config);
 
@@ -297,11 +289,11 @@ impl Recording {
                     .abortable();
 
                 let measurement = Measurement {
-                    finished_len,
                     loudness: audio::Loudness::default(),
                     data: vec![],
                     cache: canvas::Cache::new(),
                     _stream_handle: handle,
+                    finished: false,
                 };
 
                 let task = Task::batch(vec![
@@ -322,24 +314,9 @@ impl Recording {
                 Action::None
             }
             Message::RecordingFinished => {
-                let Backend::Connected { backend } = &self.backend else {
-                    return Action::None;
+                if let State::Measurement(measurement) = &mut self.state {
+                    measurement.finished = true;
                 };
-
-                let State::Measurement(measurement) = &mut self.state else {
-                    return Action::None;
-                };
-
-                // let data = std::mem::take(&mut measurement.data);
-                // let measurement =
-                //     raumklang_core::Measurement::new(backend.sample_rate.into(), data);
-
-                // TODO: do not auto-submit the newly recorded measurement,
-                // let the user decied to keep or discard it, instead
-                // Action::Finished(match self.kind {
-                //     Kind::Loopback => Result::Loopback(raumklang_core::Loopback::new(measurement)),
-                //     Kind::Measurement => Result::Measurement(measurement),
-                // })
                 Action::None
             }
             Message::Cancel => Action::Cancel,
@@ -379,21 +356,48 @@ impl Recording {
                 // no interaction needed at this point
                 Action::None
             }
+            Message::Decline => {
+                self.state = State::Setup;
+                Action::None
+            }
+            Message::Accept => {
+                let Backend::Connected { backend } = &self.backend else {
+                    return Action::None;
+                };
+
+                let State::Measurement(measurement) = &mut self.state else {
+                    return Action::None;
+                };
+
+                let data = std::mem::take(&mut measurement.data);
+                let measurement =
+                    raumklang_core::Measurement::new(backend.sample_rate.into(), data);
+
+                Action::Finished(match self.kind {
+                    Kind::Loopback => Result::Loopback(raumklang_core::Loopback::new(measurement)),
+                    Kind::Measurement => Result::Measurement(measurement),
+                })
+            }
         }
     }
 
     pub fn view<'a>(&'a self) -> Element<'a, Message> {
         let page = match &self.backend {
-            Backend::NotConnected => Page::new("Jack").content(text("Jack is not connected.")),
+            Backend::NotConnected => Page::new("Jack")
+                .content(text("Jack is not connected."))
+                .cancel_button("Cancel", Message::Cancel),
             Backend::Connected { backend } => match &self.state {
                 State::Setup => self.setup(backend),
-                State::LoudnessTest { loudness, .. } => self.loudness_test(&loudness),
-                State::Measurement(measurement) => self.measurement(measurement),
+                State::LoudnessTest { loudness, .. } => self
+                    .loudness_test(&loudness)
+                    .cancel_button("Cancel", Message::Cancel)
+                    .back_button("Back", Message::Back),
+                State::Measurement(measurement) => {
+                    self.measurement(measurement, backend.sample_rate)
+                }
             },
             Backend::Retrying { err, remaining, .. } => self.retry(err, remaining),
         };
-
-        let page = page.cancel_button("Cancel", Message::Cancel);
 
         container(page).width(600.0).into()
     }
@@ -558,47 +562,62 @@ impl Recording {
             .next_button("Next", volume.ok().map(Message::TestOk))
     }
 
-    fn measurement<'a>(&'a self, measurement: &'a Measurement) -> Page<'a, Message> {
-        Page::new("Measurement Running ...").content(
-            row![
-                container(
-                    canvas(RmsPeakMeter::new(
-                        measurement.loudness.rms,
-                        measurement.loudness.peak,
-                        &self.cache
-                    ))
-                    .width(60)
-                    .height(200)
-                )
-                .padding(10),
-                column![
+    fn measurement<'a>(
+        &'a self,
+        measurement: &'a Measurement,
+        sample_rate: SampleRate,
+    ) -> Page<'a, Message> {
+        let state = if measurement.finished {
+            "running ..."
+        } else {
+            "finished"
+        };
+
+        let title = format!("Measurement {state}");
+
+        Page::new(title)
+            .content(
+                row![
                     container(
-                        row![
-                            loudness_text("RMS", measurement.loudness.rms),
-                            rule::vertical(3),
-                            loudness_text("Peak", measurement.loudness.peak),
-                        ]
-                        .align_y(Vertical::Bottom)
-                        .height(Shrink)
-                        .spacing(10)
+                        canvas(RmsPeakMeter::new(
+                            measurement.loudness.rms,
+                            measurement.loudness.peak,
+                            &self.cache
+                        ))
+                        .width(60)
+                        .height(200)
                     )
-                    .center_x(Fill),
-                    if !measurement.data.is_empty() {
-                        center(
-                            chart::record_waveform(&measurement, &measurement.cache)
-                                .map(Message::Chart),
+                    .padding(10),
+                    column![
+                        container(
+                            row![
+                                loudness_text("RMS", measurement.loudness.rms),
+                                rule::vertical(3),
+                                loudness_text("Peak", measurement.loudness.peak),
+                            ]
+                            .align_y(Vertical::Bottom)
+                            .height(Shrink)
+                            .spacing(10)
                         )
-                    } else {
-                        center(text!("No data, yet."))
-                    }
+                        .center_x(Fill),
+                        center(
+                            chart::record_waveform(
+                                sample_rate,
+                                &measurement.data,
+                                &measurement.cache
+                            )
+                            .map(Message::Chart),
+                        )
+                    ]
+                    .height(500)
+                    .spacing(12)
+                    .padding(10)
                 ]
-                .height(500)
                 .spacing(12)
-                .padding(10)
-            ]
-            .spacing(12)
-            .align_y(Vertical::Center),
-        )
+                .align_y(Vertical::Center),
+            )
+            .back_button("Decline", Message::Decline)
+            .next_button("Accept", measurement.finished.then_some(Message::Accept))
     }
 
     fn retry(&self, err: &audio::Error, remaining: &Duration) -> Page<'_, Message> {

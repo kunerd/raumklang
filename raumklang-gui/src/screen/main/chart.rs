@@ -1,11 +1,13 @@
+mod recording;
 pub mod spectrogram;
 pub mod waveform;
 
+pub use recording::record_waveform;
 use waveform::Waveform;
 
 use crate::{
     data::{self, Samples, Window, chart, window::Handles},
-    screen::main::{chart::spectrogram::Spectrogram, recording},
+    screen::main::chart::spectrogram::Spectrogram,
     ui,
 };
 
@@ -32,32 +34,6 @@ use std::{
     ops::{Add, RangeInclusive, Sub},
 };
 
-pub fn record_waveform<'a>(
-    measurement: &'a recording::Measurement,
-    cache: &'a canvas::Cache,
-) -> Element<'a, waveform::Interaction, iced::Theme> {
-    canvas::Canvas::new(Waveform {
-        datapoints: measurement.data.iter().copied(),
-        cache,
-        cmp: |a, b| a.total_cmp(b),
-        y_to_float: |s| s,
-        to_x_scale: |i| i,
-        // to_x_scale: move |i| match time_unit {
-        //     chart::TimeSeriesUnit::Time => time_scale(i, impulse_response.sample_rate.into()),
-        //     chart::TimeSeriesUnit::Samples => i as f32,
-        // },
-        // to_y_scale: move |s| match amplitude_unit {
-        //     chart::AmplitudeUnit::PercentFullScale => percent_full_scale(s),
-        //     chart::AmplitudeUnit::DezibelFullScale => db_full_scale(s),
-        // },
-        zoom: Zoom::default(),
-        offset: Offset::default(),
-    })
-    .width(Fill)
-    .height(Fill)
-    .into()
-}
-
 pub fn waveform<'a>(
     measurement: &'a raumklang_core::Measurement,
     cache: &'a canvas::Cache,
@@ -80,6 +56,7 @@ pub fn waveform<'a>(
         // },
         zoom,
         offset,
+        y_range: None,
     })
     .width(Fill)
     .height(Fill)
