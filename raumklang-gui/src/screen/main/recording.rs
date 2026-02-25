@@ -260,6 +260,7 @@ impl Recording {
 
                 if let State::Measurement(measurement) = &mut self.state {
                     measurement.loudness = new_loudness;
+                    self.cache.clear();
                 }
 
                 Action::None
