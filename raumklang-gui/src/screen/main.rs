@@ -35,7 +35,6 @@ use impulse_response::ChartOperation;
 use recording::Recording;
 
 use chrono::{DateTime, Utc};
-// use generic_overlay::generic_overlay::{dropdown_menu, dropdown_root};
 
 use iced::{
     Alignment::{self, Center},
@@ -82,6 +81,7 @@ pub struct Main {
     spectral_decay_config: spectral_decay::Config,
     spectrogram_config: spectrogram::Config,
     fr_state: iced_aksel::State<AxisId, f32>,
+    measurement_config: data::measurement::Config,
 }
 
 type AxisId = &'static str;
@@ -958,7 +958,8 @@ impl Main {
                 Task::none()
             }
             Message::StartRecording(kind) => {
-                self.modal = Modal::Recording(Recording::new(kind));
+                self.modal =
+                    Modal::Recording(Recording::new(kind, self.measurement_config.clone()));
                 Task::none()
             }
             Message::Recording(msg) => {
@@ -973,7 +974,8 @@ impl Main {
                         Task::none()
                     }
                     recording::Action::Task(task) => task.map(Message::Recording),
-                    recording::Action::Finished(result) => {
+                    recording::Action::Finished(config, result) => {
+                        self.measurement_config = config;
                         match result {
                             recording::Result::Loopback(loopback) => {
                                 self.loopback =
@@ -1927,6 +1929,7 @@ impl Default for Main {
             spectrogram_config: spectrogram::Config::default(),
 
             fr_state,
+            measurement_config: data::measurement::Config::default(),
         }
     }
 }

@@ -6,9 +6,11 @@ use crate::{
     audio,
     data::{
         self, SampleRate,
-        measurement::config,
+        audio::{InPort, OutPort},
+        measurement::{self, config},
         recording::{self, volume},
     },
+    log,
     screen::main::chart::{self},
     widget::{RmsPeakMeter, meter},
 };
@@ -34,8 +36,8 @@ pub struct Recording {
     state: State,
     volume: f32,
     backend: Backend,
-    selected_in_port: Option<String>,
-    selected_out_port: Option<String>,
+    selected_in_port: Option<InPort>,
+    selected_out_port: Option<OutPort>,
     start_frequency: String,
     end_frequency: String,
     duration: String,
@@ -47,7 +49,7 @@ pub enum State {
     #[default]
     Setup,
     LoudnessTest {
-        signal_config: data::measurement::Config,
+        config: measurement::SignalConfig,
         loudness: audio::Loudness,
         _stream_handle: task::Handle,
     },
@@ -59,6 +61,8 @@ pub struct Measurement {
     loudness: audio::Loudness,
 
     data: Vec<f32>,
+
+    config: measurement::SignalConfig,
 
     finished: bool,
     cache: canvas::Cache,
@@ -87,8 +91,8 @@ enum Backend {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    OutPortSelected(String),
-    InPortSelected(String),
+    OutPortSelected(OutPort),
+    InPortSelected(InPort),
     StartFrequencyChanged(String),
     EndFrequencyChanged(String),
     DurationChanged(String),
@@ -96,7 +100,7 @@ pub enum Message {
     VolumeChanged(f32),
     TestOk(recording::Volume),
     RmsChanged(audio::Loudness),
-    RunTest(data::measurement::Config),
+    RunTest(data::measurement::SignalConfig),
 
     AudioBackend(audio::Event),
     RetryTick(time::Instant),
@@ -117,8 +121,8 @@ pub enum Message {
 pub enum Action {
     None,
     Cancel,
-    Finished(Result),
     Task(Task<Message>),
+    Finished(measurement::Config, Result),
 }
 
 pub enum Result {
@@ -127,18 +131,18 @@ pub enum Result {
 }
 
 impl Recording {
-    pub fn new(kind: Kind) -> Self {
-        let config = data::measurement::Config::default();
+    pub fn new(kind: Kind, config: measurement::Config) -> Self {
         Self {
             kind,
             state: State::Setup,
             backend: Backend::NotConnected,
 
-            selected_out_port: None,
-            selected_in_port: None,
-            start_frequency: format!("{}", config.start_frequency()),
-            end_frequency: format!("{}", config.end_frequency()),
-            duration: format!("{}", config.duration().into_inner().as_secs()),
+            selected_in_port: config.in_port,
+            selected_out_port: config.out_port,
+
+            start_frequency: format!("{}", config.signal.start_frequency()),
+            end_frequency: format!("{}", config.signal.end_frequency()),
+            duration: format!("{}", config.signal.duration().into_inner().as_secs()),
 
             volume: 0.5,
 
@@ -150,13 +154,29 @@ impl Recording {
         match message {
             Message::AudioBackend(event) => match event {
                 audio::Event::Ready(backend, receiver) => {
-                    self.backend = Backend::Connected { backend };
-
                     if let Some(receiver) = Arc::into_inner(receiver) {
-                        Action::Task(
+                        let mut tasks = vec![
                             Task::stream(ReceiverStream::new(receiver))
                                 .map(Message::JackNotification),
-                        )
+                        ];
+
+                        if let Some(port) = self.selected_out_port.as_ref() {
+                            tasks.push(
+                                Task::future(backend.clone().connect_out_port(port.clone()))
+                                    .discard(),
+                            )
+                        }
+
+                        if let Some(port) = self.selected_in_port.as_ref() {
+                            tasks.push(
+                                Task::future(backend.clone().connect_in_port(port.clone()))
+                                    .discard(),
+                            );
+                        }
+
+                        self.backend = Backend::Connected { backend };
+
+                        Action::Task(Task::batch(tasks))
                     } else {
                         Action::None
                     }
@@ -176,15 +196,26 @@ impl Recording {
                 }
             },
             Message::JackNotification(notification) => {
+                // TODO: currently, selected ports will be erased when the jack
+                // server is closed (jack will disconnect them)
+                // it would be nice to have a way to restore them
                 match notification {
                     audio::Notification::OutPortConnected(port) => {
+                        log::debug!("out port {port} connected");
                         self.selected_out_port = Some(port)
                     }
-                    audio::Notification::OutPortDisconnected => self.selected_out_port = None,
+                    audio::Notification::OutPortDisconnected => {
+                        log::debug!("out port disconnected");
+                        self.selected_out_port = None
+                    }
                     audio::Notification::InPortConnected(port) => {
+                        log::debug!("in port {port} connected");
                         self.selected_in_port = Some(port)
                     }
-                    audio::Notification::InPortDisconnected => self.selected_in_port = None,
+                    audio::Notification::InPortDisconnected => {
+                        log::debug!("in port disconnected");
+                        self.selected_in_port = None
+                    }
                 }
 
                 Action::None
@@ -249,7 +280,7 @@ impl Recording {
                 let handle = handle.abort_on_drop();
 
                 self.state = State::LoudnessTest {
-                    signal_config,
+                    config: signal_config,
                     loudness: audio::Loudness::default(),
                     _stream_handle: handle,
                 };
@@ -265,7 +296,7 @@ impl Recording {
                 };
 
                 let State::LoudnessTest {
-                    signal_config,
+                    config,
                     _stream_handle,
                     ..
                 } = std::mem::take(&mut self.state)
@@ -273,7 +304,8 @@ impl Recording {
                     return Action::None;
                 };
 
-                let (loudness_receiver, mut data_receiver) = backend.run_measurement(signal_config);
+                let (loudness_receiver, mut data_receiver) =
+                    backend.run_measurement(config.clone());
 
                 let measurement_sipper = iced::task::sipper(async move |mut progress| {
                     while let Some(data) = data_receiver.recv().await {
@@ -293,6 +325,7 @@ impl Recording {
                     cache: canvas::Cache::new(),
                     _stream_handle: handle,
                     finished: false,
+                    config,
                 };
 
                 let task = Task::batch(vec![
@@ -364,18 +397,24 @@ impl Recording {
                     return Action::None;
                 };
 
-                let State::Measurement(measurement) = &mut self.state else {
+                let State::Measurement(measurement) = std::mem::take(&mut self.state) else {
                     return Action::None;
                 };
 
-                let data = std::mem::take(&mut measurement.data);
-                let measurement =
-                    raumklang_core::Measurement::new(backend.sample_rate.into(), data);
+                let signal = measurement.data;
+                let signal = raumklang_core::Measurement::new(backend.sample_rate.into(), signal);
+                let result = match self.kind {
+                    Kind::Loopback => Result::Loopback(raumklang_core::Loopback::new(signal)),
+                    Kind::Measurement => Result::Measurement(signal),
+                };
 
-                Action::Finished(match self.kind {
-                    Kind::Loopback => Result::Loopback(raumklang_core::Loopback::new(measurement)),
-                    Kind::Measurement => Result::Measurement(measurement),
-                })
+                let config = measurement::Config {
+                    out_port: self.selected_out_port.take(),
+                    in_port: self.selected_in_port.take(),
+                    signal: measurement.config,
+                };
+
+                Action::Finished(config, result)
             }
         }
     }
@@ -386,7 +425,7 @@ impl Recording {
                 .content(text("Jack is not connected."))
                 .cancel_button("Cancel", Message::Cancel),
             Backend::Connected { backend } => match &self.state {
-                State::Setup => self.setup(backend),
+                State::Setup => self.setup(backend).cancel_button("Cancel", Message::Cancel),
                 State::LoudnessTest { loudness, .. } => self
                     .loudness_test(&loudness)
                     .cancel_button("Cancel", Message::Cancel)
@@ -428,7 +467,7 @@ impl Recording {
                         pick_list(
                             self.selected_out_port.as_ref(),
                             backend.out_ports.as_slice(),
-                            String::to_string
+                            OutPort::to_string
                         )
                         .on_select(Message::OutPortSelected)
                         .style(|t, s| {
@@ -444,7 +483,7 @@ impl Recording {
                         pick_list(
                             self.selected_in_port.as_ref(),
                             backend.in_ports.as_slice(),
-                            String::to_string
+                            InPort::to_string
                         )
                         .on_select(Message::InPortSelected)
                         .style(|t, s| {
@@ -496,7 +535,7 @@ impl Recording {
             .and(self.selected_in_port.as_ref());
 
         let signal_config = if let (Ok(range), Ok(duration)) = (range, duration) {
-            Some(data::measurement::Config::new(range, duration))
+            Some(data::measurement::SignalConfig::new(range, duration))
         } else {
             None
         };
@@ -641,12 +680,6 @@ impl Recording {
                 .center_x(Fill),
             )
             .next_button("Retry now", Some(Message::RetryNow))
-    }
-}
-
-impl Default for Recording {
-    fn default() -> Self {
-        Self::new(Kind::Measurement)
     }
 }
 

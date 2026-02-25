@@ -7,6 +7,7 @@ pub use measurement::Measurement;
 pub use process::Process;
 
 use crate::data;
+use crate::data::audio::{InPort, OutPort};
 use crate::log;
 use loudness::Test;
 
@@ -37,17 +38,17 @@ pub enum Event {
 
 #[derive(Debug, Clone)]
 pub enum Notification {
-    OutPortConnected(String),
+    OutPortConnected(OutPort),
     OutPortDisconnected,
-    InPortConnected(String),
+    InPortConnected(InPort),
     InPortDisconnected,
 }
 
 #[derive(Debug, Clone)]
 pub struct Backend {
     pub sample_rate: data::SampleRate,
-    pub in_ports: Vec<String>,
-    pub out_ports: Vec<String>,
+    pub in_ports: Vec<InPort>,
+    pub out_ports: Vec<OutPort>,
     volume: Arc<AtomicF32>,
     sender: mpsc::Sender<Command>,
 }
@@ -76,7 +77,7 @@ impl Backend {
 
     pub fn run_measurement(
         &self,
-        config: data::measurement::Config,
+        config: data::measurement::SignalConfig,
     ) -> (mpsc::Receiver<Loudness>, mpsc::Receiver<Box<[f32]>>) {
         let (loudness_sender, loudness_receiver) = mpsc::channel(1024);
         let (data_sender, data_receiver) = mpsc::channel(1024);
@@ -94,14 +95,14 @@ impl Backend {
         (loudness_receiver, data_receiver)
     }
 
-    pub async fn connect_out_port(self, dest_port: String) {
-        let command = Command::ConnectOutPort(dest_port);
+    pub async fn connect_out_port(self, dest: OutPort) {
+        let command = Command::ConnectOutPort(dest);
 
         let _ = self.sender.send(command).await;
     }
 
-    pub async fn connect_in_port(self, src_port: String) {
-        let command = Command::ConnectInPort(src_port);
+    pub async fn connect_in_port(self, src: InPort) {
+        let command = Command::ConnectInPort(src);
 
         let _ = self.sender.send(command).await;
     }
@@ -116,8 +117,8 @@ enum Command {
         duration: Duration,
         loudness: mpsc::Sender<Loudness>,
     },
-    ConnectOutPort(String),
-    ConnectInPort(String),
+    ConnectOutPort(OutPort),
+    ConnectInPort(InPort),
     RunMeasurement {
         duration: Duration,
         loudness_sender: mpsc::Sender<Loudness>,
@@ -159,16 +160,20 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                 ) {
                     Ok((client, process_sender)) => {
                         let sample_rate = client.as_client().sample_rate().into();
-                        let out_ports = client.as_client().ports(
-                            None,
-                            Some("32 bit float mono audio"),
-                            PortFlags::IS_INPUT,
-                        );
-                        let in_ports = client.as_client().ports(
-                            None,
-                            Some("32 bit float mono audio"),
-                            PortFlags::IS_OUTPUT,
-                        );
+
+                        let out_ports = client
+                            .as_client()
+                            .ports(None, Some("32 bit float mono audio"), PortFlags::IS_INPUT)
+                            .into_iter()
+                            .map(OutPort::new)
+                            .collect();
+
+                        let in_ports = client
+                            .as_client()
+                            .ports(None, Some("32 bit float mono audio"), PortFlags::IS_OUTPUT)
+                            .into_iter()
+                            .map(InPort::new)
+                            .collect();
 
                         let (command_sender, command_receiver) = mpsc::channel(64);
                         let backend = Backend {
@@ -212,7 +217,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
 
                             client
                                 .as_client()
-                                .connect_ports_by_name(&port_name, &dest)
+                                .connect_ports_by_name(&port_name, dest.as_ref())
                                 .unwrap();
                         }
                         Ok(Command::ConnectInPort(source)) => {
@@ -224,7 +229,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
 
                             client
                                 .as_client()
-                                .connect_ports_by_name(&source, &port_name)
+                                .connect_ports_by_name(source.as_ref(), &port_name)
                                 .unwrap();
                         }
                         Ok(Command::RunTest {
@@ -558,7 +563,7 @@ impl jack::NotificationHandler for Notifications {
 
         let event = dest_port.cloned().map(|dest_port| {
             if are_connected {
-                Notification::OutPortConnected(dest_port)
+                Notification::OutPortConnected(OutPort::new(dest_port))
             } else {
                 Notification::OutPortDisconnected
             }
@@ -577,7 +582,7 @@ impl jack::NotificationHandler for Notifications {
 
         let event = dest_port.cloned().map(|dest_port| {
             if are_connected {
-                Notification::InPortConnected(dest_port)
+                Notification::InPortConnected(InPort::new(dest_port))
             } else {
                 Notification::InPortDisconnected
             }

@@ -3,8 +3,17 @@ use std::{
     time,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+use crate::data::audio::{InPort, OutPort};
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Config {
+    pub out_port: Option<OutPort>,
+    pub in_port: Option<InPort>,
+    pub signal: SignalConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignalConfig {
     frequency_range: FrequencyRange,
     duration: Duration,
 }
@@ -73,7 +82,7 @@ impl Duration {
     }
 }
 
-impl Config {
+impl SignalConfig {
     pub fn new(frequency_range: FrequencyRange, duration: Duration) -> Self {
         Self {
             duration,
@@ -103,7 +112,7 @@ impl Default for FrequencyRange {
     }
 }
 
-impl Default for Config {
+impl Default for SignalConfig {
     fn default() -> Self {
         Self {
             duration: Duration::from_secs(5),
