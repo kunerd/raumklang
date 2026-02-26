@@ -1,7 +1,3 @@
-mod page;
-
-use page::Page;
-
 use crate::{
     audio,
     data::{
@@ -23,7 +19,8 @@ use iced::{
     alignment::{Horizontal, Vertical},
     task, time,
     widget::{
-        self, canvas, center, column, container, pick_list, row, rule, slider, text, text_input,
+        self, Button, button, canvas, center, column, container, pick_list, right, row, rule,
+        slider, space, text, text_input,
     },
 };
 use tokio_stream::wrappers::ReceiverStream;
@@ -77,16 +74,16 @@ pub enum Kind {
 
 #[derive(Debug)]
 enum Backend {
-    NotConnected,
-    Connected {
-        backend: audio::Backend,
-    },
-    Retrying {
-        err: audio::Error,
-        end: std::time::Instant,
-        remaining: std::time::Duration,
-        retry_tx: std::sync::mpsc::SyncSender<()>,
-    },
+    Connecting(Option<Retry>),
+    Connected { backend: audio::Backend },
+}
+
+#[derive(Debug)]
+struct Retry {
+    err: audio::Error,
+    end: std::time::Instant,
+    remaining: std::time::Duration,
+    retry_tx: std::sync::mpsc::SyncSender<()>,
 }
 
 #[derive(Debug, Clone)]
@@ -135,7 +132,7 @@ impl Recording {
         Self {
             kind,
             state: State::Setup,
-            backend: Backend::NotConnected,
+            backend: Backend::Connecting(None),
 
             selected_in_port: config.in_port,
             selected_out_port: config.out_port,
@@ -186,12 +183,12 @@ impl Recording {
                     retry_tx,
                     retry_in,
                 } => {
-                    self.backend = Backend::Retrying {
+                    self.backend = Backend::Connecting(Some(Retry {
                         err,
                         end: time::Instant::now() + retry_in,
                         remaining: retry_in,
                         retry_tx,
-                    };
+                    }));
                     Action::None
                 }
             },
@@ -235,11 +232,11 @@ impl Recording {
                 Action::Task(Task::future(backend.clone().connect_in_port(port)).discard())
             }
             Message::RetryTick(instant) => {
-                let Backend::Retrying { end, remaining, .. } = &mut self.backend else {
+                let Backend::Connecting(Some(retry)) = &mut self.backend else {
                     return Action::None;
                 };
 
-                *remaining = *end - instant;
+                retry.remaining = retry.end - instant;
 
                 Action::None
             }
@@ -365,11 +362,11 @@ impl Recording {
                 Action::None
             }
             Message::RetryNow => {
-                let Backend::Retrying { retry_tx, .. } = &self.backend else {
+                let Backend::Connecting(Some(retry)) = &self.backend else {
                     return Action::None;
                 };
 
-                let _ = retry_tx.send(());
+                let _ = retry.retry_tx.send(());
 
                 Action::None
             }
@@ -422,20 +419,16 @@ impl Recording {
 
     pub fn view<'a>(&'a self) -> Element<'a, Message> {
         let page = match &self.backend {
-            Backend::NotConnected => Page::new("Jack")
-                .content(text("Jack is not connected."))
-                .cancel_button("Cancel", Message::Cancel),
+            Backend::Connecting(retry) => self.retry(retry.as_ref()),
             Backend::Connected { backend } => match &self.state {
-                State::Setup => self.setup(backend).cancel_button("Cancel", Message::Cancel),
-                State::LoudnessTest { loudness, .. } => self
-                    .loudness_test(&loudness)
-                    .cancel_button("Cancel", Message::Cancel)
-                    .back_button("Back", Message::Back),
+                State::Setup => self.setup(backend),
+                State::LoudnessTest { loudness, .. } => {
+                    self.loudness_test(&loudness, backend.sample_rate)
+                }
                 State::Measurement(measurement) => {
                     self.measurement(measurement, backend.sample_rate)
                 }
             },
-            Backend::Retrying { err, remaining, .. } => self.retry(err, remaining),
         };
 
         container(page).width(600.0).into()
@@ -446,14 +439,14 @@ impl Recording {
 
         let mut subscriptions = vec![audio_backend];
 
-        if let Backend::Retrying { .. } = &self.backend {
+        if let Backend::Connecting(..) = &self.backend {
             subscriptions.push(time::every(Duration::from_millis(500)).map(Message::RetryTick));
         }
 
         Subscription::batch(subscriptions)
     }
 
-    fn setup<'a>(&'a self, backend: &'a audio::Backend) -> Page<'a, Message> {
+    fn setup<'a>(&'a self, backend: &'a audio::Backend) -> Element<'a, Message> {
         let range =
             config::FrequencyRange::from_strings(&self.start_frequency, &self.end_frequency);
 
@@ -541,15 +534,27 @@ impl Recording {
             None
         };
 
-        Page::new("Setup")
-            .content(row![ports, signal].spacing(8))
-            .next_button(
-                "Start test",
-                ports_selected.and(signal_config).map(Message::RunTest),
-            )
+        let start_btn = button("Start")
+            .style(button::success)
+            .on_press_maybe(ports_selected.and(signal_config).map(Message::RunTest));
+
+        page(
+            "Setup",
+            Some(backend.sample_rate),
+            row![ports, signal].spacing(8),
+            button("Cancel")
+                .style(button::danger)
+                .on_press(Message::Cancel),
+            None,
+            Some(start_btn),
+        )
     }
 
-    fn loudness_test(&self, loudness: &audio::Loudness) -> Page<'_, Message> {
+    fn loudness_test(
+        &self,
+        loudness: &audio::Loudness,
+        sample_rate: SampleRate,
+    ) -> Element<'_, Message> {
         fn loudness_text<'a>(label: &'a str, value: f32) -> Element<'a, Message> {
             column![
                 text(label).size(12).align_y(Vertical::Bottom),
@@ -563,114 +568,141 @@ impl Recording {
         }
 
         let volume = recording::Volume::new(self.volume, loudness);
-        Page::new("Loudness Test ...")
-            .content(
-                row![
-                    container(
-                        canvas(
-                            RmsPeakMeter::new(loudness.rms, loudness.peak, &self.cache).state(
-                                match volume {
-                                    Ok(_) => meter::State::Normal,
-                                    Err(volume::ValidationError::ToLow(_)) => meter::State::Warning,
-                                    Err(volume::ValidationError::ToHigh(_)) => meter::State::Danger,
-                                }
-                            )
-                        )
-                        .width(60)
-                        .height(200)
+
+        let content = row![
+            container(
+                canvas(
+                    RmsPeakMeter::new(loudness.rms, loudness.peak, &self.cache).state(
+                        match volume {
+                            Ok(_) => meter::State::Normal,
+                            Err(volume::ValidationError::ToLow(_)) => meter::State::Warning,
+                            Err(volume::ValidationError::ToHigh(_)) => meter::State::Danger,
+                        }
                     )
-                    .padding(10),
-                    column![
-                        container(
-                            row![
-                                loudness_text("RMS", loudness.rms),
-                                rule::vertical(3),
-                                loudness_text("Peak", loudness.peak),
-                            ]
-                            .align_y(Vertical::Bottom)
-                            .height(Shrink)
-                            .spacing(10)
-                        )
-                        .center_x(Fill),
-                        slider(0.0..=1.0, self.volume, Message::VolumeChanged).step(0.01),
-                    ]
-                    .spacing(10)
-                ]
-                .align_y(Vertical::Center),
+                )
+                .width(60)
+                .height(200)
             )
-            .next_button("Next", volume.ok().map(Message::TestOk))
+            .padding(10),
+            column![
+                container(
+                    row![
+                        loudness_text("RMS", loudness.rms),
+                        rule::vertical(3),
+                        loudness_text("Peak", loudness.peak),
+                    ]
+                    .align_y(Vertical::Bottom)
+                    .height(Shrink)
+                    .spacing(10)
+                )
+                .center_x(Fill),
+                slider(0.0..=1.0, self.volume, Message::VolumeChanged).step(0.01),
+            ]
+            .spacing(10)
+        ]
+        .align_y(Vertical::Center);
+
+        let next_btn = button("Next")
+            .style(button::success)
+            .on_press_maybe(volume.ok().map(Message::TestOk));
+
+        page(
+            "Loudness test ...",
+            Some(sample_rate),
+            content,
+            button("Cancel")
+                .style(button::danger)
+                .on_press(Message::Cancel),
+            Some(
+                button("Stop")
+                    .style(button::secondary)
+                    .on_press(Message::Back),
+            ),
+            Some(next_btn),
+        )
     }
 
     fn measurement<'a>(
         &'a self,
         measurement: &'a Measurement,
         sample_rate: SampleRate,
-    ) -> Page<'a, Message> {
-        let state = if measurement.finished {
-            "running ..."
-        } else {
-            "finished"
+    ) -> Element<'a, Message> {
+        let title = match measurement.finished {
+            true => "Measurement running ...",
+            false => "Measurement finished",
         };
 
-        let title = format!("Measurement {state}");
-
-        Page::new(title)
-            .content(
-                row![
-                    container(
-                        canvas(RmsPeakMeter::new(
-                            measurement.loudness.rms,
-                            measurement.loudness.peak,
-                            &self.cache
-                        ))
-                        .width(60)
-                        .height(200)
-                    )
-                    .padding(10),
-                    column![
-                        container(
-                            row![
-                                loudness_text("RMS", measurement.loudness.rms),
-                                rule::vertical(3),
-                                loudness_text("Peak", measurement.loudness.peak),
-                            ]
-                            .align_y(Vertical::Bottom)
-                            .height(Shrink)
-                            .spacing(10)
-                        )
-                        .center_x(Fill),
-                        center(
-                            chart::record_waveform(
-                                sample_rate,
-                                &measurement.data,
-                                &measurement.cache
-                            )
-                            .map(Message::Chart),
-                        )
-                    ]
-                    .height(500)
-                    .spacing(12)
-                    .padding(10)
-                ]
-                .spacing(12)
-                .align_y(Vertical::Center),
+        let content = row![
+            container(
+                canvas(RmsPeakMeter::new(
+                    measurement.loudness.rms,
+                    measurement.loudness.peak,
+                    &self.cache
+                ))
+                .width(60)
+                .height(200)
             )
-            .back_button("Decline", Message::Decline)
-            .next_button("Accept", measurement.finished.then_some(Message::Accept))
+            .padding(10),
+            column![
+                container(
+                    row![
+                        loudness_text("RMS", measurement.loudness.rms),
+                        rule::vertical(3),
+                        loudness_text("Peak", measurement.loudness.peak),
+                    ]
+                    .align_y(Vertical::Bottom)
+                    .height(Shrink)
+                    .spacing(10)
+                )
+                .center_x(Fill),
+                center(
+                    chart::record_waveform(sample_rate, &measurement.data, &measurement.cache)
+                        .map(Message::Chart),
+                )
+            ]
+            .height(500)
+            .spacing(12)
+            .padding(10)
+        ]
+        .spacing(12)
+        .align_y(Vertical::Center);
+
+        let back_btn = {
+            let (title, msg) = match measurement.finished {
+                true => ("Decline", Message::Decline),
+                false => ("Stop", Message::Back),
+            };
+            button(title).style(button::danger).on_press(msg)
+        };
+
+        page(
+            &title,
+            Some(sample_rate),
+            content,
+            button("Cancel")
+                .style(button::danger)
+                .on_press(Message::Cancel),
+            Some(back_btn),
+            Some(
+                button("Accept")
+                    .style(button::success)
+                    .on_press_maybe(measurement.finished.then_some(Message::Accept)),
+            ),
+        )
     }
 
-    fn retry(&self, err: &audio::Error, remaining: &Duration) -> Page<'_, Message> {
-        Page::new("Jack error")
-            .content(
-                container(
+    fn retry(&self, retry: Option<&Retry>) -> Element<'_, Message> {
+        match retry {
+            Some(retry) => {
+                let content = container(
                     column![
                         text("Connection to Jack audio server failed:")
                             .size(18)
                             .style(text::danger),
-                        text!("{err}").style(text::danger),
+                        text!("{}", retry.err).style(text::danger),
                         column![
                             text("Retrying in").size(14),
-                            text!("{} s", remaining.as_secs()).size(18)
+                            text!("{} s", retry.remaining.as_secs()).size(18)
                         ]
                         .padding(8)
                         .align_x(Horizontal::Center),
@@ -678,9 +710,34 @@ impl Recording {
                     .align_x(Horizontal::Center)
                     .spacing(16),
                 )
-                .center_x(Fill),
-            )
-            .next_button("Retry now", Some(Message::RetryNow))
+                .center_x(Fill);
+
+                page(
+                    "Jack connection error",
+                    None,
+                    content,
+                    button("Cancel")
+                        .style(button::secondary)
+                        .on_press(Message::Cancel),
+                    None,
+                    Some(
+                        button("Retry now")
+                            .style(button::secondary)
+                            .on_press(Message::RetryNow),
+                    ),
+                )
+            }
+            None => page(
+                "Connecting to Jack",
+                None,
+                center(text("Trying to connect to Jack audio server.")),
+                button("Cancel")
+                    .style(button::secondary)
+                    .on_press(Message::Cancel),
+                None,
+                None,
+            ),
+        }
     }
 }
 
@@ -810,4 +867,33 @@ fn loudness_text<'a>(label: &'a str, value: f32) -> Element<'a, Message> {
     .width(Shrink)
     .align_x(Center)
     .into()
+}
+
+fn page<'a, Message>(
+    title: &'a str,
+    sample_rate: Option<SampleRate>,
+    content: impl Into<Element<'a, Message>>,
+    cancel: Button<'a, Message>,
+    back: Option<Button<'a, Message>>,
+    success: Option<Button<'a, Message>>,
+) -> Element<'a, Message>
+where
+    Message: Clone + 'a,
+{
+    let header = {
+        column![
+            row![text!("Recording - {title}").size(20), space::horizontal(),]
+                .push(sample_rate.map(|sample_rate| text!("Sample rate: {}", sample_rate).size(14)))
+                .align_y(Vertical::Bottom),
+            rule::horizontal(1),
+        ]
+        .spacing(4)
+    };
+
+    let footer = container(row![cancel, right(row![success, back].spacing(6))]).align_right(Fill);
+
+    container(column![header, content.into(), footer].spacing(18))
+        .style(container::bordered_box)
+        .padding(18)
+        .into()
 }
