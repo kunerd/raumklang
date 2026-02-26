@@ -237,9 +237,12 @@ impl PlotData<f32> for FrequencyResponse {
 
         let line_stroke = Stroke::new(self.color.scale_alpha(0.8), Measure::Screen(1.0));
         if let Some(smoothed) = fr.smoothed.as_ref() {
-            plot.add_shape(shape::Polyline::new(smoothed.0.clone()).stroke(line_stroke));
+            plot.add_shape(shape::Polyline::new(smoothed.0.clone(), line_stroke));
         } else {
-            plot.add_shape(shape::Polyline::new(fr.base_smoothed.0.clone()).stroke(line_stroke));
+            plot.add_shape(shape::Polyline::new(
+                fr.base_smoothed.0.clone(),
+                line_stroke,
+            ));
         }
     }
 }

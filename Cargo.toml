@@ -17,4 +17,6 @@ iced = { git = "https://github.com/iced-rs/iced.git", branch = "master" }
 iced_core = { git = "https://github.com/iced-rs/iced.git", branch = "master"}
 iced_graphics = { git = "https://github.com/iced-rs/iced.git", branch = "master"}
 iced_renderer = { git = "https://github.com/iced-rs/iced.git", branch = "master"}
-iced_aksel = { path = "../extern/iced_aksel/iced_aksel" }
+iced_tiny_skia = { git = "https://github.com/iced-rs/iced.git", branch = "master"}
+iced_wgpu = { git = "https://github.com/iced-rs/iced.git", branch = "master"}
+iced_aksel = { git = "https://github.com/kunerd/iced_aksel.git", branch = "main" }

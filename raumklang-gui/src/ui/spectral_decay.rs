@@ -95,7 +95,7 @@ impl PlotData<f32> for SpectralDecay {
             let color = iced::Color::from_rgb8(color.r, color.g, color.b);
 
             let line_stroke = Stroke::new(color.scale_alpha(0.8), Measure::Screen(1.0));
-            plot.add_shape(shape::Polyline::new(fr.0.clone()).stroke(line_stroke));
+            plot.add_shape(shape::Polyline::new(fr.0.clone(), line_stroke));
         }
     }
 }
