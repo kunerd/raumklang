@@ -242,7 +242,7 @@ fn run_audio_backend(sender: mpsc::Sender<Event>) {
                                     sample_rate as usize,
                                     data::Samples::from_duration(
                                         duration,
-                                        data::SampleRate::new(sample_rate as u32),
+                                        data::SampleRate::new(sample_rate),
                                     )
                                     .into(),
                                 );

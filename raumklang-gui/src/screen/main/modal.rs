@@ -15,6 +15,7 @@ pub use spectrogram_config::SpectrogramConfig;
 
 use crate::screen::main::{recording::Recording, tab};
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Default, Debug)]
 pub enum Modal {
     #[default]

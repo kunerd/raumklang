@@ -423,7 +423,7 @@ impl Recording {
             Backend::Connected { backend } => match &self.state {
                 State::Setup => self.setup(backend),
                 State::LoudnessTest { loudness, .. } => {
-                    self.loudness_test(&loudness, backend.sample_rate)
+                    self.loudness_test(loudness, backend.sample_rate)
                 }
                 State::Measurement(measurement) => {
                     self.measurement(measurement, backend.sample_rate)
@@ -676,7 +676,7 @@ impl Recording {
         };
 
         page(
-            &title,
+            title,
             Some(sample_rate),
             content,
             button("Cancel")

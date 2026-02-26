@@ -1157,7 +1157,7 @@ impl Main {
             // TODO: make modal closable by clicking into the free space
             Modal::OpenRecentProject => modal(
                 content,
-                modal::load_recent_project(&recent_projects, Message::LoadRecentProject),
+                modal::load_recent_project(recent_projects, Message::LoadRecentProject),
             ),
         }
     }
